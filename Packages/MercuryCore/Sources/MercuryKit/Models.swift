@@ -6,13 +6,19 @@ public struct ServerStatus: Sendable, Equatable {
     public var version: String?
     public var authRequired: Bool
     public var activeSessions: Int?
+    /// `["cookie"]` and/or `["cookie","native_pkce"]` — native_pkce is the
+    /// RFC 8252 browser sign-in Mercury can drive for OAuth-only servers.
+    public var authFlows: [String]
     public var raw: JSONValue
+
+    public var supportsNativePKCE: Bool { authFlows.contains("native_pkce") }
 
     public init(raw: JSONValue) {
         self.raw = raw
         self.version = raw["version"]?.stringValue
         self.authRequired = raw["auth_required"]?.truthy ?? false
         self.activeSessions = raw["active_sessions"]?.intValue
+        self.authFlows = raw["auth_flows"]?.arrayValue?.compactMap(\.stringValue) ?? []
     }
 }
 

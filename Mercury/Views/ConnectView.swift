@@ -21,6 +21,8 @@ struct ConnectView: View {
 
                 if let pending = model.pendingPasswordLogin {
                     passwordForm(pending)
+                } else if let oauth = model.pendingOAuthLogin {
+                    oauthForm(oauth)
                 } else {
                     serverForm
                 }
@@ -133,6 +135,32 @@ struct ConnectView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(username.isEmpty || password.isEmpty || connecting)
+            }
+        }
+    }
+
+    @Environment(\.openURL) private var openURL
+
+    private func oauthForm(_ pending: AppModel.PendingOAuthLogin) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(
+                "This server uses \(pending.providerDisplayName) sign-in. Mercury opens your browser; after you approve, it finishes automatically."
+            )
+            .font(.callout)
+
+            HStack {
+                Button("Back") { model.cancelPasswordLogin() }
+                    .buttonStyle(.borderless)
+                Spacer()
+                Button {
+                    Task {
+                        await model.signInWithBrowser()
+                        if let url = model.oauthBrowserURL { openURL(url) }
+                    }
+                } label: {
+                    Label("Sign In with Browser", systemImage: "safari")
+                }
+                .buttonStyle(.borderedProminent)
             }
         }
     }

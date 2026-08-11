@@ -223,11 +223,79 @@ final class AppModel {
 
     func cancelPasswordLogin() {
         pendingPasswordLogin = nil
+        pendingOAuthLogin = nil
+        oauthFlow?.task.cancel()
+        oauthFlow = nil
         connectError = nil
     }
 
+    // MARK: Native PKCE (RFC 8252)
+
+    private var oauthFlow: (listener: LoopbackRedirectListener, task: Task<Void, Never>)?
+
+    /// URL the connect screen must open in the system browser, published
+    /// when `signInWithBrowser` starts.
+    private(set) var oauthBrowserURL: URL?
+
+    /// Run the native-PKCE flow: loopback listener → browser → code
+    /// exchange → connect with bearer tokens.
+    func signInWithBrowser() async {
+        guard let pending = pendingOAuthLogin else { return }
+        connectError = nil
+        oauthFlow?.task.cancel()
+
+        let listener = LoopbackRedirectListener()
+        let challenge = PKCEChallenge.generate()
+        do {
+            let redirectURI = try await listener.start()
+            oauthBrowserURL = HermesAuthenticator.nativeAuthorizeURL(
+                endpoint: pending.endpoint,
+                provider: pending.providerName,
+                challenge: challenge,
+                redirectURI: redirectURI)
+        } catch {
+            connectError = error.localizedDescription
+            return
+        }
+
+        let task = Task { [weak self] in
+            do {
+                let redirect = try await listener.waitForRedirect()
+                guard redirect.state == challenge.state else {
+                    throw HermesError.malformedResponse(
+                        "sign-in state mismatch — try again")
+                }
+                let session = try await HermesAuthenticator.exchangeNativeCode(
+                    endpoint: pending.endpoint,
+                    code: redirect.code,
+                    verifier: challenge.verifier)
+                guard let self, !Task.isCancelled else { return }
+                self.oauthBrowserURL = nil
+                self.pendingOAuthLogin = nil
+                await self.connect(
+                    endpoint: pending.endpoint, credentials: .password(session))
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.oauthBrowserURL = nil
+                self.connectError = (error as? HermesError)?.errorDescription
+                    ?? (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+            }
+        }
+        oauthFlow = (listener, task)
+    }
+
+    /// Set when a gated server is OAuth-only but advertises `native_pkce`:
+    /// the connect screen offers a browser sign-in.
+    struct PendingOAuthLogin: Equatable {
+        var endpoint: ServerEndpoint
+        var providerName: String
+        var providerDisplayName: String
+    }
+    private(set) var pendingOAuthLogin: PendingOAuthLogin?
+
     /// Look up the gated server's sign-in options; surface the password form
-    /// when available. (Native PKCE lands in Milestone 5.)
+    /// when available, else the native-PKCE browser flow.
     private func presentGatedLogin(
         endpoint: ServerEndpoint, note: String? = nil, generation: Int? = nil
     ) async {
@@ -235,8 +303,16 @@ final class AppModel {
             (try? await HermesAuthenticator.authProviders(endpoint: endpoint)) ?? []
         if let generation, generation != connectGeneration { return }
         guard let passwordProvider = providers.first(where: \.supportsPassword) else {
-            connectError =
-                "This server only offers browser (OAuth) sign-in, which Mercury doesn't support yet. Configure dashboard.basic_auth on the server for username/password access, or run it on loopback."
+            if serverStatus?.supportsNativePKCE == true, let provider = providers.first {
+                pendingOAuthLogin = PendingOAuthLogin(
+                    endpoint: endpoint,
+                    providerName: provider.name,
+                    providerDisplayName: provider.displayName)
+                connectError = note
+            } else {
+                connectError =
+                    "This server only offers browser (OAuth) sign-in without the native flow. Configure dashboard.basic_auth on the server for username/password access, or run it on loopback."
+            }
             return
         }
         var prefill = ""
