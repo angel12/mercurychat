@@ -32,9 +32,9 @@ struct ConnectedView: View {
             case .session(let session):
                 ChatView(mode: .resume(session), sessionKey: session.storedID)
                     .id(session.storedID)
-            case .newSession:
-                ChatView(mode: .create(cwd: nil, title: nil), sessionKey: "new")
-                    .id("new-session")
+            case .newSession(let cwd):
+                ChatView(mode: .create(cwd: cwd, title: nil), sessionKey: "new-\(cwd ?? "")")
+                    .id("new-session-\(cwd ?? "")")
             case nil:
                 ContentUnavailableView(
                     "No Session Selected",

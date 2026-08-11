@@ -68,6 +68,8 @@ private struct ChatContentView: View {
     @Bindable var controller: ChatController
     @Binding var activeSheet: ChatView.ChatSheet?
     @State private var composerText = ""
+    @State private var renameShown = false
+    @State private var renameText = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,6 +82,13 @@ private struct ChatContentView: View {
             .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar { headerChips }
+        .alert("Rename Session", isPresented: $renameShown) {
+            TextField("Title", text: $renameText)
+            Button("Rename") {
+                Task { await controller.rename(renameText) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .onChange(of: controller.store.pendingClarify) { _, request in
             if let request { activeSheet = .clarify(request) } else if isClarify { activeSheet = nil }
         }
@@ -187,9 +196,26 @@ private struct ChatContentView: View {
                     Text("\(controller.store.totalUsage.totalTokens.formatted()) tok")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .help(usageDetail)
+                }
+                Menu {
+                    Button("Rename Session…") {
+                        renameText = controller.store.title ?? ""
+                        renameShown = true
+                    }
+                    if let profile = controller.store.profileName {
+                        Text("Profile: \(profile)")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
             }
         }
+    }
+
+    private var usageDetail: String {
+        let usage = controller.store.totalUsage
+        return "\(usage.calls) calls · \(usage.inputTokens.formatted()) in · \(usage.outputTokens.formatted()) out"
     }
 }
 

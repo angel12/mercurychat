@@ -5,6 +5,9 @@ import SwiftUI
 /// fallback) → sessions, plus recents and a new-session button.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @State private var renameTarget: SessionSummary?
+    @State private var renameText = ""
+    @State private var deleteTarget: SessionSummary?
 
     var body: some View {
         @Bindable var model = model
@@ -34,6 +37,29 @@ struct SidebarView: View {
             }
         }
         .refreshable { await model.refreshProjects() }
+        .alert("Rename Session", isPresented: renameAlertShown) {
+            TextField("Title", text: $renameText)
+            Button("Rename") {
+                if let target = renameTarget {
+                    Task { await model.renameSession(target, to: renameText) }
+                }
+                renameTarget = nil
+            }
+            Button("Cancel", role: .cancel) { renameTarget = nil }
+        }
+        .confirmationDialog(
+            "Delete \"\(deleteTarget?.title ?? "this session")\"? This removes its transcript from the server.",
+            isPresented: deleteDialogShown,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Session", role: .destructive) {
+                if let target = deleteTarget {
+                    Task { await model.deleteSession(target) }
+                }
+                deleteTarget = nil
+            }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -78,7 +104,7 @@ struct SidebarView: View {
     }
 
     private func projectSection(_ project: ProjectInfo, scoped: Set<String>) -> some View {
-        Section(project.isHomeBucket ? "Home" : project.name) {
+        Section {
             ForEach(project.previewSessions) { session in
                 sessionRow(session)
             }
@@ -86,6 +112,24 @@ struct SidebarView: View {
                 Text("\(count) sessions")
                     .foregroundStyle(.secondary)
                     .font(.caption)
+            }
+        } header: {
+            HStack {
+                Text(project.isHomeBucket ? "Home" : project.name)
+                Spacer()
+                if project.primaryPath != nil || project.isHomeBucket {
+                    Button {
+                        model.requestNewSession(cwd: project.primaryPath)
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(
+                        project.isHomeBucket
+                            ? "New session (no workspace)"
+                            : "New session in \(project.name)")
+                }
             }
         }
     }
@@ -135,5 +179,38 @@ struct SidebarView: View {
                 .foregroundStyle(.secondary)
             }
         }
+        .contextMenu {
+            Button {
+                renameText = session.title ?? ""
+                renameTarget = session
+            } label: {
+                Label("Rename…", systemImage: "pencil")
+            }
+            Button {
+                Task { await model.togglePin(session) }
+            } label: {
+                Label(
+                    session.pinned ? "Unpin" : "Pin",
+                    systemImage: session.pinned ? "pin.slash" : "pin")
+            }
+            Divider()
+            Button(role: .destructive) {
+                deleteTarget = session
+            } label: {
+                Label("Delete…", systemImage: "trash")
+            }
+        }
+    }
+
+    private var renameAlertShown: Binding<Bool> {
+        Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } })
+    }
+
+    private var deleteDialogShown: Binding<Bool> {
+        Binding(
+            get: { deleteTarget != nil },
+            set: { if !$0 { deleteTarget = nil } })
     }
 }

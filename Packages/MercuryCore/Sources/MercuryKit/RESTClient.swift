@@ -116,6 +116,37 @@ public struct HermesRESTClient: Sendable {
         return TranscriptPage(json: json)
     }
 
+    /// `PATCH /api/sessions/{id}` — rename (`title`), soft-hide (`archived`),
+    /// or pin a **stored** session; works without resuming it. Empty title
+    /// clears the custom name.
+    public func updateSession(
+        storedID: String,
+        title: String? = nil,
+        archived: Bool? = nil,
+        pinned: Bool? = nil,
+        profile: String? = nil
+    ) async throws {
+        var body: [String: JSONValue] = [:]
+        if let title { body["title"] = .string(title) }
+        if let archived { body["archived"] = .bool(archived) }
+        if let pinned { body["pinned"] = .bool(pinned) }
+        if let profile, !profile.isEmpty { body["profile"] = .string(profile) }
+        _ = try await send(
+            "PATCH", "/api/sessions/\(encodePathComponent(storedID))", body: .object(body))
+    }
+
+    /// `DELETE /api/sessions/{id}` — remove a stored session and its
+    /// transcript files.
+    public func deleteSession(storedID: String, profile: String? = nil) async throws {
+        _ = try await send(
+            "DELETE", "/api/sessions/\(encodePathComponent(storedID))",
+            query: profileQuery(profile))
+    }
+
+    private func encodePathComponent(_ raw: String) -> String {
+        raw.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? raw
+    }
+
     // MARK: Audio
 
     /// `POST /api/audio/transcribe` — an empty transcript is success
@@ -189,11 +220,23 @@ public struct HermesRESTClient: Sendable {
         body: JSONValue,
         timeout: TimeInterval = 30
     ) async throws -> JSONValue {
+        try await send("POST", path, query: query, body: body, timeout: timeout)
+    }
+
+    private func send(
+        _ method: String,
+        _ path: String,
+        query: [URLQueryItem] = [],
+        body: JSONValue? = nil,
+        timeout: TimeInterval = 30
+    ) async throws -> JSONValue {
         var request = URLRequest(url: endpoint.restURL(path, query: query))
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.timeoutInterval = timeout
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(body)
+        }
         return try await performAuthenticated(request)
     }
 

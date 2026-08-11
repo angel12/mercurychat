@@ -42,7 +42,7 @@ final class AppModel {
     /// Sidebar selection → detail. `newSession` opens the new-session flow.
     enum Route: Hashable {
         case session(SessionSummary)
-        case newSession
+        case newSession(cwd: String?)
     }
     var route: Route?
 
@@ -275,9 +275,45 @@ final class AppModel {
         Task { await connection.pokeReconnect() }
     }
 
-    func requestNewSession() {
+    func requestNewSession(cwd: String? = nil) {
         guard isConnected else { return }
-        route = .newSession
+        route = .newSession(cwd: cwd)
+    }
+
+    // MARK: Session management (stored sessions, no resume needed)
+
+    func renameSession(_ session: SessionSummary, to title: String) async {
+        guard let connection else { return }
+        do {
+            try await connection.rest.updateSession(
+                storedID: session.storedID, title: title, profile: session.profile)
+            await refreshProjects()
+        } catch {
+            browseError = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    func togglePin(_ session: SessionSummary) async {
+        guard let connection else { return }
+        try? await connection.rest.updateSession(
+            storedID: session.storedID, pinned: !session.pinned, profile: session.profile)
+        await refreshProjects()
+    }
+
+    func deleteSession(_ session: SessionSummary) async {
+        guard let connection else { return }
+        do {
+            try await connection.rest.deleteSession(
+                storedID: session.storedID, profile: session.profile)
+            if case .session(let selected) = route, selected.storedID == session.storedID {
+                route = nil
+            }
+            await refreshProjects()
+        } catch {
+            browseError = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
+        }
     }
 
     private func startUpdatePump(
