@@ -90,17 +90,23 @@ struct SidebarView: View {
         }
     }
 
+    @ViewBuilder
     private var recentsSection: some View {
-        Section("Recent") {
-            let scoped = model.projectTree?.scopedSessionIDs ?? []
-            let rows = model.recentSessions.filter { !scoped.contains($0.storedID) }
-            if rows.isEmpty && !model.browseLoading {
+        let scoped = model.projectTree?.scopedSessionIDs ?? []
+        let rows = model.recentSessions.filter { !scoped.contains($0.storedID) }
+        // When every session is already shown inside a project group, skip
+        // the section instead of showing a misleading empty state.
+        if !rows.isEmpty {
+            Section("Recent") {
+                ForEach(rows) { session in
+                    sessionRow(session)
+                }
+            }
+        } else if model.recentSessions.isEmpty && !model.browseLoading {
+            Section("Recent") {
                 Text("No sessions yet")
                     .foregroundStyle(.secondary)
                     .font(.callout)
-            }
-            ForEach(rows) { session in
-                sessionRow(session)
             }
         }
     }

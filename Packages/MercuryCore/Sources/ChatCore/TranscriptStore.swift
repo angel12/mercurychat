@@ -200,6 +200,35 @@ public final class TranscriptStore {
         }
     }
 
+    // MARK: Resume restoration
+
+    /// Rebuild the turn that was streaming when the socket dropped, from
+    /// `session.resume`'s `inflight` payload. Call after hydration: the
+    /// inflight turn is exactly the part not yet persisted.
+    public func restoreInflight(
+        user: String, corrections: [String] = [], assistant: String,
+        streaming: Bool, error: String? = nil
+    ) {
+        if !user.isEmpty { appendUserMessage(user) }
+        for correction in corrections where !correction.isEmpty {
+            appendUserMessage(correction)
+        }
+        guard !assistant.isEmpty || streaming || error != nil else { return }
+        var bubble = AssistantMessage(
+            id: nextLiveID("assistant"), text: assistant, timestamp: Date())
+        bubble.isStreaming = streaming && error == nil
+        bubble.error = error
+        items.append(.assistant(bubble))
+        openBubbleIndex = bubble.isStreaming ? items.count - 1 : nil
+        if let error { lastError = error }
+    }
+
+    /// Seed the busy flag from a resume result (`running`), ahead of any
+    /// `session.info` event.
+    public func setRunning(_ flag: Bool) {
+        running = flag
+    }
+
     // MARK: Local echo
 
     /// Append the user's message optimistically at submit time.
@@ -232,6 +261,11 @@ public final class TranscriptStore {
 
         case GatewayEvent.Kind.toolStart:
             generatingToolName = nil
+            // Tool rows are their own transcript items: seal any open bubble
+            // so text streamed after the tool opens a NEW bubble below the
+            // row — matching desktop's interleaved ordering. (Empty sealed
+            // bubbles simply render as nothing.)
+            sealOpenBubble()
             startTool(event.payload)
 
         case GatewayEvent.Kind.toolProgress:
@@ -317,6 +351,16 @@ public final class TranscriptStore {
         return items.count - 1
     }
 
+    private func sealOpenBubble() {
+        guard let index = openBubbleIndex, case .assistant(var bubble) = items[index] else {
+            openBubbleIndex = nil
+            return
+        }
+        bubble.isStreaming = false
+        items[index] = .assistant(bubble)
+        openBubbleIndex = nil
+    }
+
     private func appendToBubble(text: String = "", reasoning: String = "") {
         guard !text.isEmpty || !reasoning.isEmpty else { return }
         let index = openBubbleIndex ?? openBubble()
@@ -362,8 +406,12 @@ public final class TranscriptStore {
                 }
                 bubble.error = errorText
                 lastError = errorText
-            } else if !finalText.isEmpty {
-                // The complete text is authoritative for this bubble.
+            } else if bubble.text.isEmpty, !finalText.isEmpty {
+                // Nothing streamed into this bubble (non-streaming provider,
+                // or a reconnect ate the deltas): use the final text. When
+                // text DID stream, keep it — `text` here is the whole turn's
+                // reply, and earlier bubbles sealed at tool boundaries
+                // already hold their parts of it.
                 bubble.text = finalText
             }
             bubble.isStreaming = false

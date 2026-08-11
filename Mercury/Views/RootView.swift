@@ -30,10 +30,11 @@ struct ConnectedView: View {
         } detail: {
             switch model.route {
             case .session(let session):
-                SessionDetailView(session: session)
+                ChatView(mode: .resume(session), sessionKey: session.storedID)
                     .id(session.storedID)
             case .newSession:
-                NewSessionView()
+                ChatView(mode: .create(cwd: nil, title: nil), sessionKey: "new")
+                    .id("new-session")
             case nil:
                 ContentUnavailableView(
                     "No Session Selected",

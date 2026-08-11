@@ -1,60 +1,20 @@
 import MercuryKit
 import SwiftUI
 
-/// Milestone 2 placeholder — the full chat view lands in Milestone 3.
-struct SessionDetailView: View {
-    @Environment(AppModel.self) private var model
-    let session: SessionSummary
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "bubble.left.and.text.bubble.right")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
-            Text(session.title?.isEmpty == false ? session.title! : "Untitled")
-                .font(.title2.bold())
-            if let cwd = session.cwd {
-                Text(cwd).font(.callout.monospaced()).foregroundStyle(.secondary)
-            }
-            if let profile = session.profile {
-                Text("Profile: \(profile)").font(.callout).foregroundStyle(.secondary)
-            }
-            Text("Chat opens here in Milestone 3.")
-                .foregroundStyle(.tertiary)
-        }
-        .navigationTitle(session.title ?? "Session")
-        #if !os(macOS)
-            .navigationBarTitleDisplayMode(.inline)
-        #endif
-    }
-}
-
-/// Milestone 2 placeholder for the new-session flow.
-struct NewSessionView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "square.and.pencil")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
-            Text("New Session").font(.title2.bold())
-            if let profile = model.selectedProfile {
-                Text("Profile: \(profile)").foregroundStyle(.secondary)
-            }
-            Text("The composer opens here in Milestone 3.")
-                .foregroundStyle(.tertiary)
-        }
-        .navigationTitle("New Session")
-    }
-}
-
 /// Non-modal connection-state strip: reconnecting / disconnected / contract
 /// drift. Hidden while everything is healthy.
 struct ConnectionBannerView: View {
     @Environment(AppModel.self) private var model
+    @State private var noticeVisible = true
 
     var body: some View {
+        // Purely informational — never intercept touches meant for the UI
+        // underneath (the composer lives at the same edge).
+        banner.allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var banner: some View {
         if let text = bannerText {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -63,15 +23,19 @@ struct ConnectionBannerView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(.thinMaterial, in: Capsule())
-            .padding(.bottom, 12)
-            .transition(.move(edge: .top).combined(with: .opacity))
-        } else if let notice = model.contractNotice {
+            .padding(.bottom, 72)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if let notice = model.contractNotice, noticeVisible {
             Text(notice)
                 .font(.caption)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
-                .background(.yellow.opacity(0.2), in: Capsule())
-                .padding(.bottom, 12)
+                .background(.yellow.opacity(0.9), in: Capsule())
+                .padding(.bottom, 72)
+                .task {
+                    try? await Task.sleep(for: .seconds(8))
+                    withAnimation { noticeVisible = false }
+                }
         }
     }
 

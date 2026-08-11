@@ -109,15 +109,22 @@ public struct ProjectInfo: Sendable, Equatable, Identifiable {
             return nil
         }
         self.id = id
-        self.name = json["name"]?.stringValue ?? json["title"]?.stringValue ?? id
+        // The live backend speaks camelCase here (`label`, `previewSessions`,
+        // `sessionCount`); keep the snake_case fallbacks for older builds.
+        self.name = json["label"]?.stringValue
+            ?? json["name"]?.stringValue
+            ?? json["title"]?.stringValue
+            ?? id
         self.primaryPath =
-            json["primary_path"]?.stringValue
-            ?? json["path"]?.stringValue
+            json["path"]?.stringValue
+            ?? json["primary_path"]?.stringValue
             ?? json["root"]?.stringValue
         self.kind = json["kind"]?.stringValue ?? json["type"]?.stringValue
-        self.previewSessions = (json["sessions"] ?? json["preview_sessions"])?.arrayValue?
+        self.previewSessions =
+            (json["previewSessions"] ?? json["sessions"] ?? json["preview_sessions"])?
+            .arrayValue?
             .compactMap(SessionSummary.init(json:)) ?? []
-        self.sessionCount = json["session_count"]?.intValue
+        self.sessionCount = json["sessionCount"]?.intValue ?? json["session_count"]?.intValue
     }
 }
 

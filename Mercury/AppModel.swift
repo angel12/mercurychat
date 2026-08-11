@@ -46,6 +46,27 @@ final class AppModel {
     }
     var route: Route?
 
+    /// The chat currently on screen; receives the event stream.
+    private(set) var activeChat: ChatController?
+
+    /// Create (and register) the controller for a route. The view owns the
+    /// begin() call; registration here is what routes gateway events.
+    func openChat(profile: String?) -> ChatController {
+        let controller = ChatController(
+            connection: connection!, profile: profile ?? selectedProfile)
+        activeChat = controller
+        return controller
+    }
+
+    func closeChat(_ controller: ChatController) {
+        guard activeChat === controller else { return }
+        activeChat = nil
+        Task {
+            await controller.teardown()
+            await refreshProjects()
+        }
+    }
+
     private let tokenStore = KeychainTokenStore()
     private var updatePump: Task<Void, Never>?
 
@@ -280,6 +301,8 @@ final class AppModel {
                         if !isReconnect {
                             await self.loadBrowseData()
                         }
+                        await self.activeChat?.connectionBecameReady(
+                            isReconnect: isReconnect)
                     }
                     if case .authExpired = phase {
                         // Dead refresh token: back to the connect screen with
@@ -294,6 +317,7 @@ final class AppModel {
                         return
                     }
                 case .event(let event):
+                    self.activeChat?.handle(event: event)
                     self.handleGlobalEvent(event)
                 }
             }

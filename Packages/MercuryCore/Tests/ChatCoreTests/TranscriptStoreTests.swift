@@ -333,3 +333,41 @@ struct TranscriptHydrationTests {
         #expect(store.items.isEmpty)
     }
 }
+
+@MainActor
+@Suite("Tool-boundary interleaving")
+struct ToolInterleaveTests {
+    @Test func textAfterToolOpensNewBubbleBelowRow() {
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("reasoning.delta", #"{"text": "plan"}"#))
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "terminal", "context": "echo hi"}"#))
+        store.apply(event("tool.complete", #"{"tool_id": "t1", "summary": "ran"}"#))
+        store.apply(event("message.delta", #"{"text": "It printed hi."}"#))
+        store.apply(event("message.complete", #"{"text": "It printed hi.", "status": "ok"}"#))
+
+        // Order: sealed (reasoning-only) bubble, tool row, reply bubble.
+        #expect(store.items.count == 3)
+        guard case .tool = store.items[1] else {
+            Issue.record("expected tool row in the middle")
+            return
+        }
+        guard case .assistant(let reply) = store.items[2] else {
+            Issue.record("expected reply bubble after the tool row")
+            return
+        }
+        #expect(reply.text == "It printed hi.")
+        #expect(!reply.isStreaming)
+    }
+
+    @Test func completeKeepsStreamedTextWhenPresent() {
+        let store = TranscriptStore()
+        store.apply(event("message.delta", #"{"text": "streamed"}"#))
+        store.apply(event("message.complete", #"{"text": "streamed PLUS full echo", "status": "ok"}"#))
+        guard case .assistant(let bubble) = store.items.last else {
+            Issue.record("expected bubble")
+            return
+        }
+        #expect(bubble.text == "streamed")
+    }
+}

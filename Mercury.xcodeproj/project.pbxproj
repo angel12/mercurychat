@@ -10,16 +10,20 @@
 		0031121B30D2FAE2CA4A217C /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD7A5E0A36F16FD09E767AE6 /* SidebarView.swift */; };
 		003BB02CEE04C82DE745C92D /* MercuryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F8E655F17AF012AFCEA205 /* MercuryApp.swift */; };
 		16C6B3EB63A57219CDBA6293 /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DF179C9F278DF4C94236661 /* ConnectView.swift */; };
-		309852884F4D81112119B6DB /* PlaceholderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BF77FAC4A973CE10960FE84 /* PlaceholderViews.swift */; };
+		373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10C155E77B1833A19AAA2F00 /* StatusViews.swift */; };
 		56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5AB9D4B96A47F2A0E24656A /* RootView.swift */; };
 		8B349087493237E06C15B9FD /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696FDD7EA0879D6A21F3E07B /* AppModel.swift */; };
+		8B5F8EF23C7156F46304EC10 /* ChatController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB97969196F04F2B48FCB03E /* ChatController.swift */; };
 		93CC0EB07156B09EF5B747D5 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 100C35A23B0A18D00444F5E1 /* ChatCore */; };
 		A9518D13DF29336C88CD89AD /* MercuryKit in Frameworks */ = {isa = PBXBuildFile; productRef = 270DCD916107ED2451EA4BB3 /* MercuryKit */; };
+		DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */; };
+		FA95AE9AA589D021659E84B2 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF52417D9BAD3C00374A1420 /* ChatView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		10C155E77B1833A19AAA2F00 /* StatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusViews.swift; sourceTree = "<group>"; };
 		10E6E34D97806B51F0F8A12A /* Mercury.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Mercury.entitlements; sourceTree = "<group>"; };
-		1BF77FAC4A973CE10960FE84 /* PlaceholderViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderViews.swift; sourceTree = "<group>"; };
+		261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptItemView.swift; sourceTree = "<group>"; };
 		31F7DAA740A01BE642F7A9F5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		590FA74BCF5DB7884E8C404F /* Mercury.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mercury.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F29F375C5956F20E4F2A200 /* MercuryCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MercuryCore; path = Packages/MercuryCore; sourceTree = SOURCE_ROOT; };
@@ -27,7 +31,9 @@
 		8DF179C9F278DF4C94236661 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		C3F8E655F17AF012AFCEA205 /* MercuryApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MercuryApp.swift; sourceTree = "<group>"; };
 		C5AB9D4B96A47F2A0E24656A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		CB97969196F04F2B48FCB03E /* ChatController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatController.swift; sourceTree = "<group>"; };
 		CD7A5E0A36F16FD09E767AE6 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		CF52417D9BAD3C00374A1420 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -56,6 +62,7 @@
 			isa = PBXGroup;
 			children = (
 				696FDD7EA0879D6A21F3E07B /* AppModel.swift */,
+				CB97969196F04F2B48FCB03E /* ChatController.swift */,
 				31F7DAA740A01BE642F7A9F5 /* Info.plist */,
 				10E6E34D97806B51F0F8A12A /* Mercury.entitlements */,
 				C3F8E655F17AF012AFCEA205 /* MercuryApp.swift */,
@@ -67,10 +74,12 @@
 		34EF0B497D35DDAC5A3A45EA /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				CF52417D9BAD3C00374A1420 /* ChatView.swift */,
 				8DF179C9F278DF4C94236661 /* ConnectView.swift */,
-				1BF77FAC4A973CE10960FE84 /* PlaceholderViews.swift */,
 				C5AB9D4B96A47F2A0E24656A /* RootView.swift */,
 				CD7A5E0A36F16FD09E767AE6 /* SidebarView.swift */,
+				10C155E77B1833A19AAA2F00 /* StatusViews.swift */,
+				261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -157,11 +166,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				8B349087493237E06C15B9FD /* AppModel.swift in Sources */,
+				8B5F8EF23C7156F46304EC10 /* ChatController.swift in Sources */,
+				FA95AE9AA589D021659E84B2 /* ChatView.swift in Sources */,
 				16C6B3EB63A57219CDBA6293 /* ConnectView.swift in Sources */,
 				003BB02CEE04C82DE745C92D /* MercuryApp.swift in Sources */,
-				309852884F4D81112119B6DB /* PlaceholderViews.swift in Sources */,
 				56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */,
 				0031121B30D2FAE2CA4A217C /* SidebarView.swift in Sources */,
+				373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */,
+				DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
