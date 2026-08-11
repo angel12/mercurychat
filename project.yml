@@ -1,0 +1,57 @@
+name: Mercury
+options:
+  bundleIdPrefix: biz.pescoinc
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+    visionOS: "2.0"
+  xcodeVersion: "16.0"
+packages:
+  MercuryCore:
+    path: Packages/MercuryCore
+targets:
+  Mercury:
+    type: application
+    supportedDestinations: [iOS, macOS, visionOS]
+    sources:
+      - Mercury
+    dependencies:
+      - package: MercuryCore
+        products:
+          - MercuryKit
+          - ChatCore
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        TARGETED_DEVICE_FAMILY: "1,2,7"
+        PRODUCT_BUNDLE_IDENTIFIER: biz.pescoinc.mercury
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: Z4JCFHY88D
+        ENABLE_HARDENED_RUNTIME: YES
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+    info:
+      path: Mercury/Info.plist
+      properties:
+        CFBundleDisplayName: Mercury
+        NSLocalNetworkUsageDescription: >-
+          Mercury connects to Hermes Agent servers running on your local
+          network.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    entitlements:
+      path: Mercury/Mercury.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true

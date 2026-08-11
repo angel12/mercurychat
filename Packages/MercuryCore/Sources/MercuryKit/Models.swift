@@ -46,7 +46,7 @@ public struct ProfileInfo: Sendable, Equatable, Identifiable {
 /// A row from the session lists (`/api/sessions`, `/api/profiles/sessions`,
 /// `session.list`, `projects.tree` previews). The id here is always the
 /// durable **stored** id (`YYYYMMDD_HHMMSS_<hex>`), never a runtime id.
-public struct SessionSummary: Sendable, Equatable, Identifiable {
+public struct SessionSummary: Sendable, Equatable, Hashable, Identifiable {
     public var storedID: String
     public var title: String?
     public var cwd: String?
