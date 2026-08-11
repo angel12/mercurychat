@@ -20,6 +20,14 @@ extension HermesConnection {
     private static let source = "desktop"
     private static let logger = Logger(subsystem: "Mercury", category: "MercuryKit")
 
+    /// os_log serializes each message into a ~1 KB buffer; anything larger is
+    /// truncated at emission and renders as "<decode: bad range>" — the payload
+    /// is lost everywhere, including Console.app. Clamp diagnostic dumps well
+    /// under the limit so the interesting prefix always survives.
+    private static func clampForLog(_ s: String, max: Int = 800) -> String {
+        s.count <= max ? s : "\(s.prefix(max))… [\(s.count - max) more chars truncated]"
+    }
+
     // MARK: Sessions
 
     /// `session.create` — `cwd` binds the session to a project directory;
@@ -108,13 +116,13 @@ extension HermesConnection {
                 return .closed
             }
             Self.logger.error(
-                "session.close NOT confirmed for \(sessionID, privacy: .public): \("\(result)", privacy: .public)"
+                "session.close NOT confirmed for \(sessionID, privacy: .public): \(Self.clampForLog("\(result)"), privacy: .public)"
             )
             return .unconfirmed
         } catch {
             let reason = (error as? HermesError)?.errorDescription ?? "\(error)"
             Self.logger.error(
-                "session.close failed for \(sessionID, privacy: .public): \(reason, privacy: .public)"
+                "session.close failed for \(sessionID, privacy: .public): \(Self.clampForLog(reason), privacy: .public)"
             )
             return .failed(reason)
         }
