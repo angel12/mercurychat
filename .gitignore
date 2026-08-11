@@ -1,0 +1,13 @@
+# Reference clone of the backend — not part of Mercury
+hermes-agent/
+
+# Xcode / SPM
+build/
+DerivedData/
+.build/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
