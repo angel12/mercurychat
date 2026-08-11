@@ -417,13 +417,18 @@ final class AppModel {
                             isReconnect: isReconnect)
                     }
                     if case .authExpired = phase {
-                        // Dead refresh token: back to the connect screen with
-                        // the sign-in form up. Present BEFORE disconnect —
-                        // disconnect cancels this pump task.
-                        if let endpoint = self.endpoint {
+                        // Credentials are dead. Token mode: the ephemeral
+                        // token died with a backend restart — ask for a fresh
+                        // dashboard URL. Gated mode: re-run sign-in. Present
+                        // BEFORE disconnect — disconnect cancels this pump.
+                        if self.serverStatus?.authRequired == true,
+                            let endpoint = self.endpoint
+                        {
                             await self.presentGatedLogin(
                                 endpoint: endpoint,
                                 note: HermesError.sessionExpired.errorDescription)
+                        } else {
+                            self.connectError = HermesError.unauthorized.errorDescription
                         }
                         self.disconnect()
                         return

@@ -130,6 +130,22 @@ public actor HermesConnection {
                     return
                 }
                 let reason = (error as? HermesError)?.errorDescription ?? "\(error)"
+                if Self.isCredentialRejection(reason) {
+                    // 4401: the server actively rejected the credentials
+                    // (revoked token / dead ticket). Redialing is a retry
+                    // storm, not a recovery — stop and demand re-auth.
+                    publish(.phase(.authExpired))
+                    supervisor = nil
+                    return
+                }
+                if Self.isGuardRejection(reason) {
+                    // 4403: Host/Origin/peer guard — a configuration
+                    // mismatch every redial will hit identically. Stop and
+                    // leave the explanation on screen.
+                    publish(.phase(.disconnected(reason: reason)))
+                    supervisor = nil
+                    return
+                }
                 publish(.phase(.disconnected(reason: reason)))
                 attempt += 1
                 await backoff(attempt: attempt)
@@ -162,10 +178,31 @@ public actor HermesConnection {
             }
 
             let reason = await closeReason(of: client)
+            if let reason, Self.isCredentialRejection(reason) {
+                publish(.phase(.authExpired))
+                supervisor = nil
+                return
+            }
+            if let reason, Self.isGuardRejection(reason) {
+                publish(.phase(.disconnected(reason: reason)))
+                supervisor = nil
+                return
+            }
             publish(.phase(.disconnected(reason: reason)))
             attempt += 1
             await backoff(attempt: attempt)
         }
+    }
+
+    /// A 4401 close means the server rejected the credentials outright —
+    /// distinct from a network drop, and never fixed by redialing.
+    private static func isCredentialRejection(_ reason: String) -> Bool {
+        reason.contains("(4401)")
+    }
+
+    /// A 4403 close is the Host/Origin/loopback-peer guard.
+    private static func isGuardRejection(_ reason: String) -> Bool {
+        reason.contains("(4403)")
     }
 
     private func closeReason(of client: GatewayClient) async -> String? {

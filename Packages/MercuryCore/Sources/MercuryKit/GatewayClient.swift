@@ -215,11 +215,19 @@ public actor GatewayClient {
                 }
             } catch {
                 let closeCode = task.closeCode
+                // A rejected upgrade never reaches WebSocket close codes:
+                // the server answers the HTTP handshake with 401/403 (bad
+                // token) and URLSession surfaces a generic "bad response".
+                // The upgrade response's status is the real signal.
+                let upgradeStatus = (task.response as? HTTPURLResponse)?.statusCode
                 let reason: String
-                if closeCode == .invalid {
-                    reason = error.localizedDescription
-                } else if closeCode.rawValue == 4401 {
+                if closeCode.rawValue == 4401 || upgradeStatus == 401 || upgradeStatus == 403 {
                     reason = "unauthorized (4401) — the server rejected the credentials"
+                } else if closeCode.rawValue == 4403 {
+                    reason =
+                        "refused (4403) — Host/Origin guard; dial the server by exactly the host it bound to"
+                } else if closeCode == .invalid {
+                    reason = error.localizedDescription
                 } else {
                     reason = "socket closed (code \(closeCode.rawValue))"
                 }

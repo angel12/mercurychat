@@ -49,16 +49,28 @@ The protocol layer is lifted nearly verbatim from HermesVoice's `HermesKit` (a w
 
 ## Manual verification checklist
 
+All verified live against `hermes serve` 0.20.0 in token mode on 2026-08-11 unless noted.
+
 ### Milestone 1 — MercuryKit port
-- [x] `swift test` green (53 tests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors, transcript reducer + hydration).
+- [x] `swift test` green (57 tests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, transcript reducer + hydration).
 
 ### Milestone 2 — connect + browse
-- [ ] Token-mode connect against local `hermes serve` (paste URL, auto-lifted token).
-- [ ] Both HTTP probe (`/api/profiles/active`) and WS dial must succeed before a connection saves.
-- [ ] Sessions/profiles/projects listed; `-32601` on `projects.*` degrades to flat grouping.
-- [ ] Runs on iOS simulator, macOS, visionOS simulator.
+- [x] Token-mode connect (pasted dashboard URL auto-lifts `?token=`), auto-reconnect on relaunch from Keychain.
+- [x] Both HTTP probe (`/api/profiles/active`) and WS dial succeed before a connection saves.
+- [x] Sessions/profiles/projects listed (camelCase `projects.tree` shape); `-32601` fallback code path in place (not exercisable against this backend).
+- [x] iOS simulator + macOS verified interactively; visionOS renders the connect flow.
 
 ### Milestone 3 — chat v1
-- [ ] Create → prompt → stream → tool row → complete, end-of-turn on `session.info.running == false`.
-- [ ] Interrupt mid-turn; approval + clarify cards; transcript hydration on resume.
-- [ ] Kill backend mid-turn → backoff reconnect → resume by stored id renders `inflight`.
+- [x] Create → prompt → stream → tool row (collapse to summary+duration) → complete; end-of-turn on `session.info.running == false`; session auto-title.
+- [x] Approval card: allow-once and deny both exercised; four-choice derivation.
+- [x] Resume with REST hydration; tool rows and reply ordering preserved.
+- [ ] Clarify/sudo/secret sheets built and unit-tested; not yet triggered live.
+
+### Milestones 4–6 — polish + resilience
+- [x] macOS split view, sidebar selection → resume, rename/pin/delete context menus, workspace `+` buttons, keyboard shortcuts.
+- [x] Kill backend mid-turn → banner + backoff → restart → auto re-resume by stored id with context intact (verified with a follow-up turn).
+- [x] Revoked token → terminal auth-expired (no retry storm), connect screen with "paste a fresh dashboard URL" message.
+- [x] 4403 Host/Origin guard mapped to a terminal, explanatory disconnect.
+- [x] Contract-drift notice (v5 server vs v6 build) as a transient, hit-transparent toast.
+- [ ] PKCE against a real OAuth provider (no gated IdP available in this environment; listener + exchange covered by unit tests and built strictly to `dashboard_auth/routes.py`).
+- [ ] iOS 10-minute background → foreground poke-reconnect (wired via scenePhase; not soak-tested).
