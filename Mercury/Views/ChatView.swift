@@ -70,6 +70,12 @@ private struct ChatContentView: View {
     @State private var composerText = ""
     @State private var renameShown = false
     @State private var renameText = ""
+    /// Scroll-pinning bookkeeping. Every field is read and written only inside
+    /// gesture/preference/onChange callbacks, never in `body` — so it lives in
+    /// a plain class on purpose. As `@State` value fields, the per-frame
+    /// writes (bottom distance changes on every scrolled point) invalidated
+    /// the whole transcript body 120×/s, which showed up as app-wide lag.
+    @State private var scroll = TranscriptScrollState()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -114,47 +120,160 @@ private struct ChatContentView: View {
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if controller.canLoadOlder {
-                        Button("Load earlier messages") {
-                            Task { await controller.loadOlderMessages() }
-                        }
-                        .buttonStyle(.borderless)
-                        .frame(maxWidth: .infinity)
-                    }
-                    ForEach(controller.store.items) { item in
-                        TranscriptItemView(item: item)
-                            .id(item.id)
-                    }
-                    if let generating = controller.store.generatingToolName {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Preparing \(generating)…")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal)
-                    }
-                    if let error = controller.errorMessage {
-                        Text(error)
-                            .font(.callout)
-                            .foregroundStyle(.red)
-                            .padding(.horizontal)
-                    }
-                    // Scroll anchor.
-                    Color.clear.frame(height: 1).id("bottom")
+        GeometryReader { viewport in
+            ScrollViewReader { proxy in
+                // Modern OSes report scroll offsets via onScrollGeometryChange.
+                // The pre-iOS-18 fallback reads a preference off a GeometryReader
+                // in the content's background — that pattern stopped emitting on
+                // pure scroll-position changes in newer SwiftUI (verified on
+                // iOS 26: zero preference events during a 400pt drag), so it is
+                // ONLY the fallback, never the primary path.
+                let base = ScrollView {
+                    transcriptItems
+                        .padding(.vertical, 12)
+                        .background(
+                            GeometryReader { content in
+                                Color.clear.preference(
+                                    key: BottomDistanceKey.self,
+                                    value: content.frame(in: .named("transcript")).maxY
+                                        - viewport.size.height)
+                            }
+                        )
                 }
-                .padding(.vertical, 12)
+                .coordinateSpace(name: "transcript")
+
+                Group {
+                    if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+                        base.onScrollGeometryChange(for: CGFloat.self) { geo in
+                            geo.contentSize.height - geo.visibleRect.maxY
+                        } action: { [scroll] _, distance in
+                            scroll.update(bottomDistance: distance)
+                        }
+                    } else {
+                        base.onPreferenceChange(BottomDistanceKey.self) { [scroll] distance in
+                            scroll.update(bottomDistance: distance)
+                        }
+                    }
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { [scroll] _ in
+                            // Unpin the instant a drag starts. Waiting for the
+                            // geometry callback loses the race against a queued
+                            // auto-scroll, which snaps back to the bottom and
+                            // re-pins before the "scrolled away" reading lands.
+                            scroll.isDragging = true
+                            scroll.isAutoScrolling = false
+                            scroll.setPinned(false)
+                        }
+                        .onEnded { [scroll] _ in
+                            scroll.isDragging = false
+                            if scroll.bottomDistance < TranscriptScrollState.repinDistance {
+                                scroll.setPinned(true)
+                            }
+                        }
+                )
+                .overlay(alignment: .bottom) {
+                    if !scroll.isPinnedToBottom {
+                        jumpToLatestButton(proxy)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.15), value: scroll.isPinnedToBottom)
+                .onChange(of: controller.store.items.count) {
+                    // The user's own message always snaps the view back down;
+                    // otherwise respect a reader who scrolled away.
+                    if case .user = controller.store.items.last { scroll.setPinned(true) }
+                    guard scroll.isPinnedToBottom else { return }
+                    scrollToBottom(proxy, animated: true)
+                }
+                .onChange(of: lastItemFingerprint) {
+                    guard scroll.isPinnedToBottom else { return }
+                    scrollToBottom(proxy, animated: false)
+                }
             }
-            .onChange(of: controller.store.items.count) {
-                withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+        }
+    }
+
+    private var transcriptItems: some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            if controller.canLoadOlder {
+                Button("Load earlier messages") {
+                    Task { await controller.loadOlderMessages() }
+                }
+                .buttonStyle(.borderless)
+                .frame(maxWidth: .infinity)
             }
-            .onChange(of: lastItemFingerprint) {
+            ForEach(controller.store.items) { item in
+                TranscriptItemView(item: item)
+                    .id(item.id)
+            }
+            if let generating = controller.store.generatingToolName {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Preparing \(generating)…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal)
+            }
+            if let error = controller.errorMessage {
+                Text(error)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal)
+            }
+            // Scroll anchor.
+            Color.clear.frame(height: 1).id("bottom")
+        }
+    }
+
+    /// Defer the actual scroll to the next runloop turn so all onChange
+    /// firings within a frame collapse into a single scrollTo. Streaming can
+    /// land several deltas per frame, and scrolling on each one makes SwiftUI
+    /// warn "action tried to update multiple times per frame".
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard !scroll.scrollQueued else { return }
+        scroll.scrollQueued = true
+        Task { @MainActor [scroll] in
+            scroll.scrollQueued = false
+            guard scroll.isPinnedToBottom else { return }
+            // Long animated hops overshoot LazyVStack's estimated layout and
+            // strand the viewport in blank space — only animate near-bottom.
+            if animated, scroll.bottomDistance < 600 {
+                scroll.isAutoScrolling = true
+                withAnimation {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                } completion: {
+                    scroll.isAutoScrolling = false
+                }
+            } else {
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
         }
+    }
+
+    private func jumpToLatestButton(_ proxy: ScrollViewProxy) -> some View {
+        Button {
+            // Suppress the stale "far from bottom" geometry reading that can
+            // arrive while the lazy layout settles after the jump; update()
+            // clears the flag once a near-bottom reading lands.
+            scroll.isAutoScrolling = true
+            scroll.setPinned(true)
+            // Deliberately NOT animated: an animated scrollTo across a long
+            // LazyVStack overshoots the lazy layout estimate and strands the
+            // viewport in un-laid-out blank space (reproduced on iOS 26).
+            // An instant jump resolves the target layout synchronously.
+            proxy.scrollTo("bottom", anchor: .bottom)
+        } label: {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 15, weight: .semibold))
+                .padding(10)
+                .background(.regularMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, 8)
+        .transition(.opacity.combined(with: .scale(scale: 0.8)))
+        .accessibilityLabel("Jump to latest")
     }
 
     /// Cheap change signal for streaming updates to the final item.
@@ -477,5 +596,63 @@ private struct SecretSheet: View {
     private func respond(_ answer: String) {
         Task { await controller.respondSecret(requestID: request.requestID, value: answer) }
         dismiss()
+    }
+}
+
+/// Whether the transcript follows streaming output: scrolling away from the
+/// bottom releases the pin, scrolling back (or sending a message, or tapping
+/// the jump-to-latest button) restores it.
+///
+/// Only `isPinnedToBottom` is observable — the body reads it for the
+/// jump-to-latest button, and its writes are equality-guarded so the view
+/// invalidates only on real pin/unpin transitions. Everything else is
+/// `@ObservationIgnored` on purpose: those fields are written on every
+/// scrolled point / touch move, and observable per-frame writes would
+/// invalidate the whole transcript body 120×/s (measured as app-wide lag).
+@MainActor @Observable
+private final class TranscriptScrollState {
+    /// Hysteresis band for the pin: drifting past `unpinDistance` releases it,
+    /// but only returning to (nearly) the exact bottom re-engages it. A single
+    /// threshold re-pins anyone the auto-scroll just yanked down, which made
+    /// the pin impossible to escape mid-stream.
+    @ObservationIgnored static let unpinDistance: CGFloat = 80
+    @ObservationIgnored static let repinDistance: CGFloat = 8
+
+    private(set) var isPinnedToBottom = true
+    /// True while a deferred scroll is queued so extra requests coalesce.
+    @ObservationIgnored var scrollQueued = false
+    /// Latest scroll-geometry reading, kept so gesture callbacks (which
+    /// can't see geometry) can decide whether the drag ended at the bottom.
+    @ObservationIgnored var bottomDistance: CGFloat = 0
+    @ObservationIgnored var isDragging = false
+    /// True while an animated programmatic scroll is in flight. Geometry
+    /// reports "far from bottom" mid-animation, which must not unpin —
+    /// cleared by the animation's completion or by the user grabbing the view.
+    @ObservationIgnored var isAutoScrolling = false
+
+    func setPinned(_ pinned: Bool) {
+        guard pinned != isPinnedToBottom else { return }
+        isPinnedToBottom = pinned
+    }
+
+    func update(bottomDistance distance: CGFloat) {
+        bottomDistance = distance
+        if distance > Self.unpinDistance {
+            guard !isAutoScrolling else { return }
+            setPinned(false)
+        } else if distance < Self.repinDistance, !isDragging {
+            isAutoScrolling = false
+            setPinned(true)
+        }
+    }
+}
+
+/// How far the transcript content's bottom edge sits below the visible
+/// viewport's bottom edge — ~0 when scrolled fully down, growing as the
+/// reader scrolls up into history.
+private struct BottomDistanceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
