@@ -103,11 +103,45 @@ final class AppModel {
         persistServers()
         if let parsed = try? ServerEndpoint.parse(server.urlString) {
             tokenStore.deleteToken(for: parsed.endpoint)
+            insecureAllowedServers.removeAll { $0 == parsed.endpoint.key }
             if endpoint?.key == parsed.endpoint.key { disconnect() }
         }
     }
 
     // MARK: Connect flow
+
+    // MARK: Insecure-transport gate
+
+    /// Set when a connect attempt targeted plaintext HTTP on a non-loopback
+    /// host: everything (passwords, tokens, prompts, sudo secrets) would
+    /// cross the network unencrypted. The connect screen shows a strong
+    /// warning with an explicit "connect anyway" override.
+    struct PendingInsecureConnect: Equatable {
+        var endpoint: ServerEndpoint
+        var credentials: ServerCredentials?
+    }
+    private(set) var pendingInsecureConnect: PendingInsecureConnect?
+
+    /// Endpoint keys the user has explicitly opted into plaintext HTTP for.
+    private var insecureAllowedServers: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "insecureAllowedServers") ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "insecureAllowedServers") }
+    }
+
+    /// User accepted the plaintext-HTTP warning: remember the opt-in for
+    /// this endpoint (so auto-connect keeps working) and retry the connect.
+    func connectInsecureAnyway() async {
+        guard let pending = pendingInsecureConnect else { return }
+        pendingInsecureConnect = nil
+        if !insecureAllowedServers.contains(pending.endpoint.key) {
+            insecureAllowedServers.append(pending.endpoint.key)
+        }
+        await connect(endpoint: pending.endpoint, credentials: pending.credentials)
+    }
+
+    func dismissInsecureConnect() {
+        pendingInsecureConnect = nil
+    }
 
     /// Set when a gated server advertises a username/password provider and
     /// the user must sign in before the gateway can open.
@@ -132,6 +166,7 @@ final class AppModel {
     /// validate, and open the gateway.
     func connect(input: String, token explicitToken: String?) async {
         connectError = nil
+        pendingInsecureConnect = nil
         do {
             let parsed = try ServerEndpoint.parse(input)
             let token = explicitToken?.isEmpty == false ? explicitToken : parsed.embeddedToken
@@ -149,6 +184,15 @@ final class AppModel {
         let generation = connectGeneration
         connectError = nil
         pendingPasswordLogin = nil
+        pendingInsecureConnect = nil
+
+        if endpoint.isPlaintextNonLoopback,
+            !insecureAllowedServers.contains(endpoint.key)
+        {
+            pendingInsecureConnect = PendingInsecureConnect(
+                endpoint: endpoint, credentials: credentials)
+            return
+        }
         self.endpoint = endpoint
 
         // One authenticator shared by the probe and the connection, so a
@@ -224,9 +268,21 @@ final class AppModel {
     func cancelPasswordLogin() {
         pendingPasswordLogin = nil
         pendingOAuthLogin = nil
-        oauthFlow?.task.cancel()
-        oauthFlow = nil
+        cancelOAuthFlow()
         connectError = nil
+    }
+
+    /// Tear down the in-flight PKCE flow: cancel the task AND the loopback
+    /// listener. The listener otherwise keeps its port open (and accepts a
+    /// stale callback) until its independent five-minute timeout — task
+    /// cancellation alone doesn't reach the window between `start()` and
+    /// `waitForRedirect()`.
+    private func cancelOAuthFlow() {
+        guard let flow = oauthFlow else { return }
+        flow.task.cancel()
+        Task { await flow.listener.cancel() }
+        oauthFlow = nil
+        oauthBrowserURL = nil
     }
 
     // MARK: Native PKCE (RFC 8252)
@@ -242,7 +298,7 @@ final class AppModel {
     func signInWithBrowser() async {
         guard let pending = pendingOAuthLogin else { return }
         connectError = nil
-        oauthFlow?.task.cancel()
+        cancelOAuthFlow()
 
         let listener = LoopbackRedirectListener()
         let challenge = PKCEChallenge.generate()
@@ -272,11 +328,16 @@ final class AppModel {
                 guard let self, !Task.isCancelled else { return }
                 self.oauthBrowserURL = nil
                 self.pendingOAuthLogin = nil
+                // Release the finished flow before connect(): connect's
+                // disconnect() tears down any still-pending flow, and this
+                // task must not cancel itself.
+                self.oauthFlow = nil
                 await self.connect(
                     endpoint: pending.endpoint, credentials: .password(session))
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.oauthBrowserURL = nil
+                self.oauthFlow = nil
                 self.connectError = (error as? HermesError)?.errorDescription
                     ?? (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
@@ -329,6 +390,7 @@ final class AppModel {
 
     func disconnect() {
         connectGeneration += 1  // invalidate any in-flight connect()
+        cancelOAuthFlow()
         updatePump?.cancel()
         updatePump = nil
         let connection = connection

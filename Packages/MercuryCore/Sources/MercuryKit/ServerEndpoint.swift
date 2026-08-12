@@ -4,6 +4,8 @@ import Foundation
 ///
 /// Accepts the forms users actually paste:
 ///   - `localhost:8080`, `192.168.1.5:8080`, `my-mac.tail1234.ts.net`
+///     (scheme-less loopback defaults to `http://`, everything else to
+///     `https://`)
 ///   - `http://127.0.0.1:8080` / `https://hermes.example.com`
 ///   - a full dashboard URL `http://127.0.0.1:8080/?token=abc123` (hermes
 ///     prints/opens this on startup) — the token is lifted out automatically.
@@ -34,7 +36,16 @@ public struct ServerEndpoint: Sendable, Equatable, Codable, Identifiable {
     public var isSecure: Bool { baseURL.scheme == "https" }
 
     public var isLoopbackHost: Bool {
-        let host = (baseURL.host ?? "").lowercased()
+        Self.isLoopbackHostName(baseURL.host ?? "")
+    }
+
+    /// Plaintext HTTP to a host other than this machine: credentials, prompts,
+    /// and secrets would cross the network unencrypted. Connecting to such an
+    /// endpoint requires an explicit user opt-in.
+    public var isPlaintextNonLoopback: Bool { !isSecure && !isLoopbackHost }
+
+    private static func isLoopbackHostName(_ host: String) -> Bool {
+        let host = host.lowercased()
         return host == "localhost" || host == "127.0.0.1" || host == "::1"
     }
 
@@ -64,11 +75,18 @@ public struct ServerEndpoint: Sendable, Equatable, Codable, Identifiable {
         guard !trimmed.isEmpty else { throw ParseError.empty }
 
         // Prepend a scheme when missing so URLComponents can parse host:port.
+        // Loopback defaults to HTTP (hermes's local bind is plain HTTP);
+        // anything else defaults to HTTPS so credentials never ride
+        // plaintext just because the user omitted a scheme.
         let withScheme: String
         if trimmed.contains("://") {
             withScheme = trimmed
-        } else {
+        } else if let probe = URLComponents(string: "http://" + trimmed),
+            let host = probe.host, isLoopbackHostName(host)
+        {
             withScheme = "http://" + trimmed
+        } else {
+            withScheme = "https://" + trimmed
         }
 
         guard let components = URLComponents(string: withScheme),

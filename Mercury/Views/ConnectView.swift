@@ -35,6 +35,10 @@ struct ConnectView: View {
                         .textSelection(.enabled)
                 }
 
+                if let insecure = model.pendingInsecureConnect {
+                    insecureWarning(insecure)
+                }
+
                 if !model.savedServers.isEmpty, model.pendingPasswordLogin == nil {
                     recentServers
                 }
@@ -163,6 +167,29 @@ struct ConnectView: View {
                 .buttonStyle(.borderedProminent)
             }
         }
+    }
+
+    private func insecureWarning(_ pending: AppModel.PendingInsecureConnect) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Insecure connection", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(.red)
+            Text(
+                "\(pending.endpoint.displayName) is not local and uses plain HTTP. Your password, tokens, and everything you type would cross the network unencrypted. Use https:// or a tunnel instead."
+            )
+            .font(.callout)
+            HStack {
+                Button("Cancel") { model.dismissInsecureConnect() }
+                    .buttonStyle(.borderless)
+                Spacer()
+                Button("Connect Anyway", role: .destructive) {
+                    Task { await model.connectInsecureAnyway() }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding()
+        .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var recentServers: some View {
