@@ -124,6 +124,15 @@ public final class TranscriptStore {
                 return nil
             }
             .first
+        // Tool identity for reconciliation: a live running row whose call is
+        // now persisted (typically completed while the socket was down) is
+        // superseded by the hydrated row — keeping both leaves a duplicate
+        // that spins forever.
+        let hydratedToolIDs = Set(
+            hydrated.compactMap { item -> String? in
+                if case .tool(let t) = item { return t.toolID }
+                return nil
+            })
         let survivors = liveSuffix.filter { item in
             switch item {
             case .user(let m):
@@ -143,6 +152,9 @@ public final class TranscriptStore {
             case .assistant(let m):
                 return m.error != nil || !hydratedTexts.contains("a:" + m.text)
             case .tool(let t):
+                if let toolID = t.toolID, hydratedToolIDs.contains(toolID) {
+                    return false  // Persisted (completed) row wins.
+                }
                 return t.isRunning
             case .notice:
                 return true
@@ -193,6 +205,7 @@ public final class TranscriptStore {
             return .tool(
                 ToolActivity(
                     id: message.id,
+                    toolID: message.toolCallID,
                     name: message.toolName ?? "tool",
                     context: message.context,
                     resultText: message.text.isEmpty ? nil : message.text,
@@ -214,8 +227,12 @@ public final class TranscriptStore {
                 openBubbleIndex = index
             case .tool(let t):
                 if let toolID = t.toolID, t.isRunning { toolRowIndex[toolID] = index }
-                if let label = t.subagentLabel, t.isRunning {
-                    subagentRowIndex[label] = index
+                // Reducer identity, NOT the display label: labels like
+                // "Subagent 1/2" collide across turns, and a completion for
+                // `sa1` looked up by label would miss its row after a
+                // hydration/prepend reindex.
+                if let subagentID = t.subagentID, t.isRunning {
+                    subagentRowIndex[subagentID] = index
                 }
             default:
                 break
@@ -376,6 +393,17 @@ public final class TranscriptStore {
             items[index] = .assistant(bubble)
             openBubbleIndex = nil
         }
+        // No tool or subagent outlives its turn: a row whose completion
+        // event was lost (dropped socket, hydration replacing its twin)
+        // must not spin forever once the session reports idle.
+        for (index, item) in items.enumerated() {
+            if case .tool(var row) = item, row.isRunning {
+                row.isRunning = false
+                items[index] = .tool(row)
+            }
+        }
+        toolRowIndex.removeAll(keepingCapacity: true)
+        subagentRowIndex.removeAll(keepingCapacity: true)
         generatingToolName = nil
         // Blocking prompts can't outlive the turn.
         pendingApproval = nil
@@ -674,6 +702,7 @@ public final class TranscriptStore {
                 context: payload["goal"]?.stringValue ?? payload["text"]?.stringValue,
                 isRunning: true,
                 subagentLabel: label,
+                subagentID: key,
                 timestamp: Date())
             items.append(.tool(row))
             subagentRowIndex[key] = items.count - 1

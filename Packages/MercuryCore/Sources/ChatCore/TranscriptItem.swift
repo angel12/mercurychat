@@ -89,6 +89,10 @@ public struct ToolActivity: Sendable, Equatable, Identifiable {
     /// Label of the owning subagent when this activity arrived as
     /// `subagent.*` (v1 flattens nested activity to labeled rows).
     public var subagentLabel: String?
+    /// Gateway `subagent_id` — the reducer identity progress/completion
+    /// events are keyed by. The label above is presentation only and NOT
+    /// unique ("Subagent 1/2" collides across turns).
+    public var subagentID: String?
     public var rowID: Int?
     public var timestamp: Date?
 
@@ -104,6 +108,7 @@ public struct ToolActivity: Sendable, Equatable, Identifiable {
         durationSeconds: Double? = nil,
         isRunning: Bool = false,
         subagentLabel: String? = nil,
+        subagentID: String? = nil,
         rowID: Int? = nil,
         timestamp: Date? = nil
     ) {
@@ -118,6 +123,7 @@ public struct ToolActivity: Sendable, Equatable, Identifiable {
         self.durationSeconds = durationSeconds
         self.isRunning = isRunning
         self.subagentLabel = subagentLabel
+        self.subagentID = subagentID
         self.rowID = rowID
         self.timestamp = timestamp
     }
