@@ -234,14 +234,23 @@ private struct ChatContentView: View {
         }
     }
 
-    /// Defer the actual scroll to the next runloop turn so all onChange
-    /// firings within a frame collapse into a single scrollTo. Streaming can
-    /// land several deltas per frame, and scrolling on each one makes SwiftUI
-    /// warn "action tried to update multiple times per frame".
+    /// Defer the actual scroll by one display frame so all onChange firings
+    /// within that frame collapse into a single scrollTo. Streaming lands
+    /// several deltas per frame across separate runloop turns, so a plain
+    /// next-turn Task hop is NOT enough — it can execute between two deltas
+    /// of the same frame and scroll twice.
+    ///
+    /// Note this does NOT silence the "onChange(of: Int) action tried to
+    /// update multiple times per frame" / "<OnScrollGeometryChange Modifier>
+    /// tried to update…" console lines: those fire (once per process) purely
+    /// because the OBSERVED VALUES change more than once per frame — verified
+    /// empirically with completely empty action bodies. They are framework
+    /// diagnostics inherent to streaming + scrolling, not app bugs.
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
         guard !scroll.scrollQueued else { return }
         scroll.scrollQueued = true
         Task { @MainActor [scroll] in
+            try? await Task.sleep(for: .milliseconds(16))
             scroll.scrollQueued = false
             guard scroll.isPinnedToBottom else { return }
             // Long animated hops overshoot LazyVStack's estimated layout and
@@ -740,3 +749,4 @@ private struct BottomDistanceKey: PreferenceKey {
         value = nextValue()
     }
 }
+
