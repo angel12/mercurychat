@@ -208,6 +208,21 @@ final class ChatController: Identifiable {
     // on failure it stays up for a retry and the error is surfaced. Clearing
     // is identity-guarded: the RPC suspends this actor, and a NEWER request
     // arriving mid-flight must not be wiped by the older response.
+    //
+    // Transport success is NOT delivery: a late answer resolves with
+    // `status: "expired"` and the agent never sees it. The stale card is
+    // closed either way, but an expired answer surfaces a transcript notice
+    // instead of silently pretending the password/credential landed.
+
+    /// What actually happened to an answered blocking prompt.
+    enum PromptDeliveryOutcome {
+        /// The agent received the answer.
+        case delivered
+        /// The request expired server-side first — the answer was discarded.
+        case expired
+        /// The RPC failed; the prompt stays up for a retry.
+        case failed
+    }
 
     @discardableResult
     func respondApproval(_ request: ApprovalRequest, choice: String) async -> Bool {
@@ -222,39 +237,56 @@ final class ChatController: Identifiable {
         }
     }
 
-    @discardableResult
-    func respondClarify(requestID: String, answer: String) async -> Bool {
+    func respondClarify(requestID: String, answer: String) async -> PromptDeliveryOutcome {
         do {
-            try await connection.respondClarify(requestID: requestID, answer: answer)
-            store.clearClarify(requestID: requestID)
-            return true
+            let status = try await connection.respondClarify(
+                requestID: requestID, answer: answer)
+            return settlePrompt(
+                status, what: "answer",
+                clear: { self.store.clearClarify(requestID: requestID) })
         } catch {
             errorMessage = describe(error)
-            return false
+            return .failed
         }
     }
 
-    @discardableResult
-    func respondSudo(requestID: String, password: String) async -> Bool {
+    func respondSudo(requestID: String, password: String) async -> PromptDeliveryOutcome {
         do {
-            try await connection.respondSudo(requestID: requestID, password: password)
-            store.clearSudo(requestID: requestID)
-            return true
+            let status = try await connection.respondSudo(
+                requestID: requestID, password: password)
+            return settlePrompt(
+                status, what: "password",
+                clear: { self.store.clearSudo(requestID: requestID) })
         } catch {
             errorMessage = describe(error)
-            return false
+            return .failed
         }
     }
 
-    @discardableResult
-    func respondSecret(requestID: String, value: String) async -> Bool {
+    func respondSecret(requestID: String, value: String) async -> PromptDeliveryOutcome {
         do {
-            try await connection.respondSecret(requestID: requestID, value: value)
-            store.clearSecret(requestID: requestID)
-            return true
+            let status = try await connection.respondSecret(requestID: requestID, value: value)
+            return settlePrompt(
+                status, what: "credential",
+                clear: { self.store.clearSecret(requestID: requestID) })
         } catch {
             errorMessage = describe(error)
-            return false
+            return .failed
+        }
+    }
+
+    private func settlePrompt(
+        _ status: PromptResponseStatus, what: String, clear: () -> Void
+    ) -> PromptDeliveryOutcome {
+        clear()
+        switch status {
+        case .accepted:
+            return .delivered
+        case .expired:
+            store.appendNotice(
+                "The request expired before your \(what) was delivered — the agent never received it.",
+                level: .error)
+            return .expired
         }
     }
 

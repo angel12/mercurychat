@@ -155,11 +155,36 @@ extension HermesConnection {
     }
 
     /// `clarify.respond` — empty answer = skip. A late respond after expiry
-    /// returns `{"status":"expired"}`, never an error.
-    public func respondClarify(requestID: String, answer: String) async throws {
-        _ = try await request(
+    /// returns `{"status":"expired"}`, never an error — a successful
+    /// transport call is NOT delivery; check the returned status.
+    public func respondClarify(
+        requestID: String, answer: String
+    ) async throws -> PromptResponseStatus {
+        let result = try await request(
             "clarify.respond",
             params: ["request_id": .string(requestID), "answer": .string(answer)])
+        return try PromptResponseStatus(result: result)
+    }
+}
+
+/// Outcome of answering a blocking prompt (clarify / sudo / secret). The
+/// server resolves a late answer with `{"status": "expired"}` instead of an
+/// error, so transport success alone must never be treated as delivery.
+public enum PromptResponseStatus: Sendable, Equatable {
+    /// The answer reached the waiting agent.
+    case accepted
+    /// The request had already expired server-side — the answer was
+    /// discarded and the agent never saw it.
+    case expired
+
+    init(result: JSONValue) throws {
+        switch result["status"]?.stringValue {
+        case "ok": self = .accepted
+        case "expired": self = .expired
+        case let other:
+            throw HermesError.malformedResponse(
+                "respond returned unrecognized status \(other ?? "<missing>")")
+        }
     }
 }
 
@@ -230,18 +255,26 @@ extension HermesConnection {
     // MARK: Secure blocking-prompt responses
 
     /// `sudo.respond` — answer field is `password` (empty = decline). Never
-    /// log or persist the value. Late answers return `{"status":"expired"}`.
-    public func respondSudo(requestID: String, password: String) async throws {
-        _ = try await request(
+    /// log or persist the value. Late answers return `{"status":"expired"}`;
+    /// check the returned status before reporting delivery.
+    public func respondSudo(
+        requestID: String, password: String
+    ) async throws -> PromptResponseStatus {
+        let result = try await request(
             "sudo.respond",
             params: ["request_id": .string(requestID), "password": .string(password)])
+        return try PromptResponseStatus(result: result)
     }
 
     /// `secret.respond` — answer field is `value` (empty = skip). Never log
-    /// or persist the value. Late answers return `{"status":"expired"}`.
-    public func respondSecret(requestID: String, value: String) async throws {
-        _ = try await request(
+    /// or persist the value. Late answers return `{"status":"expired"}`;
+    /// check the returned status before reporting delivery.
+    public func respondSecret(
+        requestID: String, value: String
+    ) async throws -> PromptResponseStatus {
+        let result = try await request(
             "secret.respond",
             params: ["request_id": .string(requestID), "value": .string(value)])
+        return try PromptResponseStatus(result: result)
     }
 }

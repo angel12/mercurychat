@@ -542,15 +542,17 @@ private struct ClarifySheet: View {
         isSubmitting = true
         submitError = nil
         Task {
-            let delivered = await controller.respondClarify(
+            let outcome = await controller.respondClarify(
                 requestID: request.requestID, answer: answer)
             isSubmitting = false
-            if delivered {
-                // A newer clarify may have replaced this one mid-RPC — the
-                // sheet is now presenting it, so dismiss only when nothing
-                // is pending.
+            switch outcome {
+            case .delivered, .expired:
+                // Expired closes too: the request is gone server-side and
+                // the controller posted a visible expiry notice. A newer
+                // clarify may have replaced this one mid-RPC — the sheet is
+                // now presenting it, so dismiss only when nothing is pending.
                 if controller.store.pendingClarify == nil { dismiss() }
-            } else {
+            case .failed:
                 submitError = controller.errorMessage
                     ?? "The answer didn't reach the server — try again."
             }
@@ -579,6 +581,9 @@ private struct SudoSheet: View {
             }
             .disabled(isSubmitting)
             .navigationTitle("Sudo Password")
+            // The password must not outlive the sheet, whatever dismissed it
+            // (delivery, expiry event, turn end, swipe on a future OS).
+            .onDisappear { password = "" }
             #if !os(macOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -603,12 +608,18 @@ private struct SudoSheet: View {
         isSubmitting = true
         submitError = nil
         Task {
-            let delivered = await controller.respondSudo(
+            let outcome = await controller.respondSudo(
                 requestID: request.requestID, password: value)
             isSubmitting = false
-            if delivered {
+            switch outcome {
+            case .delivered, .expired:
+                // The value has served its purpose the moment the RPC
+                // settles — clear it BEFORE the dismiss animation, not
+                // whenever SwiftUI releases the sheet's state (#19).
+                password = ""
                 if controller.store.pendingSudo == nil { dismiss() }
-            } else {
+            case .failed:
+                // Kept for the retry the sheet is offering.
                 submitError = controller.errorMessage
                     ?? "The password didn't reach the server — try again."
             }
@@ -639,6 +650,9 @@ private struct SecretSheet: View {
             }
             .disabled(isSubmitting)
             .navigationTitle("Credential")
+            // The credential must not outlive the sheet, whatever dismissed
+            // it (delivery, expiry event, turn end).
+            .onDisappear { value = "" }
             #if !os(macOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -663,12 +677,17 @@ private struct SecretSheet: View {
         isSubmitting = true
         submitError = nil
         Task {
-            let delivered = await controller.respondSecret(
+            let outcome = await controller.respondSecret(
                 requestID: request.requestID, value: answer)
             isSubmitting = false
-            if delivered {
+            switch outcome {
+            case .delivered, .expired:
+                // Clear BEFORE the dismiss animation, not whenever SwiftUI
+                // releases the sheet's state (#19).
+                value = ""
                 if controller.store.pendingSecret == nil { dismiss() }
-            } else {
+            case .failed:
+                // Kept for the retry the sheet is offering.
                 submitError = controller.errorMessage
                     ?? "The credential didn't reach the server — try again."
             }
