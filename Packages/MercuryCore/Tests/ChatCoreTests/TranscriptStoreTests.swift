@@ -325,6 +325,98 @@ struct TranscriptHydrationTests {
         #expect(first.rowID == 8)
     }
 
+    @Test func reconnectRestoreDoesNotDuplicateInflightTurn() {
+        // Stream part of a turn, drop the socket, re-hydrate, and restore the
+        // same inflight snapshot: exactly one user/assistant pair remains.
+        let store = TranscriptStore()
+        store.appendUserMessage("do the thing")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "working on"}"#))
+
+        // Reconnect: the user row persisted server-side; the turn is inflight.
+        store.hydrate(rows(#"[{"id": 1, "role": "user", "content": "do the thing"}]"#))
+        store.restoreInflight(
+            user: "do the thing", assistant: "working on it", streaming: true)
+
+        #expect(store.items.count == 2)
+        guard case .user(let user) = store.items[0] else {
+            Issue.record("expected single user row")
+            return
+        }
+        #expect(user.text == "do the thing")
+        guard case .assistant(let bubble) = store.items[1] else {
+            Issue.record("expected single assistant bubble")
+            return
+        }
+        // Streamed deltas win over the snapshot (the snapshot is the whole
+        // turn's text; the bubble may be a post-tool-boundary segment).
+        #expect(bubble.text == "working on")
+        #expect(bubble.isStreaming)
+
+        // The surviving bubble must still receive deltas.
+        store.apply(event("message.delta", #"{"text": " it"}"#))
+        guard case .assistant(let updated) = store.items[1] else {
+            Issue.record("expected assistant")
+            return
+        }
+        #expect(updated.text == "working on it")
+    }
+
+    @Test func reconnectRestoreSkipsCorrectionsAlreadyEchoed() {
+        let store = TranscriptStore()
+        store.appendUserMessage("do the thing")
+        store.appendUserMessage("actually use option B")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "ok"}"#))
+
+        store.hydrate(rows("[]"))
+        store.restoreInflight(
+            user: "do the thing", corrections: ["actually use option B"],
+            assistant: "ok", streaming: true)
+
+        let userTexts = store.items.compactMap { item -> String? in
+            if case .user(let m) = item { return m.text }
+            return nil
+        }
+        #expect(userTexts == ["do the thing", "actually use option B"])
+        #expect(store.items.count == 3)
+    }
+
+    @Test func freshRestoreStillAppendsInflightTurn() {
+        // App relaunch: nothing on screen yet — restore must build the turn.
+        let store = TranscriptStore()
+        store.hydrate(rows(#"[{"id": 1, "role": "user", "content": "earlier"}]"#))
+        store.restoreInflight(
+            user: "new prompt", assistant: "partial reply", streaming: true)
+
+        #expect(store.items.count == 3)
+        guard case .assistant(let bubble) = store.items[2] else {
+            Issue.record("expected restored bubble")
+            return
+        }
+        #expect(bubble.text == "partial reply")
+        #expect(bubble.isStreaming)
+    }
+
+    @Test func restoreWithSealedReplyAlreadyPresentDoesNotAppendTwin() {
+        // The turn finished (bubble sealed) right as the socket dropped; the
+        // resume snapshot carries the same final text with streaming=false.
+        let store = TranscriptStore()
+        store.appendUserMessage("hi")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "done"}"#))
+        store.apply(event("message.complete", #"{"text": "done", "status": "ok"}"#))
+
+        store.hydrate(rows("[]"))
+        store.restoreInflight(user: "hi", assistant: "done", streaming: false)
+
+        let bubbles = store.items.filter {
+            if case .assistant = $0 { return true }
+            return false
+        }
+        #expect(bubbles.count == 1)
+    }
+
     @Test func hiddenRowsAreSkipped() {
         let store = TranscriptStore()
         store.hydrate(

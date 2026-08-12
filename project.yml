@@ -58,3 +58,8 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # The native-PKCE sign-in binds a loopback NWListener for the OAuth
+        # redirect; a sandboxed macOS app can't listen without this. (The
+        # com.apple.security.* keys are macOS App Sandbox entitlements —
+        # iOS/visionOS ignore them, so the file is safely shared.)
+        com.apple.security.network.server: true

@@ -45,14 +45,21 @@ struct ChatView: View {
         }
         .sheet(item: $activeSheet) { sheet in
             if let controller {
-                switch sheet {
-                case .clarify(let request):
-                    ClarifySheet(controller: controller, request: request)
-                case .sudo(let request):
-                    SudoSheet(controller: controller, request: request)
-                case .secret(let request):
-                    SecretSheet(controller: controller, request: request)
+                Group {
+                    switch sheet {
+                    case .clarify(let request):
+                        ClarifySheet(controller: controller, request: request)
+                    case .sudo(let request):
+                        SudoSheet(controller: controller, request: request)
+                    case .secret(let request):
+                        SecretSheet(controller: controller, request: request)
+                    }
                 }
+                // A swipe-dismiss would hide the prompt while the agent
+                // stays blocked (the pending request outlives the sheet and
+                // nothing re-presents it) — answering, even with "Skip", is
+                // the only way out.
+                .interactiveDismissDisabled()
             }
         }
     }
@@ -450,6 +457,7 @@ private struct ClarifySheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var freeText = ""
     @State private var selected: Set<String> = []
+    @State private var submitError: String?
 
     var body: some View {
         NavigationStack {
@@ -457,6 +465,7 @@ private struct ClarifySheet: View {
                 Section {
                     Text(request.question).font(.body)
                 }
+                SubmitErrorSection(error: submitError)
                 if !request.choices.isEmpty {
                     Section {
                         ForEach(request.choices, id: \.self) { choice in
@@ -510,8 +519,16 @@ private struct ClarifySheet: View {
     }
 
     private func respond(_ answer: String) {
-        Task { await controller.respondClarify(requestID: request.requestID, answer: answer) }
-        dismiss()
+        Task {
+            if await controller.respondClarify(
+                requestID: request.requestID, answer: answer)
+            {
+                dismiss()
+            } else {
+                submitError = controller.errorMessage
+                    ?? "The answer didn't reach the server — try again."
+            }
+        }
     }
 }
 
@@ -520,6 +537,7 @@ private struct SudoSheet: View {
     let request: SudoRequest
     @Environment(\.dismiss) private var dismiss
     @State private var password = ""
+    @State private var submitError: String?
 
     var body: some View {
         NavigationStack {
@@ -529,6 +547,7 @@ private struct SudoSheet: View {
                 } footer: {
                     Text("Sent directly to the agent's sudo prompt; never stored.")
                 }
+                SubmitErrorSection(error: submitError)
                 SecureField("Password", text: $password)
             }
             .navigationTitle("Sudo Password")
@@ -551,8 +570,16 @@ private struct SudoSheet: View {
     }
 
     private func respond(_ value: String) {
-        Task { await controller.respondSudo(requestID: request.requestID, password: value) }
-        dismiss()
+        Task {
+            if await controller.respondSudo(
+                requestID: request.requestID, password: value)
+            {
+                dismiss()
+            } else {
+                submitError = controller.errorMessage
+                    ?? "The password didn't reach the server — try again."
+            }
+        }
     }
 }
 
@@ -561,6 +588,7 @@ private struct SecretSheet: View {
     let request: SecretRequest
     @Environment(\.dismiss) private var dismiss
     @State private var value = ""
+    @State private var submitError: String?
 
     var body: some View {
         NavigationStack {
@@ -572,6 +600,7 @@ private struct SecretSheet: View {
                         Text("Stored on the server as \(envVar); never kept on this device.")
                     }
                 }
+                SubmitErrorSection(error: submitError)
                 SecureField("Value", text: $value)
             }
             .navigationTitle("Credential")
@@ -594,8 +623,32 @@ private struct SecretSheet: View {
     }
 
     private func respond(_ answer: String) {
-        Task { await controller.respondSecret(requestID: request.requestID, value: answer) }
-        dismiss()
+        Task {
+            if await controller.respondSecret(
+                requestID: request.requestID, value: answer)
+            {
+                dismiss()
+            } else {
+                submitError = controller.errorMessage
+                    ?? "The credential didn't reach the server — try again."
+            }
+        }
+    }
+}
+
+/// Inline failure row for the blocking-prompt sheets: the sheet stays up so
+/// the answer can be retried.
+private struct SubmitErrorSection: View {
+    let error: String?
+
+    var body: some View {
+        if let error {
+            Section {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .font(.callout)
+            }
+        }
     }
 }
 

@@ -93,11 +93,13 @@ public struct HermesRESTClient: Sendable {
     }
 
     /// `GET /api/sessions/{id}/messages` — transcript hydration by **stored**
-    /// id. Always paged server-side (≤500 rows). With no explicit limit the
-    /// server returns the *latest* page in chronological order — the right
-    /// first fetch for a chat view; page older history with
-    /// `order: "oldest"` + offset. Pass the session's owning `profile` so
-    /// cross-profile rows resolve against the right state DB.
+    /// id. Always paged server-side (≤500 rows). The latest-page default
+    /// applies ONLY when `limit` is omitted; an explicit `limit` with no
+    /// `order` anchors at the *oldest* rows. Chat views must pass
+    /// `order: "latest"` explicitly and page older history with growing
+    /// offsets (latest-relative, chronological within each page). Pass the
+    /// session's owning `profile` so cross-profile rows resolve against the
+    /// right state DB.
     public func sessionMessages(
         storedID: String,
         limit: Int? = nil,
