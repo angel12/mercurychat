@@ -163,3 +163,35 @@ struct PKCETests {
         #expect(query["redirect_uri"] == "http://127.0.0.1:53682/cb")
     }
 }
+
+@Suite("Blocking-prompt response status")
+struct PromptResponseStatusTests {
+    private func decode(_ json: String) -> JSONValue {
+        try! JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+    }
+
+    @Test func acceptedStatusParses() throws {
+        #expect(try PromptResponseStatus(result: decode(#"{"status": "ok"}"#)) == .accepted)
+    }
+
+    @Test func expiredStatusParses() throws {
+        // A late answer resolves successfully at the transport level but was
+        // NOT delivered — this must surface as .expired, never as accepted.
+        #expect(try PromptResponseStatus(result: decode(#"{"status": "expired"}"#)) == .expired)
+    }
+
+    @Test func missingStatusThrows() {
+        #expect(throws: HermesError.self) {
+            _ = try PromptResponseStatus(result: decode("{}"))
+        }
+    }
+
+    @Test func unknownStatusThrows() {
+        // Fail closed: an unrecognized status must not be reported as
+        // delivered — the caller keeps the prompt up and can retry (a retry
+        // after actual delivery resolves as expired and closes cleanly).
+        #expect(throws: HermesError.self) {
+            _ = try PromptResponseStatus(result: decode(#"{"status": "later"}"#))
+        }
+    }
+}

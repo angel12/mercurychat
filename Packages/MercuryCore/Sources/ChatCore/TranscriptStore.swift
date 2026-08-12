@@ -392,6 +392,12 @@ public final class TranscriptStore {
         lastError = nil
     }
 
+    /// Visible one-liner in the transcript (blocking-prompt expiry and other
+    /// client-side conditions the user must not miss).
+    public func appendNotice(_ text: String, level: SystemNotice.Level = .info) {
+        items.append(.notice(SystemNotice(id: nextLiveID("notice"), text: text, level: level)))
+    }
+
     // MARK: Event reduction
 
     public func apply(_ event: GatewayEvent) {
