@@ -29,12 +29,21 @@ public actor LoopbackRedirectListener {
     private var listener: NWListener?
     private var connections: [NWConnection] = []
     private var waiter: CheckedContinuation<Redirect, Error>?
+    private var readyWaiter: CheckedContinuation<UInt16, Error>?
+    /// Set once cancelled/shut down, so a waiter that installs afterwards
+    /// (cancellation raced ahead of `waitForRedirect`) fails immediately
+    /// instead of suspending forever.
+    private var isFinished = false
 
     public init() {}
 
     /// Start listening; returns the redirect URI to hand to the authorize
     /// endpoint (`http://127.0.0.1:<port>/callback`).
-    public func start() throws -> String {
+    ///
+    /// Returns only once the listener is `.ready`: the port is assigned
+    /// before the socket actually accepts, and a browser redirected in that
+    /// window would see connection-refused.
+    public func start() async throws -> String {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(
             host: "127.0.0.1", port: .any)
@@ -46,21 +55,57 @@ public actor LoopbackRedirectListener {
         listener.newConnectionHandler = { [weak self] connection in
             Task { await self?.accept(connection) }
         }
+        listener.stateUpdateHandler = { [weak self] state in
+            Task { await self?.listenerStateChanged(state) }
+        }
         listener.start(queue: DispatchQueue(label: "mercury.pkce.listener"))
 
-        // NWListener assigns the port synchronously for .any on start in
-        // practice, but poll briefly to be safe.
-        for _ in 0..<50 {
-            if let port = listener.port, port.rawValue != 0 {
-                return "http://127.0.0.1:\(port.rawValue)/callback"
-            }
-            usleep(20_000)
+        let startTimeout = Task {
+            try? await Task.sleep(for: .seconds(5))
+            self.failReadyWaiter()
         }
-        listener.cancel()
-        throw ListenerError.failedToStart
+        defer { startTimeout.cancel() }
+        do {
+            let port = try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<UInt16, Error>) in
+                if isFinished {
+                    continuation.resume(throwing: ListenerError.failedToStart)
+                    return
+                }
+                readyWaiter = continuation
+            }
+            return "http://127.0.0.1:\(port)/callback"
+        } catch {
+            shutdown()
+            throw error
+        }
+    }
+
+    private func listenerStateChanged(_ state: NWListener.State) {
+        switch state {
+        case .ready:
+            if let port = listener?.port?.rawValue, port != 0 {
+                readyWaiter?.resume(returning: port)
+                readyWaiter = nil
+            } else {
+                failReadyWaiter()
+            }
+        case .failed, .cancelled:
+            failReadyWaiter()
+        default:
+            break
+        }
+    }
+
+    private func failReadyWaiter() {
+        readyWaiter?.resume(throwing: ListenerError.failedToStart)
+        readyWaiter = nil
     }
 
     /// Await the browser redirect. Single-shot; times out after `timeout`.
+    /// Cancelling the awaiting task tears the listener down immediately and
+    /// throws `ListenerError.cancelled` — the port must not stay open for
+    /// the full timeout after the user backs out of sign-in.
     public func waitForRedirect(timeout: TimeInterval = 300) async throws -> Redirect {
         defer { shutdown() }
         let timeoutTask = Task {
@@ -68,8 +113,16 @@ public actor LoopbackRedirectListener {
             self.failWaiter(ListenerError.cancelled)
         }
         defer { timeoutTask.cancel() }
-        return try await withCheckedThrowingContinuation { continuation in
-            waiter = continuation
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if isFinished {
+                    continuation.resume(throwing: ListenerError.cancelled)
+                    return
+                }
+                waiter = continuation
+            }
+        } onCancel: {
+            Task { await self.cancel() }
         }
     }
 
@@ -79,6 +132,9 @@ public actor LoopbackRedirectListener {
     }
 
     private func shutdown() {
+        isFinished = true
+        failReadyWaiter()
+        listener?.stateUpdateHandler = nil
         listener?.cancel()
         listener = nil
         for connection in connections { connection.cancel() }
@@ -135,10 +191,20 @@ public actor LoopbackRedirectListener {
             respond(connection, status: "404 Not Found", body: "Not found.")
             return
         }
-        let query = Dictionary(
-            uniqueKeysWithValues: (components.queryItems ?? []).map {
-                ($0.name, $0.value ?? "")
-            })
+        // Query items are attacker-controlled: build the map without the
+        // duplicate-key precondition of Dictionary(uniqueKeysWithValues:),
+        // and refuse ambiguous security parameters outright. Keep waiting —
+        // a malformed probe must not kill a legitimate sign-in in progress.
+        var query: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            let isDuplicate = query.updateValue(item.value ?? "", forKey: item.name) != nil
+            if isDuplicate, ["code", "state", "error"].contains(item.name) {
+                respond(
+                    connection, status: "400 Bad Request",
+                    body: "Bad request: duplicate \(item.name) parameter.")
+                return
+            }
+        }
         guard let code = query["code"], !code.isEmpty else {
             let detail = query["error"] ?? "missing code"
             respond(
@@ -157,8 +223,42 @@ public actor LoopbackRedirectListener {
     private func respond(_ connection: NWConnection, status: String, body: String) {
         let html = "<html><body style=\"font-family:-apple-system\"><p>\(body)</p></body></html>"
         let response = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
+        // Graceful close, not cancel-on-send: an abortive cancel() can RST
+        // the response out from under the peer before it reads the bytes —
+        // the browser then shows a connection error instead of this page and
+        // may retry against a port that is already shut down (resuming the
+        // waiter runs waitForRedirect's shutdown immediately). Detach the
+        // connection from the shutdown kill-list, mark the response final
+        // (FIN after content), and let it drain until the peer closes, with
+        // a failsafe timer so an unresponsive peer can't pin the socket.
+        connections.removeAll { $0 === connection }
         connection.send(
             content: Data(response.utf8),
-            completion: .contentProcessed { _ in connection.cancel() })
+            contentContext: .finalMessage,
+            isComplete: true,
+            completion: .contentProcessed { _ in
+                Self.drainThenCancel(connection)
+            })
+    }
+
+    /// Read until the peer closes (or errors), then cancel. A failsafe
+    /// timer cancels regardless — cancel() is idempotent, so racing the
+    /// EOF path is harmless.
+    private nonisolated static func drainThenCancel(_ connection: NWConnection) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) { connection.cancel() }
+        receiveToEOF(connection) { connection.cancel() }
+    }
+
+    private nonisolated static func receiveToEOF(
+        _ connection: NWConnection, then done: @escaping @Sendable () -> Void
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
+            _, _, isComplete, error in
+            if isComplete || error != nil {
+                done()
+            } else {
+                receiveToEOF(connection, then: done)
+            }
+        }
     }
 }

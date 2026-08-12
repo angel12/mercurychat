@@ -11,9 +11,38 @@ struct ServerEndpointTests {
         #expect(result.embeddedToken == nil)
     }
 
-    @Test func parsesHostPort() throws {
-        let result = try ServerEndpoint.parse("192.168.1.5:8080")
-        #expect(result.endpoint.baseURL.absoluteString == "http://192.168.1.5:8080")
+    @Test func schemelessLoopbackDefaultsToHTTP() throws {
+        for input in ["localhost:8080", "127.0.0.1:9119", "LocalHost"] {
+            let endpoint = try ServerEndpoint.parse(input).endpoint
+            #expect(endpoint.baseURL.scheme == "http", "\(input)")
+            #expect(!endpoint.isPlaintextNonLoopback, "\(input)")
+        }
+    }
+
+    @Test func schemelessNonLoopbackDefaultsToHTTPS() throws {
+        let lan = try ServerEndpoint.parse("192.168.1.5:8080").endpoint
+        #expect(lan.baseURL.absoluteString == "https://192.168.1.5:8080")
+        #expect(lan.isSecure)
+
+        let dns = try ServerEndpoint.parse("hermes.example.com").endpoint
+        #expect(dns.baseURL.absoluteString == "https://hermes.example.com")
+        #expect(dns.isSecure)
+
+        let tailnet = try ServerEndpoint.parse("my-mac.tail1234.ts.net").endpoint
+        #expect(tailnet.baseURL.scheme == "https")
+    }
+
+    @Test func explicitInsecureHTTPIsFlaggedNotRewritten() throws {
+        // An explicit scheme is honored — the connect flow gates on the
+        // flag rather than the parser silently rewriting user intent.
+        let lan = try ServerEndpoint.parse("http://192.168.1.5:8080").endpoint
+        #expect(lan.baseURL.absoluteString == "http://192.168.1.5:8080")
+        #expect(lan.isPlaintextNonLoopback)
+
+        #expect(!(try ServerEndpoint.parse("http://127.0.0.1:9119").endpoint
+            .isPlaintextNonLoopback))
+        #expect(!(try ServerEndpoint.parse("https://hermes.example.com").endpoint
+            .isPlaintextNonLoopback))
     }
 
     @Test func parsesHTTPSURL() throws {
