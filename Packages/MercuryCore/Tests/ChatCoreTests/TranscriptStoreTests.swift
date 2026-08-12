@@ -731,6 +731,84 @@ struct TranscriptHydrationTests {
         #expect(store.items.count == 4)
     }
 
+    @Test func idleResumeReconcilesRunningToolWithPersistedRow() {
+        // A tool completed while the socket was down: hydration carries the
+        // persisted completed row (same tool_call_id) and resume reports
+        // idle. Exactly one non-running row must remain — not a persisted
+        // copy plus a live twin spinning forever (#10).
+        let store = TranscriptStore()
+        store.appendUserMessage("go")
+        store.apply(event("message.start"))
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "terminal"}"#))
+
+        store.hydrate(
+            rows(
+                """
+                [{"id": 1, "role": "user", "content": "go"},
+                 {"id": 2, "role": "tool", "tool_name": "terminal",
+                  "tool_call_id": "t1", "content": "ran fine"}]
+                """))
+        store.setRunning(false)
+
+        let tools = store.items.compactMap { item -> ToolActivity? in
+            if case .tool(let t) = item { return t }
+            return nil
+        }
+        #expect(tools.count == 1)
+        #expect(tools[0].isRunning == false)
+        #expect(tools[0].resultText == "ran fine")
+    }
+
+    @Test func idleWithoutPersistedRowStillSealsRunningTool() {
+        // The completion event was lost AND the row isn't persisted (or has
+        // no matching id): end-of-turn cleanup must still stop the spinner.
+        let store = TranscriptStore()
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "terminal"}"#))
+        store.apply(
+            event(
+                "subagent.start",
+                #"{"subagent_id": "sa1", "goal": "explore", "task_index": 0, "task_count": 1}"#
+            ))
+        store.setRunning(false)
+
+        for item in store.items {
+            if case .tool(let t) = item { #expect(!t.isRunning) }
+        }
+
+        // A late completion for the sealed row must not crash or revive it.
+        store.apply(event("tool.complete", #"{"tool_id": "t1", "summary": "late"}"#))
+        let tools = store.items.compactMap { item -> ToolActivity? in
+            if case .tool(let t) = item { return t }
+            return nil
+        }
+        #expect(tools.allSatisfy { !$0.isRunning })
+    }
+
+    @Test func subagentIdentitySurvivesHydrationAndPagination() {
+        // Progress/completion events key by subagent_id; the display label
+        // ("Subagent") must never become the reducer identity across a
+        // hydration or prepend reindex (#12).
+        let store = TranscriptStore()
+        store.apply(
+            event(
+                "subagent.start",
+                #"{"subagent_id": "sa1", "goal": "explore", "task_index": 0, "task_count": 2}"#
+            ))
+        store.hydrate(rows("[]"))
+        store.prependOlder(rows(#"[{"id": 1, "role": "user", "content": "earlier"}]"#))
+
+        store.apply(
+            event("subagent.complete", #"{"subagent_id": "sa1", "summary": "found it"}"#))
+
+        let subagents = store.items.compactMap { item -> ToolActivity? in
+            if case .tool(let t) = item, t.subagentLabel != nil { return t }
+            return nil
+        }
+        #expect(subagents.count == 1)
+        #expect(subagents[0].isRunning == false)
+        #expect(subagents[0].summary == "found it")
+    }
+
     @Test func hiddenRowsAreSkipped() {
         let store = TranscriptStore()
         store.hydrate(

@@ -203,7 +203,21 @@ private struct ChatContentView: View {
 
     private var transcriptItems: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            if controller.canLoadOlder {
+            if let historyError = controller.historyError {
+                VStack(spacing: 6) {
+                    Text(historyError)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                    Button("Retry") {
+                        Task { await controller.retryHistory() }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(controller.isLoading)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal)
+            } else if controller.canLoadOlder {
                 Button("Load earlier messages") {
                     Task { await controller.loadOlderMessages() }
                 }

@@ -26,6 +26,10 @@ final class ChatController: Identifiable {
     private(set) var isLoading = false
     private(set) var canLoadOlder = false
     var errorMessage: String?
+    /// Transcript history couldn't be fetched (initial hydration or an
+    /// older page). Tracked separately from `errorMessage` so the retry
+    /// affordance survives unrelated errors and vice versa.
+    private(set) var historyError: String?
 
     private let connection: HermesConnection
     private let profile: String?
@@ -35,6 +39,17 @@ final class ChatController: Identifiable {
     private var loadedOffset = 0
     private static let pageSize = 100
 
+    /// Profile the current session was actually resumed under
+    /// (`session.profile` wins over the controller default) — retry and
+    /// older-page fetches must hit the same profile store as hydration.
+    private var effectiveProfile: String?
+
+    /// Monotonic guard for resume/create flows: `begin` suspends across the
+    /// resume RPC and hydration, and a reconnect starts another `begin`
+    /// mid-flight — only the newest generation may publish handle, ids,
+    /// transcript pages, or inflight state (mirrors AppModel.connectGeneration).
+    private var beginGeneration = 0
+
     init(connection: HermesConnection, profile: String?) {
         self.connection = connection
         self.profile = profile
@@ -43,49 +58,106 @@ final class ChatController: Identifiable {
     // MARK: Lifecycle
 
     func begin(_ mode: Mode) async {
+        beginGeneration += 1
+        let generation = beginGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == beginGeneration { isLoading = false } }
         do {
             switch mode {
             case .create(let cwd, let title):
                 let handle = try await connection.createSession(
                     cwd: cwd, profile: profile, title: title)
+                guard generation == beginGeneration else { return }
                 adopt(handle)
 
             case .resume(let session):
                 let profile = session.profile ?? self.profile
+                effectiveProfile = profile
                 // Resume (omit_messages) and REST hydration run in parallel —
                 // that is exactly why omit_messages exists. `order` must be
                 // explicit: with a limit but no order the server anchors at
                 // the OLDEST rows.
-                async let hydration = try? connection.rest.sessionMessages(
-                    storedID: session.storedID, limit: Self.pageSize, order: "latest",
-                    profile: profile)
+                async let hydration = Self.fetchPage(
+                    connection, storedID: session.storedID, offset: 0, profile: profile)
                 let handle = try await connection.resumeSession(
                     storedID: session.storedID, profile: profile)
+                guard generation == beginGeneration else { return }
                 adopt(handle)
                 var page = await hydration
+                guard generation == beginGeneration else { return }
                 // Resume can re-anchor to a continuation session's durable
                 // id (context-compression chains). A page fetched for the
                 // requested id would splice the wrong session's history and
                 // leave paging offsets pointing into it — refetch by the id
                 // resume actually returned.
                 if let reanchored = handle.storedID, reanchored != session.storedID {
-                    page = try? await connection.rest.sessionMessages(
-                        storedID: reanchored, limit: Self.pageSize, order: "latest",
-                        profile: profile)
+                    page = await Self.fetchPage(
+                        connection, storedID: reanchored, offset: 0, profile: profile)
+                    guard generation == beginGeneration else { return }
                 }
-                if let page {
+                switch page {
+                case .success(let page):
                     store.hydrate(page.messages)
                     loadedOffset = page.messages.count
                     canLoadOlder = page.returned == (page.limit ?? Self.pageSize)
+                    historyError = nil
+                case .failure(let error):
+                    // The session opened (resume succeeded) but persisted
+                    // history didn't load: the chat would silently show
+                    // only the live turn. Keep a visible retry path — and
+                    // reset paging so a retry hydrates from the top.
+                    loadedOffset = 0
+                    canLoadOlder = false
+                    historyError =
+                        "Couldn't load this session's history: \(Self.describe(error))"
                 }
                 applyResumeExtras(handle.raw)
             }
-        } catch let error as HermesError {
-            errorMessage = error.errorDescription
         } catch {
-            errorMessage = error.localizedDescription
+            guard generation == beginGeneration else { return }
+            errorMessage = Self.describe(error)
+        }
+    }
+
+    /// One transcript page as a Result, so callers can surface the failure
+    /// instead of `try?`-swallowing it (#16).
+    private static func fetchPage(
+        _ connection: HermesConnection, storedID: String, offset: Int, profile: String?
+    ) async -> Result<TranscriptPage, Error> {
+        do {
+            return .success(
+                try await connection.rest.sessionMessages(
+                    storedID: storedID, limit: pageSize, offset: offset,
+                    order: "latest", profile: profile))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Retry the failed history fetch: first page when hydration never
+    /// succeeded, else the next older page.
+    func retryHistory() async {
+        historyError = nil
+        if loadedOffset == 0 {
+            guard let storedID, !isLoading else { return }
+            let generation = beginGeneration
+            isLoading = true
+            defer { if generation == beginGeneration { isLoading = false } }
+            let page = await Self.fetchPage(
+                connection, storedID: storedID, offset: 0,
+                profile: effectiveProfile ?? profile)
+            guard generation == beginGeneration else { return }
+            switch page {
+            case .success(let page):
+                store.hydrate(page.messages)
+                loadedOffset = page.messages.count
+                canLoadOlder = page.returned == (page.limit ?? Self.pageSize)
+            case .failure(let error):
+                historyError =
+                    "Couldn't load this session's history: \(Self.describe(error))"
+            }
+        } else {
+            await loadOlderMessages()
         }
     }
 
@@ -183,17 +255,24 @@ final class ChatController: Identifiable {
     }
 
     func loadOlderMessages() async {
-        guard canLoadOlder, let storedID, !isLoading else { return }
+        guard canLoadOlder || historyError != nil, let storedID, !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
-        guard
-            let page = try? await connection.rest.sessionMessages(
-                storedID: storedID, limit: Self.pageSize, offset: loadedOffset,
-                order: "latest", profile: profile)
-        else { return }
-        store.prependOlder(page.messages)
-        loadedOffset += page.messages.count
-        canLoadOlder = !page.messages.isEmpty && page.returned == (page.limit ?? Self.pageSize)
+        let result = await Self.fetchPage(
+            connection, storedID: storedID, offset: loadedOffset,
+            profile: effectiveProfile ?? profile)
+        switch result {
+        case .success(let page):
+            store.prependOlder(page.messages)
+            loadedOffset += page.messages.count
+            canLoadOlder =
+                !page.messages.isEmpty && page.returned == (page.limit ?? Self.pageSize)
+            historyError = nil
+        case .failure(let error):
+            // Keep the retry path visible even though canLoadOlder stays
+            // true — a silent failure here permanently hid older history.
+            historyError = "Couldn't load earlier messages: \(Self.describe(error))"
+        }
     }
 
     func rename(_ title: String) async {
@@ -232,7 +311,7 @@ final class ChatController: Identifiable {
             store.clearApproval(matching: request)
             return true
         } catch {
-            errorMessage = describe(error)
+            errorMessage = Self.describe(error)
             return false
         }
     }
@@ -245,7 +324,7 @@ final class ChatController: Identifiable {
                 status, what: "answer",
                 clear: { self.store.clearClarify(requestID: requestID) })
         } catch {
-            errorMessage = describe(error)
+            errorMessage = Self.describe(error)
             return .failed
         }
     }
@@ -258,7 +337,7 @@ final class ChatController: Identifiable {
                 status, what: "password",
                 clear: { self.store.clearSudo(requestID: requestID) })
         } catch {
-            errorMessage = describe(error)
+            errorMessage = Self.describe(error)
             return .failed
         }
     }
@@ -270,7 +349,7 @@ final class ChatController: Identifiable {
                 status, what: "credential",
                 clear: { self.store.clearSecret(requestID: requestID) })
         } catch {
-            errorMessage = describe(error)
+            errorMessage = Self.describe(error)
             return .failed
         }
     }
@@ -290,7 +369,7 @@ final class ChatController: Identifiable {
         }
     }
 
-    private func describe(_ error: Error) -> String {
+    private static func describe(_ error: Error) -> String {
         (error as? HermesError)?.errorDescription ?? error.localizedDescription
     }
 }
