@@ -136,7 +136,7 @@ private struct ChatContentView: View {
                 // iOS 26: zero preference events during a 400pt drag), so it is
                 // ONLY the fallback, never the primary path.
                 let base = ScrollView {
-                    transcriptItems
+                    transcriptItems(proxy)
                         .padding(.vertical, 12)
                         .background(
                             GeometryReader { content in
@@ -201,7 +201,7 @@ private struct ChatContentView: View {
         }
     }
 
-    private var transcriptItems: some View {
+    private func transcriptItems(_ proxy: ScrollViewProxy) -> some View {
         LazyVStack(alignment: .leading, spacing: 12) {
             if let historyError = controller.historyError {
                 VStack(spacing: 6) {
@@ -210,7 +210,9 @@ private struct ChatContentView: View {
                         .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
                     Button("Retry") {
-                        Task { await controller.retryHistory() }
+                        loadOlderPreservingViewport(proxy) {
+                            await controller.retryHistory()
+                        }
                     }
                     .buttonStyle(.bordered)
                     .disabled(controller.isLoading)
@@ -219,14 +221,19 @@ private struct ChatContentView: View {
                 .padding(.horizontal)
             } else if controller.canLoadOlder {
                 Button("Load earlier messages") {
-                    Task { await controller.loadOlderMessages() }
+                    loadOlderPreservingViewport(proxy) {
+                        await controller.loadOlderMessages()
+                    }
                 }
                 .buttonStyle(.borderless)
                 .frame(maxWidth: .infinity)
             }
             ForEach(controller.store.items) { item in
-                TranscriptItemView(item: item)
-                    .id(item.id)
+                TranscriptItemView(
+                    item: item,
+                    onRetryUser: { id in Task { await controller.retrySend(messageID: id) } }
+                )
+                .id(item.id)
             }
             if let generating = controller.store.generatingToolName {
                 HStack(spacing: 6) {
@@ -279,6 +286,26 @@ private struct ChatContentView: View {
             } else {
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
+        }
+    }
+
+    /// Prepending older history shifts every offset in the LazyVStack and
+    /// the viewport lands somewhere unrelated (#18). Capture the current top
+    /// item, run the prepend, then pin that item back to the top —
+    /// non-animated, since animated hops across a long LazyVStack strand the
+    /// viewport in un-laid-out space.
+    private func loadOlderPreservingViewport(
+        _ proxy: ScrollViewProxy, _ load: @escaping () async -> Void
+    ) {
+        guard !controller.isLoading else { return }
+        let anchorID = controller.store.items.first?.id
+        let countBefore = controller.store.items.count
+        Task {
+            await load()
+            guard let anchorID, controller.store.items.count > countBefore else { return }
+            // Let the prepend commit its layout pass before re-anchoring.
+            await Task.yield()
+            proxy.scrollTo(anchorID, anchor: .top)
         }
     }
 
@@ -422,7 +449,16 @@ private struct ComposerView: View {
         let message = text
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         text = ""
-        Task { await controller.submit(message) }
+        Task {
+            // The keyboard can commit pending marked/autocorrect text OVER a
+            // synchronous clear, resurrecting the sent message in the field
+            // (#4). Re-clear once that commit has settled — but only when
+            // the field still holds exactly what was sent, so a fast next
+            // message is never wiped.
+            await Task.yield()
+            if text == message { text = "" }
+            await controller.submit(message)
+        }
     }
 }
 

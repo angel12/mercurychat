@@ -5,11 +5,13 @@ import SwiftUI
 /// thinking), tool activity, or system notice.
 struct TranscriptItemView: View {
     let item: TranscriptItem
+    /// Called with the message id when the user taps retry on a failed send.
+    var onRetryUser: ((String) -> Void)? = nil
 
     var body: some View {
         switch item {
         case .user(let message):
-            UserBubble(message: message)
+            UserBubble(message: message, onRetry: onRetryUser)
         case .assistant(let message):
             // Bubbles sealed empty at a tool boundary render as nothing.
             if message.text.isEmpty, message.reasoning.isEmpty,
@@ -29,15 +31,36 @@ struct TranscriptItemView: View {
 
 private struct UserBubble: View {
     let message: UserMessage
+    var onRetry: ((String) -> Void)? = nil
 
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            Text(message.text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(message.text)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
+                    .opacity(message.sendState == .sending ? 0.55 : 1)
+                switch message.sendState {
+                case .queued:
+                    Label("Queued — runs after the current turn", systemImage: "clock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .failed:
+                    Button {
+                        onRetry?(message.id)
+                    } label: {
+                        Label("Not delivered — tap to retry", systemImage: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
+                case .sending, .sent:
+                    EmptyView()
+                }
+            }
         }
         .padding(.horizontal)
     }

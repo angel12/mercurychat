@@ -84,16 +84,22 @@ extension HermesConnection {
     /// reply arrives only via events; never await this for completion. Set
     /// `interrupted` on the first submit after a barge-in so the backend
     /// prepends a "your spoken reply was cut off" note for the model.
+    /// Returns the server's dispatch status: `"streaming"` (turn started),
+    /// or — when submitted mid-turn — `"queued"`, `"redirected"`, or
+    /// `"steered"` per the server's busy-input policy. Nil when the result
+    /// carries no status (older backends).
+    @discardableResult
     public func submitPrompt(
         sessionID: String, text: String, interrupted: Bool = false
-    ) async throws {
+    ) async throws -> String? {
         var params: [String: JSONValue] = [
             "session_id": .string(sessionID),
             "text": .string(text),
         ]
         if interrupted { params["interrupted"] = .bool(true) }
         // Desktop uses a 30-minute timeout here.
-        _ = try await request("prompt.submit", params: .object(params), timeout: 1800)
+        let result = try await request("prompt.submit", params: .object(params), timeout: 1800)
+        return result["status"]?.stringValue
     }
 
     /// Cancel the in-flight turn (used on barge-in while still generating).

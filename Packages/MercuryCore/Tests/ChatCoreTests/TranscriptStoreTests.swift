@@ -809,6 +809,62 @@ struct TranscriptHydrationTests {
         #expect(subagents[0].summary == "found it")
     }
 
+    @Test func echoStateTracksIdentityNotText() {
+        // Two echoes with identical text: marking one failed must not touch
+        // the other (#17 — stable submission identity).
+        let store = TranscriptStore()
+        let first = store.appendUserMessage("same", state: .sending)
+        let second = store.appendUserMessage("same", state: .sending)
+        store.setUserMessageState(id: first, .failed)
+        store.setUserMessageState(id: second, .sent)
+
+        let states = store.items.compactMap { item -> UserMessage.SendState? in
+            if case .user(let m) = item { return m.sendState }
+            return nil
+        }
+        #expect(states == [.failed, .sent])
+    }
+
+    @Test func queuedPromptRestoresOnceAndSettlesWhenTurnStarts() {
+        let store = TranscriptStore()
+        store.appendUserMessage("current turn")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "working"}"#))
+
+        // Fresh app open: no echo for the queued prompt — restore it.
+        store.restoreQueuedPrompt("next thing")
+        // A second resume (reconnect) must not duplicate it.
+        store.restoreQueuedPrompt("next thing")
+
+        let queued = store.items.compactMap { item -> UserMessage? in
+            if case .user(let m) = item, m.sendState == .queued { return m }
+            return nil
+        }
+        #expect(queued.map(\.text) == ["next thing"])
+
+        // Its turn starting drains the queue: the chip settles to sent.
+        store.apply(event("message.start"))
+        let states = store.items.compactMap { item -> UserMessage.SendState? in
+            if case .user(let m) = item { return m.sendState }
+            return nil
+        }
+        #expect(!states.contains(.queued))
+    }
+
+    @Test func queuedPromptSkippedWhenEchoSurvived() {
+        // Socket-drop reconnect: the local echo survived — the resume's
+        // queued payload must not append a twin.
+        let store = TranscriptStore()
+        store.appendUserMessage("do it next", state: .queued)
+        store.restoreQueuedPrompt("do it next")
+
+        let userTexts = store.items.compactMap { item -> String? in
+            if case .user(let m) = item { return m.text }
+            return nil
+        }
+        #expect(userTexts == ["do it next"])
+    }
+
     @Test func hiddenRowsAreSkipped() {
         let store = TranscriptStore()
         store.hydrate(
