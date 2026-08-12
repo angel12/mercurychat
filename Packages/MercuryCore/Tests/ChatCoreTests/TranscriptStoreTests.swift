@@ -574,6 +574,163 @@ struct TranscriptHydrationTests {
         #expect(bubbles.count == 1)
     }
 
+    @Test func restoreAfterToolStartDoesNotDuplicateAssistantText() {
+        // Reconnect lands after tool.start sealed the bubble but before any
+        // post-tool delta: the tool row is last, so neither the open-bubble
+        // nor the sealed-last reconciliation path applies. The snapshot text
+        // is already fully rendered — nothing may be appended (#9).
+        let store = TranscriptStore()
+        store.appendUserMessage("go")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "first"}"#))
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "terminal"}"#))
+
+        store.hydrate(rows("[]"))
+        store.restoreInflight(user: "go", assistant: "first", streaming: true)
+
+        let assistants = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(assistants.map(\.text) == ["first"])
+
+        // A post-tool delta still opens a fresh bubble below the tool row.
+        store.apply(event("message.delta", #"{"text": "second"}"#))
+        guard case .assistant(let post) = store.items.last else {
+            Issue.record("expected post-tool bubble")
+            return
+        }
+        #expect(post.text == "second")
+    }
+
+    @Test func restoreAfterToolStartAppendsOnlySnapshotSuffix() {
+        // Same boundary, but the snapshot carries text emitted while the
+        // socket was down — only the suffix past the rendered total may
+        // appear, in a new streaming bubble below the tool row.
+        let store = TranscriptStore()
+        store.appendUserMessage("go")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "first"}"#))
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "terminal"}"#))
+
+        store.hydrate(rows("[]"))
+        store.restoreInflight(user: "go", assistant: "firstsecond", streaming: true)
+
+        let assistants = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(assistants.map(\.text) == ["first", "second"])
+        #expect(assistants.last?.isStreaming == true)
+        guard case .tool = store.items[2] else {
+            Issue.record("expected tool row between the segments")
+            return
+        }
+    }
+
+    @Test func restoreWithPersistedMidTurnSegmentsAppendsOnlySuffix() {
+        // A mid-turn redirect (message sent while the agent runs) persists
+        // the partial reply and the correction as rows. On reconnect the
+        // hydrated turn already shows them; the snapshot concatenates the
+        // whole turn and must not be appended verbatim below the correction
+        // (#5: "my message appears again under the latest response").
+        let store = TranscriptStore()
+        store.hydrate(
+            rows(
+                """
+                [{"id": 1, "role": "user", "content": "build it"},
+                 {"id": 2, "role": "assistant", "content": "part one. "},
+                 {"id": 3, "role": "user", "content": "use option B"}]
+                """))
+        store.restoreInflight(
+            user: "build it", corrections: ["use option B"],
+            assistant: "part one. part two", streaming: true)
+
+        let userTexts = store.items.compactMap { item -> String? in
+            if case .user(let m) = item { return m.text }
+            return nil
+        }
+        #expect(userTexts == ["build it", "use option B"])
+
+        let assistants = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(assistants.map(\.text) == ["part one. ", "part two"])
+        // The suffix renders BELOW the correction, matching emission order.
+        guard case .assistant(let last) = store.items.last else {
+            Issue.record("expected suffix bubble last")
+            return
+        }
+        #expect(last.text == "part two")
+        #expect(last.isStreaming)
+    }
+
+    @Test func restoreWithFullyRenderedTurnAppendsNothing() {
+        // Rendered segments already account for the whole snapshot (sealed
+        // at an interim/tool boundary, correction echo last): no append.
+        let store = TranscriptStore()
+        store.hydrate(
+            rows(
+                """
+                [{"id": 1, "role": "user", "content": "build it"},
+                 {"id": 2, "role": "assistant", "content": "part one"},
+                 {"id": 3, "role": "user", "content": "use option B"}]
+                """))
+        let before = store.items.count
+        store.restoreInflight(
+            user: "build it", corrections: ["use option B"],
+            assistant: "part one", streaming: true)
+        #expect(store.items.count == before)
+    }
+
+    @Test func restoreUnalignableRenderedTurnKeepsSegments() {
+        // The rendered turn can't be lined up with the snapshot (mid-turn
+        // deltas were lost): keep what's on screen, never append a twin.
+        let store = TranscriptStore()
+        store.appendUserMessage("go")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "tangent"}"#))
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "terminal"}"#))
+
+        store.hydrate(rows("[]"))
+        store.restoreInflight(user: "go", assistant: "different text", streaming: true)
+
+        let assistants = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(assistants.map(\.text) == ["tangent"])
+    }
+
+    @Test func hydrationDropsStreamingBubbleMatchingPersistedSegment() {
+        // A turn with a mid-turn redirect completed while the socket was
+        // down: the live partial equals a PERSISTED mid-turn segment (not a
+        // prefix of the latest reply). It must not survive as a duplicate
+        // under the final response (#5).
+        let store = TranscriptStore()
+        store.appendUserMessage("build it")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "part one"}"#))
+
+        store.hydrate(
+            rows(
+                """
+                [{"id": 1, "role": "user", "content": "build it"},
+                 {"id": 2, "role": "assistant", "content": "part one"},
+                 {"id": 3, "role": "user", "content": "use option B"},
+                 {"id": 4, "role": "assistant", "content": "part two final"}]
+                """))
+        store.setRunning(false)
+
+        let assistants = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(assistants.map(\.text) == ["part one", "part two final"])
+        #expect(store.items.count == 4)
+    }
+
     @Test func hiddenRowsAreSkipped() {
         let store = TranscriptStore()
         store.hydrate(
