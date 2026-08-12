@@ -190,6 +190,12 @@ final class ChatController: Identifiable {
                 streaming: inflight["streaming"]?.truthy ?? false,
                 error: inflight["error"]?.stringValue)
         }
+        // An accepted next-turn prompt waiting behind the running turn:
+        // without this it is invisible after an app relaunch until it
+        // finally drains.
+        if let queued = result["queued"]?["user"]?.stringValue {
+            store.restoreQueuedPrompt(queued)
+        }
         store.setRunning(result["running"]?.truthy ?? false)
     }
 
@@ -235,17 +241,50 @@ final class ChatController: Identifiable {
 
     func submit(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let runtimeID else { return }
-        store.appendUserMessage(trimmed)
+        guard !trimmed.isEmpty else { return }
+        let echoID = store.appendUserMessage(trimmed, state: .sending)
+        await dispatch(text: trimmed, echoID: echoID)
+    }
+
+    /// Re-send a failed echo, keeping its identity (the retry updates the
+    /// same bubble rather than appending a twin).
+    func retrySend(messageID: String) async {
+        guard case .user(let message)? = store.items.first(where: { $0.id == messageID }),
+            message.sendState == .failed
+        else { return }
+        store.setUserMessageState(id: messageID, .sending)
+        await dispatch(text: message.text, echoID: messageID)
+    }
+
+    private func dispatch(text: String, echoID: String) async {
+        guard let runtimeID else {
+            store.setUserMessageState(id: echoID, .failed)
+            return
+        }
         do {
-            // Submitting while busy queues server-side rather than erroring.
-            try await connection.submitPrompt(sessionID: runtimeID, text: trimmed)
+            // Submitting while busy doesn't error: the server queues,
+            // redirects, or steers per its busy-input policy and says which
+            // in the result — surface that, or "/steer worked but nothing
+            // acknowledged it" (#6).
+            let status = try await connection.submitPrompt(
+                sessionID: runtimeID, text: text)
             // The DB row exists after the first prompt; a created session
             // learns its stored id via session.info events.
-        } catch let error as HermesError {
-            errorMessage = error.errorDescription
+            store.setUserMessageState(id: echoID, status == "queued" ? .queued : .sent)
+            switch status {
+            case "redirected":
+                store.appendNotice("Redirecting the current turn to your message…")
+            case "steered":
+                store.appendNotice(
+                    "Steering — the agent will see your message after its current action.")
+            default:
+                break  // streaming/queued are visible on the bubble itself.
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            // The exact echo is marked, not removed: the user's text is
+            // preserved for a one-tap retry (#17).
+            store.setUserMessageState(id: echoID, .failed)
+            errorMessage = Self.describe(error)
         }
     }
 

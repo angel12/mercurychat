@@ -20,15 +20,33 @@ public enum TranscriptItem: Sendable, Equatable, Identifiable {
 }
 
 public struct UserMessage: Sendable, Equatable, Identifiable {
+    /// Delivery state of an optimistically-echoed message. Hydrated rows are
+    /// always `.sent` — persistence implies delivery.
+    public enum SendState: Sendable, Equatable {
+        /// The submit RPC is still in flight.
+        case sending
+        /// The server accepted the prompt (or the row was hydrated).
+        case sent
+        /// Accepted, but held behind the running turn — runs next.
+        case queued
+        /// The submit RPC failed; the message never reached the server.
+        case failed
+    }
+
     public var id: String
     public var text: String
+    public var sendState: SendState
     /// Durable backend `messages.id` once persisted (hydration dedupe key).
     public var rowID: Int?
     public var timestamp: Date?
 
-    public init(id: String, text: String, rowID: Int? = nil, timestamp: Date? = nil) {
+    public init(
+        id: String, text: String, sendState: SendState = .sent,
+        rowID: Int? = nil, timestamp: Date? = nil
+    ) {
         self.id = id
         self.text = text
+        self.sendState = sendState
         self.rowID = rowID
         self.timestamp = timestamp
     }

@@ -414,10 +414,52 @@ public final class TranscriptStore {
 
     // MARK: Local echo
 
-    /// Append the user's message optimistically at submit time.
-    public func appendUserMessage(_ text: String) {
-        items.append(.user(UserMessage(id: nextLiveID("user"), text: text, timestamp: Date())))
+    /// Append the user's message optimistically at submit time. Returns the
+    /// echo's stable live id so the submit flow can mark the EXACT message
+    /// delivered/queued/failed once the RPC settles.
+    @discardableResult
+    public func appendUserMessage(
+        _ text: String, state: UserMessage.SendState = .sent
+    ) -> String {
+        let id = nextLiveID("user")
+        items.append(
+            .user(UserMessage(id: id, text: text, sendState: state, timestamp: Date())))
         lastError = nil
+        return id
+    }
+
+    /// Update one echo's delivery state (identity-keyed: a retry mid-flight
+    /// must not repaint a different message with the same text).
+    public func setUserMessageState(id: String, _ state: UserMessage.SendState) {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+            case .user(var message) = items[index]
+        else { return }
+        message.sendState = state
+        items[index] = .user(message)
+    }
+
+    /// Surface the accepted next-turn prompt from a resume payload
+    /// (`queued: {user}`): after an app relaunch there is no local echo and
+    /// the message would be invisible until its turn finally starts. Deduped
+    /// by text against anything already rendered (a surviving echo).
+    public func restoreQueuedPrompt(_ text: String) {
+        guard !text.isEmpty else { return }
+        let alreadyShown = items.contains { item in
+            if case .user(let m) = item { return m.text == text }
+            return false
+        }
+        guard !alreadyShown else { return }
+        appendUserMessage(text, state: .queued)
+    }
+
+    /// A new turn starting means the queued prompt drained into it.
+    private func markQueuedPromptsStarted() {
+        for (index, item) in items.enumerated() {
+            if case .user(var message) = item, message.sendState == .queued {
+                message.sendState = .sent
+                items[index] = .user(message)
+            }
+        }
     }
 
     /// Visible one-liner in the transcript (blocking-prompt expiry and other
@@ -431,6 +473,7 @@ public final class TranscriptStore {
     public func apply(_ event: GatewayEvent) {
         switch event.type {
         case GatewayEvent.Kind.messageStart:
+            markQueuedPromptsStarted()
             openBubble()
 
         case GatewayEvent.Kind.messageDelta:
