@@ -408,6 +408,7 @@ private struct ComposerView: View {
 private struct ApprovalCard: View {
     let controller: ChatController
     let request: ApprovalRequest
+    @State private var isSubmitting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -425,9 +426,15 @@ private struct ApprovalCard: View {
             HStack {
                 ForEach(request.choices, id: \.self) { choice in
                     Button(choiceLabel(choice), role: choice == "deny" ? .destructive : nil) {
-                        Task { await controller.respondApproval(choice: choice) }
+                        guard !isSubmitting else { return }
+                        isSubmitting = true
+                        Task {
+                            await controller.respondApproval(request, choice: choice)
+                            isSubmitting = false
+                        }
                     }
                     .buttonStyle(.bordered)
+                    .disabled(isSubmitting)
                 }
             }
         }
@@ -458,6 +465,7 @@ private struct ClarifySheet: View {
     @State private var freeText = ""
     @State private var selected: Set<String> = []
     @State private var submitError: String?
+    @State private var isSubmitting = false
 
     var body: some View {
         NavigationStack {
@@ -494,6 +502,7 @@ private struct ClarifySheet: View {
                         .lineLimit(1...4)
                 }
             }
+            .disabled(isSubmitting)
             .navigationTitle("Question")
             #if !os(macOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -501,6 +510,7 @@ private struct ClarifySheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Skip") { respond("") }
+                        .disabled(isSubmitting)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Answer") {
@@ -509,7 +519,7 @@ private struct ClarifySheet: View {
                                 ? selected.sorted().joined(separator: ", ")
                                 : freeText)
                     }
-                    .disabled(freeText.isEmpty && selected.isEmpty)
+                    .disabled(isSubmitting || (freeText.isEmpty && selected.isEmpty))
                 }
             }
         }
@@ -519,11 +529,18 @@ private struct ClarifySheet: View {
     }
 
     private func respond(_ answer: String) {
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        submitError = nil
         Task {
-            if await controller.respondClarify(
+            let delivered = await controller.respondClarify(
                 requestID: request.requestID, answer: answer)
-            {
-                dismiss()
+            isSubmitting = false
+            if delivered {
+                // A newer clarify may have replaced this one mid-RPC — the
+                // sheet is now presenting it, so dismiss only when nothing
+                // is pending.
+                if controller.store.pendingClarify == nil { dismiss() }
             } else {
                 submitError = controller.errorMessage
                     ?? "The answer didn't reach the server — try again."
@@ -538,6 +555,7 @@ private struct SudoSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var password = ""
     @State private var submitError: String?
+    @State private var isSubmitting = false
 
     var body: some View {
         NavigationStack {
@@ -550,6 +568,7 @@ private struct SudoSheet: View {
                 SubmitErrorSection(error: submitError)
                 SecureField("Password", text: $password)
             }
+            .disabled(isSubmitting)
             .navigationTitle("Sudo Password")
             #if !os(macOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -557,10 +576,11 @@ private struct SudoSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Decline") { respond("") }
+                        .disabled(isSubmitting)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Continue") { respond(password) }
-                        .disabled(password.isEmpty)
+                        .disabled(isSubmitting || password.isEmpty)
                 }
             }
         }
@@ -570,11 +590,15 @@ private struct SudoSheet: View {
     }
 
     private func respond(_ value: String) {
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        submitError = nil
         Task {
-            if await controller.respondSudo(
+            let delivered = await controller.respondSudo(
                 requestID: request.requestID, password: value)
-            {
-                dismiss()
+            isSubmitting = false
+            if delivered {
+                if controller.store.pendingSudo == nil { dismiss() }
             } else {
                 submitError = controller.errorMessage
                     ?? "The password didn't reach the server — try again."
@@ -589,6 +613,7 @@ private struct SecretSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var value = ""
     @State private var submitError: String?
+    @State private var isSubmitting = false
 
     var body: some View {
         NavigationStack {
@@ -603,6 +628,7 @@ private struct SecretSheet: View {
                 SubmitErrorSection(error: submitError)
                 SecureField("Value", text: $value)
             }
+            .disabled(isSubmitting)
             .navigationTitle("Credential")
             #if !os(macOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -610,10 +636,11 @@ private struct SecretSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Skip") { respond("") }
+                        .disabled(isSubmitting)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { respond(value) }
-                        .disabled(value.isEmpty)
+                        .disabled(isSubmitting || value.isEmpty)
                 }
             }
         }
@@ -623,11 +650,15 @@ private struct SecretSheet: View {
     }
 
     private func respond(_ answer: String) {
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        submitError = nil
         Task {
-            if await controller.respondSecret(
+            let delivered = await controller.respondSecret(
                 requestID: request.requestID, value: answer)
-            {
-                dismiss()
+            isSubmitting = false
+            if delivered {
+                if controller.store.pendingSecret == nil { dismiss() }
             } else {
                 submitError = controller.errorMessage
                     ?? "The credential didn't reach the server — try again."

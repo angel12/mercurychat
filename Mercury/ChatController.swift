@@ -64,7 +64,18 @@ final class ChatController: Identifiable {
                 let handle = try await connection.resumeSession(
                     storedID: session.storedID, profile: profile)
                 adopt(handle)
-                if let page = await hydration {
+                var page = await hydration
+                // Resume can re-anchor to a continuation session's durable
+                // id (context-compression chains). A page fetched for the
+                // requested id would splice the wrong session's history and
+                // leave paging offsets pointing into it — refetch by the id
+                // resume actually returned.
+                if let reanchored = handle.storedID, reanchored != session.storedID {
+                    page = try? await connection.rest.sessionMessages(
+                        storedID: reanchored, limit: Self.pageSize, order: "latest",
+                        profile: profile)
+                }
+                if let page {
                     store.hydrate(page.messages)
                     loadedOffset = page.messages.count
                     canLoadOlder = page.returned == (page.limit ?? Self.pageSize)
@@ -94,8 +105,10 @@ final class ChatController: Identifiable {
     }
 
     /// `running`, `inflight`, and `auto_continue` from the resume result.
+    /// Inflight restoration must run BEFORE the running flag: `setRunning(
+    /// false)` seals any surviving live bubble, and sealing first would rob
+    /// `restoreInflight` of the open bubble it reconciles against.
     private func applyResumeExtras(_ result: JSONValue) {
-        store.setRunning(result["running"]?.truthy ?? false)
         if let inflight = result["inflight"], inflight.objectValue != nil {
             store.restoreInflight(
                 user: inflight["user"]?.stringValue ?? "",
@@ -105,6 +118,7 @@ final class ChatController: Identifiable {
                 streaming: inflight["streaming"]?.truthy ?? false,
                 error: inflight["error"]?.stringValue)
         }
+        store.setRunning(result["running"]?.truthy ?? false)
     }
 
     /// The socket came back after a drop: runtime ids may be recycled, so
@@ -191,14 +205,16 @@ final class ChatController: Identifiable {
 
     // The agent thread stays frozen until an answer actually reaches the
     // server, so the pending prompt is cleared only after the RPC succeeds —
-    // on failure it stays up for a retry and the error is surfaced.
+    // on failure it stays up for a retry and the error is surfaced. Clearing
+    // is identity-guarded: the RPC suspends this actor, and a NEWER request
+    // arriving mid-flight must not be wiped by the older response.
 
     @discardableResult
-    func respondApproval(choice: String) async -> Bool {
+    func respondApproval(_ request: ApprovalRequest, choice: String) async -> Bool {
         guard let runtimeID else { return false }
         do {
             try await connection.respondApproval(sessionID: runtimeID, choice: choice)
-            store.clearApproval()
+            store.clearApproval(matching: request)
             return true
         } catch {
             errorMessage = describe(error)
@@ -210,7 +226,7 @@ final class ChatController: Identifiable {
     func respondClarify(requestID: String, answer: String) async -> Bool {
         do {
             try await connection.respondClarify(requestID: requestID, answer: answer)
-            store.clearClarify()
+            store.clearClarify(requestID: requestID)
             return true
         } catch {
             errorMessage = describe(error)
@@ -222,7 +238,7 @@ final class ChatController: Identifiable {
     func respondSudo(requestID: String, password: String) async -> Bool {
         do {
             try await connection.respondSudo(requestID: requestID, password: password)
-            store.clearSudo()
+            store.clearSudo(requestID: requestID)
             return true
         } catch {
             errorMessage = describe(error)
@@ -234,7 +250,7 @@ final class ChatController: Identifiable {
     func respondSecret(requestID: String, value: String) async -> Bool {
         do {
             try await connection.respondSecret(requestID: requestID, value: value)
-            store.clearSecret()
+            store.clearSecret(requestID: requestID)
             return true
         } catch {
             errorMessage = describe(error)

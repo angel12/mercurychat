@@ -176,6 +176,26 @@ struct TranscriptStoreTests {
         #expect(store.pendingSecret == nil)
     }
 
+    @Test func staleResponseCannotClearNewerPrompt() {
+        // Actor reentrancy: while response A's RPC is in flight, request B
+        // replaces the pending prompt — A's confirmation must not clear B.
+        let store = TranscriptStore()
+        store.apply(event("clarify.request", #"{"request_id": "c1", "question": "A?"}"#))
+        store.apply(event("clarify.request", #"{"request_id": "c2", "question": "B?"}"#))
+        store.clearClarify(requestID: "c1")
+        #expect(store.pendingClarify?.requestID == "c2")
+        store.clearClarify(requestID: "c2")
+        #expect(store.pendingClarify == nil)
+
+        store.apply(event("approval.request", #"{"command": "rm old"}"#))
+        let first = store.pendingApproval!
+        store.apply(event("approval.request", #"{"command": "rm new"}"#))
+        store.clearApproval(matching: first)
+        #expect(store.pendingApproval?.command == "rm new")
+        store.clearApproval(matching: store.pendingApproval!)
+        #expect(store.pendingApproval == nil)
+    }
+
     @Test func usageAccumulatesAcrossTurns() {
         let store = TranscriptStore()
         store.apply(
@@ -348,18 +368,155 @@ struct TranscriptHydrationTests {
             Issue.record("expected single assistant bubble")
             return
         }
-        // Streamed deltas win over the snapshot (the snapshot is the whole
-        // turn's text; the bubble may be a post-tool-boundary segment).
-        #expect(bubble.text == "working on")
+        // The snapshot is authoritative for text emitted while the socket
+        // was down (missed deltas are never replayed): it extends the
+        // streamed prefix, so the missing suffix is appended.
+        #expect(bubble.text == "working on it")
         #expect(bubble.isStreaming)
 
         // The surviving bubble must still receive deltas.
-        store.apply(event("message.delta", #"{"text": " it"}"#))
+        store.apply(event("message.delta", #"{"text": " now"}"#))
         guard case .assistant(let updated) = store.items[1] else {
             Issue.record("expected assistant")
             return
         }
-        #expect(updated.text == "working on it")
+        #expect(updated.text == "working on it now")
+    }
+
+    @Test func turnCompletedOfflineDropsStalePartialBubble() {
+        // The turn finished while the socket was down: hydration already
+        // carries the persisted final reply, and resume reports idle with
+        // no inflight payload — the stale partial must not linger.
+        let store = TranscriptStore()
+        store.appendUserMessage("question")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "final ans"}"#))
+
+        store.hydrate(
+            rows(
+                """
+                [{"id": 1, "role": "user", "content": "question"},
+                 {"id": 2, "role": "assistant", "content": "final answer"}]
+                """))
+        store.setRunning(false)
+
+        let assistants = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(assistants.count == 1)
+        #expect(assistants[0].text == "final answer")
+        #expect(!assistants[0].isStreaming)
+        #expect(store.items.count == 2)
+    }
+
+    @Test func setRunningFalseSealsUnmatchedSurvivor() {
+        // The partial can't be lined up with the persisted reply (not a
+        // prefix) — it survives, but must at least stop claiming to stream.
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "some other tangent"}"#))
+        store.hydrate(rows(#"[{"id": 2, "role": "assistant", "content": "final answer"}]"#))
+        store.setRunning(false)
+
+        for item in store.items {
+            if case .assistant(let m) = item { #expect(!m.isStreaming) }
+        }
+        #expect(!store.running)
+    }
+
+    @Test func snapshotRestoresTextEmittedWhileDisconnected() {
+        // Hermes kept generating while the socket was down; the resume
+        // snapshot is the only carrier of the missing suffix.
+        let store = TranscriptStore()
+        store.appendUserMessage("question")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "working"}"#))
+
+        store.hydrate(rows("[]"))
+        store.restoreInflight(
+            user: "question", assistant: "working while offline", streaming: true)
+
+        guard case .assistant(let bubble) = store.items.last else {
+            Issue.record("expected assistant bubble")
+            return
+        }
+        #expect(bubble.text == "working while offline")
+        #expect(bubble.isStreaming)
+    }
+
+    @Test func snapshotSuffixRespectsToolBoundaryBubbles() {
+        // The snapshot is the whole turn's text; bubbles sealed at tool
+        // boundaries already hold their parts — only the suffix past the
+        // rendered total may be appended, and only to the open bubble.
+        let store = TranscriptStore()
+        store.appendUserMessage("go")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "first. "}"#))
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "terminal"}"#))
+        store.apply(event("tool.complete", #"{"tool_id": "t1", "summary": "ran"}"#))
+        store.apply(event("message.delta", #"{"text": "second"}"#))
+
+        store.hydrate(rows("[]"))
+        store.restoreInflight(
+            user: "go", assistant: "first. second half", streaming: true)
+
+        let assistants = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(assistants.map(\.text) == ["first. ", "second half"])
+        #expect(assistants.last?.isStreaming == true)
+    }
+
+    @Test func unalignableSnapshotKeepsStreamedText() {
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "alpha"}"#))
+        store.restoreInflight(user: "", assistant: "beta gamma", streaming: true)
+
+        guard case .assistant(let bubble) = store.items.last else {
+            Issue.record("expected assistant bubble")
+            return
+        }
+        #expect(bubble.text == "alpha")
+        #expect(bubble.isStreaming)
+    }
+
+    @Test func duplicateCorrectionsInSnapshotAppendOnce() {
+        let store = TranscriptStore()
+        store.restoreInflight(
+            user: "base", corrections: ["same correction", "same correction"],
+            assistant: "", streaming: true)
+
+        let userTexts = store.items.compactMap { item -> String? in
+            if case .user(let m) = item { return m.text }
+            return nil
+        }
+        #expect(userTexts == ["base", "same correction"])
+    }
+
+    @Test func sealedReplyMatchAdoptsSnapshotError() {
+        // The reply sealed just before the drop; the snapshot carries the
+        // turn's error — it must attach to the existing bubble, not vanish
+        // (and no twin bubble may appear).
+        let store = TranscriptStore()
+        store.appendUserMessage("hi")
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "done"}"#))
+        store.apply(event("message.complete", #"{"text": "done", "status": "ok"}"#))
+
+        store.hydrate(rows("[]"))
+        store.restoreInflight(
+            user: "hi", assistant: "done", streaming: false, error: "provider died")
+
+        let assistants = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(assistants.count == 1)
+        #expect(assistants[0].error == "provider died")
+        #expect(store.lastError == "provider died")
     }
 
     @Test func reconnectRestoreSkipsCorrectionsAlreadyEchoed() {
