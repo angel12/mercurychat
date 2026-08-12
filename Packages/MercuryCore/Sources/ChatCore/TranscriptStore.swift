@@ -205,22 +205,64 @@ public final class TranscriptStore {
     /// Rebuild the turn that was streaming when the socket dropped, from
     /// `session.resume`'s `inflight` payload. Call after hydration: the
     /// inflight turn is exactly the part not yet persisted.
+    ///
+    /// A reconnect re-runs resume while the interrupted turn may still be on
+    /// screen (the local echo and streaming bubble survive `hydrate`), so
+    /// this reconciles against what's already rendered instead of appending
+    /// a second copy of the turn.
     public func restoreInflight(
         user: String, corrections: [String] = [], assistant: String,
         streaming: Bool, error: String? = nil
     ) {
-        if !user.isEmpty { appendUserMessage(user) }
-        for correction in corrections where !correction.isEmpty {
+        var turnStart = items.count
+        if !user.isEmpty {
+            if let existing = items.lastIndex(where: { item in
+                if case .user(let m) = item { return m.text == user }
+                return false
+            }) {
+                turnStart = existing
+            } else {
+                appendUserMessage(user)
+                turnStart = items.count - 1
+            }
+        }
+        let tailUserTexts = Set(
+            items[turnStart...].compactMap { item -> String? in
+                if case .user(let m) = item { return m.text }
+                return nil
+            })
+        for correction in corrections
+        where !correction.isEmpty && !tailUserTexts.contains(correction) {
             appendUserMessage(correction)
         }
+
         guard !assistant.isEmpty || streaming || error != nil else { return }
+        if let error { lastError = error }
+
+        if let index = openBubbleIndex, case .assistant(var bubble) = items[index] {
+            // The streaming bubble survived hydration — this is the same
+            // turn. Streamed deltas win over the snapshot (whose `assistant`
+            // is the whole turn's text and would duplicate bubbles sealed at
+            // tool boundaries); the snapshot only fills a bubble nothing
+            // reached.
+            if bubble.text.isEmpty, !assistant.isEmpty { bubble.text = assistant }
+            bubble.isStreaming = streaming && error == nil
+            bubble.error = error
+            items[index] = .assistant(bubble)
+            openBubbleIndex = bubble.isStreaming ? index : nil
+            return
+        }
+        if !assistant.isEmpty, case .assistant(let last) = items.last,
+            last.text == assistant
+        {
+            return  // a sealed copy of this reply is already the last item
+        }
         var bubble = AssistantMessage(
             id: nextLiveID("assistant"), text: assistant, timestamp: Date())
         bubble.isStreaming = streaming && error == nil
         bubble.error = error
         items.append(.assistant(bubble))
         openBubbleIndex = bubble.isStreaming ? items.count - 1 : nil
-        if let error { lastError = error }
     }
 
     /// Seed the busy flag from a resume result (`running`), ahead of any

@@ -55,9 +55,12 @@ final class ChatController: Identifiable {
             case .resume(let session):
                 let profile = session.profile ?? self.profile
                 // Resume (omit_messages) and REST hydration run in parallel —
-                // that is exactly why omit_messages exists.
+                // that is exactly why omit_messages exists. `order` must be
+                // explicit: with a limit but no order the server anchors at
+                // the OLDEST rows.
                 async let hydration = try? connection.rest.sessionMessages(
-                    storedID: session.storedID, limit: Self.pageSize, profile: profile)
+                    storedID: session.storedID, limit: Self.pageSize, order: "latest",
+                    profile: profile)
                 let handle = try await connection.resumeSession(
                     storedID: session.storedID, profile: profile)
                 adopt(handle)
@@ -186,24 +189,60 @@ final class ChatController: Identifiable {
 
     // MARK: Blocking-prompt responses
 
-    func respondApproval(choice: String) async {
-        guard let runtimeID else { return }
-        try? await connection.respondApproval(sessionID: runtimeID, choice: choice)
-        store.clearApproval()
+    // The agent thread stays frozen until an answer actually reaches the
+    // server, so the pending prompt is cleared only after the RPC succeeds —
+    // on failure it stays up for a retry and the error is surfaced.
+
+    @discardableResult
+    func respondApproval(choice: String) async -> Bool {
+        guard let runtimeID else { return false }
+        do {
+            try await connection.respondApproval(sessionID: runtimeID, choice: choice)
+            store.clearApproval()
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
     }
 
-    func respondClarify(requestID: String, answer: String) async {
-        try? await connection.respondClarify(requestID: requestID, answer: answer)
-        store.clearClarify()
+    @discardableResult
+    func respondClarify(requestID: String, answer: String) async -> Bool {
+        do {
+            try await connection.respondClarify(requestID: requestID, answer: answer)
+            store.clearClarify()
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
     }
 
-    func respondSudo(requestID: String, password: String) async {
-        try? await connection.respondSudo(requestID: requestID, password: password)
-        store.clearSudo()
+    @discardableResult
+    func respondSudo(requestID: String, password: String) async -> Bool {
+        do {
+            try await connection.respondSudo(requestID: requestID, password: password)
+            store.clearSudo()
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
     }
 
-    func respondSecret(requestID: String, value: String) async {
-        try? await connection.respondSecret(requestID: requestID, value: value)
-        store.clearSecret()
+    @discardableResult
+    func respondSecret(requestID: String, value: String) async -> Bool {
+        do {
+            try await connection.respondSecret(requestID: requestID, value: value)
+            store.clearSecret()
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
+    }
+
+    private func describe(_ error: Error) -> String {
+        (error as? HermesError)?.errorDescription ?? error.localizedDescription
     }
 }
