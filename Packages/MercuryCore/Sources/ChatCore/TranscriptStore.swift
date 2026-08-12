@@ -132,6 +132,13 @@ public final class TranscriptStore {
                 if let final = latestHydratedReply, final.hasPrefix(m.text) {
                     return false
                 }
+                // A mid-turn redirect/interim commit can persist the partial
+                // as its own row: the live bubble then equals a persisted
+                // SEGMENT rather than a prefix of the latest reply, and
+                // surviving would duplicate it under the final response.
+                if hydratedTexts.contains("a:" + m.text) {
+                    return false
+                }
                 return true
             case .assistant(let m):
                 return m.error != nil || !hydratedTexts.contains("a:" + m.text)
@@ -298,6 +305,51 @@ public final class TranscriptStore {
             openBubbleIndex = last.isStreaming ? items.count - 1 : nil
             return
         }
+
+        // No open bubble and the last item isn't the reply (a tool row or a
+        // correction echo is last, or hydration replaced the live bubble with
+        // persisted mid-turn rows). The snapshot is still the WHOLE turn's
+        // text: reconcile it against everything rendered in this turn before
+        // appending, or the already-shown prefix duplicates below the tool
+        // row / correction (#9, #5).
+        let scanStart: Int
+        if !user.isEmpty {
+            scanStart = turnStart
+        } else if let lastUser = items.lastIndex(where: { item in
+            if case .user = item { return true }
+            return false
+        }) {
+            scanStart = lastUser + 1
+        } else {
+            scanStart = 0
+        }
+        let rendered = items[min(scanStart, items.count)...]
+            .compactMap { item -> String? in
+                if case .assistant(let m) = item { return m.text }
+                return nil
+            }
+            .joined()
+        if !assistant.isEmpty, !rendered.isEmpty {
+            if assistant == rendered { return }  // Fully rendered already.
+            if assistant.hasPrefix(rendered) {
+                // Only the tail past the rendered total is new — it was
+                // emitted after the boundary that sealed the last segment,
+                // so it belongs in a fresh bubble at the end.
+                var bubble = AssistantMessage(
+                    id: nextLiveID("assistant"),
+                    text: String(assistant.dropFirst(rendered.count)),
+                    timestamp: Date())
+                bubble.isStreaming = streaming && error == nil
+                bubble.error = error
+                items.append(.assistant(bubble))
+                openBubbleIndex = bubble.isStreaming ? items.count - 1 : nil
+                return
+            }
+            // Unalignable (mid-turn deltas were lost too): keep the rendered
+            // segments rather than appending a twin of the whole snapshot.
+            return
+        }
+
         var bubble = AssistantMessage(
             id: nextLiveID("assistant"), text: assistant, timestamp: Date())
         bubble.isStreaming = streaming && error == nil
