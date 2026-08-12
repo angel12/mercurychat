@@ -104,7 +104,7 @@ public final class TranscriptStore {
 
         // Drop live items whose rows are now persisted (best-effort: live
         // items have no row id, so match user messages by text and sealed
-        // assistant bubbles by text — streaming items always survive).
+        // assistant bubbles by text).
         let hydratedTexts = Set(hydrated.compactMap { item -> String? in
             switch item {
             case .user(let m): return "u:" + m.text
@@ -112,13 +112,29 @@ public final class TranscriptStore {
             default: return nil
             }
         })
+        // A turn that completed while the socket was down is persisted by
+        // the time this page arrives: the newest hydrated reply extending a
+        // live streaming bubble supersedes it. (A still-live turn isn't
+        // persisted yet, so its bubble survives — or, if dropped because the
+        // previous reply happens to extend it, `restoreInflight` rebuilds it
+        // from the resume snapshot right after.)
+        let latestHydratedReply = hydrated.reversed()
+            .compactMap { item -> String? in
+                if case .assistant(let m) = item { return m.text }
+                return nil
+            }
+            .first
         let survivors = liveSuffix.filter { item in
             switch item {
             case .user(let m):
                 return !hydratedTexts.contains("u:" + m.text)
+            case .assistant(let m) where m.isStreaming:
+                if let final = latestHydratedReply, final.hasPrefix(m.text) {
+                    return false
+                }
+                return true
             case .assistant(let m):
-                return m.isStreaming || m.error != nil
-                    || !hydratedTexts.contains("a:" + m.text)
+                return m.error != nil || !hydratedTexts.contains("a:" + m.text)
             case .tool(let t):
                 return t.isRunning
             case .notice:
@@ -226,14 +242,15 @@ public final class TranscriptStore {
                 turnStart = items.count - 1
             }
         }
-        let tailUserTexts = Set(
+        var seenUserTexts = Set(
             items[turnStart...].compactMap { item -> String? in
                 if case .user(let m) = item { return m.text }
                 return nil
             })
-        for correction in corrections
-        where !correction.isEmpty && !tailUserTexts.contains(correction) {
-            appendUserMessage(correction)
+        for correction in corrections where !correction.isEmpty {
+            if seenUserTexts.insert(correction).inserted {
+                appendUserMessage(correction)
+            }
         }
 
         guard !assistant.isEmpty || streaming || error != nil else { return }
@@ -241,21 +258,45 @@ public final class TranscriptStore {
 
         if let index = openBubbleIndex, case .assistant(var bubble) = items[index] {
             // The streaming bubble survived hydration — this is the same
-            // turn. Streamed deltas win over the snapshot (whose `assistant`
-            // is the whole turn's text and would duplicate bubbles sealed at
-            // tool boundaries); the snapshot only fills a bubble nothing
-            // reached.
-            if bubble.text.isEmpty, !assistant.isEmpty { bubble.text = assistant }
+            // turn. The snapshot is the whole turn's text and is the ONLY
+            // carrier of anything emitted while the socket was down (missed
+            // deltas are never replayed): when it extends what's already
+            // rendered across this turn's bubbles, append the missing
+            // suffix. When it can't be lined up with the streamed segments
+            // (mid-turn deltas were lost too), keep the streamed text rather
+            // than duplicate bubbles sealed at tool boundaries.
+            if !assistant.isEmpty {
+                let renderedStart = min(turnStart, index)
+                let rendered = items[renderedStart...]
+                    .compactMap { item -> String? in
+                        if case .assistant(let m) = item { return m.text }
+                        return nil
+                    }
+                    .joined()
+                if assistant.hasPrefix(rendered) {
+                    bubble.text += assistant.dropFirst(rendered.count)
+                } else if bubble.text.isEmpty {
+                    bubble.text = assistant
+                }
+            }
             bubble.isStreaming = streaming && error == nil
             bubble.error = error
             items[index] = .assistant(bubble)
             openBubbleIndex = bubble.isStreaming ? index : nil
             return
         }
-        if !assistant.isEmpty, case .assistant(let last) = items.last,
+        if !assistant.isEmpty, case .assistant(var last) = items.last,
             last.text == assistant
         {
-            return  // a sealed copy of this reply is already the last item
+            // A sealed copy of this reply is already the last item — realign
+            // its state with the snapshot instead of appending a twin: a
+            // still-streaming snapshot reopens it so later deltas land here,
+            // and an error attaches to it.
+            last.isStreaming = streaming && error == nil
+            last.error = error ?? last.error
+            items[items.count - 1] = .assistant(last)
+            openBubbleIndex = last.isStreaming ? items.count - 1 : nil
+            return
         }
         var bubble = AssistantMessage(
             id: nextLiveID("assistant"), text: assistant, timestamp: Date())
@@ -266,9 +307,29 @@ public final class TranscriptStore {
     }
 
     /// Seed the busy flag from a resume result (`running`), ahead of any
-    /// `session.info` event.
+    /// `session.info` event. `false` performs the same end-of-turn cleanup
+    /// as `session.info` — a turn that completed while the socket was down
+    /// arrives with no inflight payload, and any surviving live bubble would
+    /// otherwise stay marked as streaming forever.
     public func setRunning(_ flag: Bool) {
         running = flag
+        if !flag { finishTurn() }
+    }
+
+    /// End-of-turn cleanup shared by `session.info {running: false}` and a
+    /// resume result reporting the session idle.
+    private func finishTurn() {
+        if let index = openBubbleIndex, case .assistant(var bubble) = items[index] {
+            bubble.isStreaming = false
+            items[index] = .assistant(bubble)
+            openBubbleIndex = nil
+        }
+        generatingToolName = nil
+        // Blocking prompts can't outlive the turn.
+        pendingApproval = nil
+        pendingClarify = nil
+        pendingSudo = nil
+        pendingSecret = nil
     }
 
     // MARK: Local echo
@@ -373,12 +434,28 @@ public final class TranscriptStore {
         }
     }
 
-    // MARK: Prompt clearing (call after responding)
+    // MARK: Prompt clearing (call after a response is confirmed delivered)
 
-    public func clearApproval() { pendingApproval = nil }
-    public func clearClarify() { pendingClarify = nil }
-    public func clearSudo() { pendingSudo = nil }
-    public func clearSecret() { pendingSecret = nil }
+    // Identity-guarded: while a response RPC is suspended, a NEWER request
+    // can replace the pending one (actor reentrancy) — the old response must
+    // not clear a prompt it didn't answer. Approval has no request_id (at
+    // most one in flight per session), so it matches by value.
+
+    public func clearApproval(matching request: ApprovalRequest) {
+        if pendingApproval == request { pendingApproval = nil }
+    }
+
+    public func clearClarify(requestID: String) {
+        if pendingClarify?.requestID == requestID { pendingClarify = nil }
+    }
+
+    public func clearSudo(requestID: String) {
+        if pendingSudo?.requestID == requestID { pendingSudo = nil }
+    }
+
+    public func clearSecret(requestID: String) {
+        if pendingSecret?.requestID == requestID { pendingSecret = nil }
+    }
 
     // MARK: Assistant bubbles
 
@@ -589,21 +666,7 @@ public final class TranscriptStore {
         }
 
         guard let runningFlag = payload["running"] else { return }
-        let isRunning = runningFlag.truthy
-        running = isRunning
-        if !isRunning {
-            // True end-of-turn: seal any open bubble, clear transient state.
-            if let index = openBubbleIndex, case .assistant(var bubble) = items[index] {
-                bubble.isStreaming = false
-                items[index] = .assistant(bubble)
-                openBubbleIndex = nil
-            }
-            generatingToolName = nil
-            // Blocking prompts can't outlive the turn.
-            pendingApproval = nil
-            pendingClarify = nil
-            pendingSudo = nil
-            pendingSecret = nil
-        }
+        // True end-of-turn: seal any open bubble, clear transient state.
+        setRunning(runningFlag.truthy)
     }
 }
