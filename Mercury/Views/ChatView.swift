@@ -352,6 +352,11 @@ private struct ChatContentView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 4)
         }
+        if let setup = controller.store.pendingMcpSetup {
+            McpSetupCard(controller: controller, request: setup)
+                .padding(.horizontal)
+                .padding(.bottom, 4)
+        }
     }
 
     @ToolbarContentBuilder
@@ -368,11 +373,17 @@ private struct ChatContentView: View {
                         .padding(.vertical, 3)
                         .background(.quaternary, in: Capsule())
                 }
-                if controller.store.totalUsage.totalTokens > 0 {
-                    Text("\(controller.store.totalUsage.totalTokens.formatted()) tok")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help(usageDetail)
+                if let usage = controller.store.sessionUsage, usage.totalTokens > 0 {
+                    // The `session.usage` ticker refreshes this live during
+                    // the turn; context fill beats a raw token count when the
+                    // backend reports one.
+                    Text(
+                        usage.contextPercent.map { "\($0)% ctx" }
+                            ?? "\(usage.totalTokens.formatted()) tok"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(usageDetail(usage))
                 }
                 Menu {
                     Button("Rename Session…") {
@@ -389,9 +400,14 @@ private struct ChatContentView: View {
         }
     }
 
-    private var usageDetail: String {
-        let usage = controller.store.totalUsage
-        return "\(usage.calls) calls · \(usage.inputTokens.formatted()) in · \(usage.outputTokens.formatted()) out"
+    private func usageDetail(_ usage: TurnUsage) -> String {
+        var parts = [
+            "\(usage.calls) calls · \(usage.inputTokens.formatted()) in · \(usage.outputTokens.formatted()) out"
+        ]
+        if let used = usage.contextUsed, let max = usage.contextMax {
+            parts.append("context \(used.formatted()) / \(max.formatted())")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -512,6 +528,63 @@ private struct ApprovalCard: View {
         case "deny": return "Deny"
         default: return choice.capitalized
         }
+    }
+}
+
+// MARK: - MCP setup card
+
+/// The agent's `setup_mcp` tool blocks (up to 10 minutes) on this consent
+/// card. Mercury can't run the install/OAuth flows in-app yet, so the card
+/// explains the request and offers Decline — which unblocks the agent
+/// immediately and tells it to continue without the server — plus a pointer
+/// to the terminal flow for users who actually want it installed.
+private struct McpSetupCard: View {
+    let controller: ChatController
+    let request: McpSetupRequest
+    @State private var isSubmitting = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: "puzzlepiece.extension")
+                .font(.headline)
+            if !request.reason.isEmpty {
+                Text(request.reason)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Text(
+                "Mercury can't run MCP setup flows yet. To add it, run `hermes mcp \(terminalVerb) \(request.server)` in a terminal — or decline and the agent will continue without it."
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            Button("Decline", role: .destructive) {
+                guard !isSubmitting else { return }
+                isSubmitting = true
+                Task {
+                    _ = await controller.declineMcpSetup(request)
+                    isSubmitting = false
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(isSubmitting)
+        }
+        .padding(12)
+        .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.blue.opacity(0.35)))
+    }
+
+    private var title: String {
+        switch request.action {
+        case "enable": return "Agent asks to enable MCP server “\(request.server)”"
+        case "authorize": return "Agent asks to authorize MCP server “\(request.server)”"
+        default: return "Agent asks to install MCP server “\(request.server)”"
+        }
+    }
+
+    private var terminalVerb: String {
+        request.action == "authorize" ? "login" : request.action
     }
 }
 

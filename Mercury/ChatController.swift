@@ -197,6 +197,20 @@ final class ChatController: Identifiable {
             store.restoreQueuedPrompt(queued)
         }
         store.setRunning(result["running"]?.truthy ?? false)
+        // Blocking prompts raised while the socket was down are never
+        // re-emitted as events — the resume payload's read-only snapshots
+        // are their only carrier. Replay them through the normal event path
+        // (after setRunning: an idle resume clears pendings). Their embedded
+        // request_id answers via the usual respond methods.
+        for (field, type) in [
+            ("pending_approval", GatewayEvent.Kind.approvalRequest),
+            ("pending_clarify", GatewayEvent.Kind.clarifyRequest),
+        ] {
+            if let snapshot = result[field], snapshot.objectValue != nil {
+                store.apply(
+                    GatewayEvent(type: type, sessionID: runtimeID, payload: snapshot))
+            }
+        }
     }
 
     /// The socket came back after a drop: runtime ids may be recycled, so
@@ -346,12 +360,33 @@ final class ChatController: Identifiable {
     func respondApproval(_ request: ApprovalRequest, choice: String) async -> Bool {
         guard let runtimeID else { return false }
         do {
-            try await connection.respondApproval(sessionID: runtimeID, choice: choice)
+            // The server queues approvals and resolves the OLDEST without a
+            // request_id — target the exact card the user answered.
+            try await connection.respondApproval(
+                sessionID: runtimeID, choice: choice, requestID: request.requestID)
             store.clearApproval(matching: request)
             return true
         } catch {
             errorMessage = Self.describe(error)
             return false
+        }
+    }
+
+    /// Decline an MCP setup card. Mercury has no in-app MCP install/OAuth
+    /// flow yet, so decline is the only actionable answer — it unblocks the
+    /// agent immediately (which otherwise waits out a 10-minute timeout) and
+    /// tells it to continue without the server.
+    func declineMcpSetup(_ request: McpSetupRequest) async -> PromptDeliveryOutcome {
+        do {
+            let status = try await connection.respondMcpSetup(
+                requestID: request.requestID, status: "declined", server: request.server,
+                detail: "Declined from Mercury (in-app MCP setup is not supported).")
+            return settlePrompt(
+                status, what: "answer",
+                clear: { self.store.clearMcpSetup(requestID: request.requestID) })
+        } catch {
+            errorMessage = Self.describe(error)
+            return .failed
         }
     }
 

@@ -196,7 +196,42 @@ struct TranscriptStoreTests {
         #expect(store.pendingApproval == nil)
     }
 
-    @Test func usageAccumulatesAcrossTurns() {
+    @Test func approvalCarriesOptionalRequestID() {
+        let store = TranscriptStore()
+        store.apply(event("approval.request", #"{"command": "ls", "request_id": "ap1"}"#))
+        #expect(store.pendingApproval?.requestID == "ap1")
+        // Older backends omit it — session-keyed respond still works.
+        store.apply(event("approval.request", #"{"command": "ls"}"#))
+        #expect(store.pendingApproval?.requestID == nil)
+    }
+
+    @Test func mcpSetupRequestLifecycle() {
+        let store = TranscriptStore()
+        store.apply(
+            event(
+                "mcp.setup.request",
+                #"{"request_id": "m1", "server": "linear", "action": "install", "reason": "To read the ticket you linked"}"#
+            ))
+        #expect(store.pendingMcpSetup?.server == "linear")
+        #expect(store.pendingMcpSetup?.action == "install")
+
+        // An expire for a DIFFERENT request must not clear the card.
+        store.apply(event("mcp.setup.expire", #"{"request_id": "other"}"#))
+        #expect(store.pendingMcpSetup != nil)
+        store.apply(event("mcp.setup.expire", #"{"request_id": "m1"}"#))
+        #expect(store.pendingMcpSetup == nil)
+
+        // Cleared at end of turn like every blocking prompt.
+        store.apply(
+            event("mcp.setup.request", #"{"request_id": "m2", "server": "notion"}"#))
+        store.apply(event("session.info", #"{"running": false}"#))
+        #expect(store.pendingMcpSetup == nil)
+    }
+
+    @Test func usageSnapshotsReplaceNotSum() {
+        // The server's usage counters are session-cumulative on BOTH
+        // message.complete and the mid-turn session.usage ticks — the second
+        // snapshot already contains the first turn's tokens.
         let store = TranscriptStore()
         store.apply(
             event(
@@ -208,8 +243,23 @@ struct TranscriptStoreTests {
                 "message.complete",
                 #"{"text": "b", "usage": {"calls": 2, "input": 300, "output": 60, "total": 360}}"#
             ))
-        #expect(store.totalUsage.calls == 3)
-        #expect(store.totalUsage.totalTokens == 480)
+        #expect(store.sessionUsage?.calls == 2)
+        #expect(store.sessionUsage?.totalTokens == 360)
+    }
+
+    @Test func sessionUsageTicksUpdateLiveSnapshot() {
+        let store = TranscriptStore()
+        store.apply(
+            event(
+                "session.usage",
+                #"{"usage": {"calls": 1, "input": 50, "output": 10, "total": 60, "context_used": 8000, "context_max": 128000, "context_percent": 6}}"#
+            ))
+        #expect(store.sessionUsage?.totalTokens == 60)
+        #expect(store.sessionUsage?.contextPercent == 6)
+        #expect(store.sessionUsage?.contextMax == 128000)
+        // A malformed tick must not wipe the last good snapshot.
+        store.apply(event("session.usage", #"{}"#))
+        #expect(store.sessionUsage?.totalTokens == 60)
     }
 
     @Test func sessionInfoMetadataAndLazySkip() {
