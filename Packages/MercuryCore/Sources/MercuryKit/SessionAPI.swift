@@ -152,12 +152,18 @@ extension HermesConnection {
 
     // MARK: Prompt-family responses
 
-    /// `approval.respond` — session-keyed (no request id); absent choice
-    /// means deny server-side, so always pass one of the event's choices.
-    public func respondApproval(sessionID: String, choice: String) async throws {
-        _ = try await request(
-            "approval.respond",
-            params: ["session_id": .string(sessionID), "choice": .string(choice)])
+    /// `approval.respond` — absent choice means deny server-side, so always
+    /// pass one of the event's choices. Without `requestID` the server
+    /// resolves the OLDEST queued approval; pass the event's id when it has
+    /// one so the answer lands on the exact card the user saw.
+    public func respondApproval(
+        sessionID: String, choice: String, requestID: String? = nil
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "session_id": .string(sessionID), "choice": .string(choice),
+        ]
+        if let requestID, !requestID.isEmpty { params["request_id"] = .string(requestID) }
+        _ = try await request("approval.respond", params: .object(params))
     }
 
     /// `clarify.respond` — empty answer = skip. A late respond after expiry
@@ -281,6 +287,26 @@ extension HermesConnection {
         let result = try await request(
             "secret.respond",
             params: ["request_id": .string(requestID), "value": .string(value)])
+        return try PromptResponseStatus(result: result)
+    }
+
+    /// `mcp.setup.respond` — answer field is `result`, a JSON **string** of
+    /// the setup card's outcome. `status` must be one of installed | enabled
+    /// | authorized | declined | error; on declined the agent continues
+    /// without the server and must not re-ask.
+    public func respondMcpSetup(
+        requestID: String, status: String, server: String, detail: String? = nil
+    ) async throws -> PromptResponseStatus {
+        var outcome: [String: JSONValue] = [
+            "status": .string(status), "server": .string(server),
+        ]
+        if let detail, !detail.isEmpty { outcome["detail"] = .string(detail) }
+        let result = try await request(
+            "mcp.setup.respond",
+            params: [
+                "request_id": .string(requestID),
+                "result": .string(JSONValue.object(outcome).encodedString()),
+            ])
         return try PromptResponseStatus(result: result)
     }
 }

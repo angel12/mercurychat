@@ -35,6 +35,7 @@ public final class TranscriptStore {
     public private(set) var pendingClarify: ClarifyRequest?
     public private(set) var pendingSudo: SudoRequest?
     public private(set) var pendingSecret: SecretRequest?
+    public private(set) var pendingMcpSetup: McpSetupRequest?
 
     /// Session metadata from `session.info` / `session.title`.
     public private(set) var title: String?
@@ -43,25 +44,13 @@ public final class TranscriptStore {
     /// Durable id observed in `session.info.stored_session_id` (re-anchor).
     public private(set) var storedSessionID: String?
 
-    /// Cumulative usage across completed turns this connection.
-    public private(set) var totalUsage = UsageTotals()
+    /// Latest usage snapshot. The server's counters (on `message.complete`
+    /// AND the mid-turn `session.usage` ticks) are session-cumulative, so
+    /// each snapshot REPLACES the last — summing them double-counts.
+    public private(set) var sessionUsage: TurnUsage?
 
     /// Latest turn error (`message.complete` with `status: "error"`).
     public private(set) var lastError: String?
-
-    public struct UsageTotals: Sendable, Equatable {
-        public var calls = 0
-        public var inputTokens = 0
-        public var outputTokens = 0
-        public var totalTokens = 0
-
-        mutating func add(_ usage: TurnUsage) {
-            calls += usage.calls
-            inputTokens += usage.inputTokens
-            outputTokens += usage.outputTokens
-            totalTokens += usage.totalTokens
-        }
-    }
 
     // MARK: Internal reducer state
 
@@ -410,6 +399,7 @@ public final class TranscriptStore {
         pendingClarify = nil
         pendingSudo = nil
         pendingSecret = nil
+        pendingMcpSetup = nil
     }
 
     // MARK: Local echo
@@ -542,6 +532,19 @@ public final class TranscriptStore {
                 pendingSecret = nil
             }
 
+        case GatewayEvent.Kind.mcpSetupRequest:
+            pendingMcpSetup = McpSetupRequest(event: event)
+
+        case GatewayEvent.Kind.mcpSetupExpire:
+            if pendingMcpSetup?.requestID == event.payload["request_id"]?.stringValue {
+                pendingMcpSetup = nil
+            }
+
+        case GatewayEvent.Kind.sessionUsage:
+            if let usage = TurnUsage(json: event.payload["usage"]) {
+                sessionUsage = usage
+            }
+
         case GatewayEvent.Kind.error:
             let text = event.payload["message"]?.stringValue
                 ?? event.payload["error"]?.stringValue
@@ -584,6 +587,10 @@ public final class TranscriptStore {
 
     public func clearSecret(requestID: String) {
         if pendingSecret?.requestID == requestID { pendingSecret = nil }
+    }
+
+    public func clearMcpSetup(requestID: String) {
+        if pendingMcpSetup?.requestID == requestID { pendingMcpSetup = nil }
     }
 
     // MARK: Assistant bubbles
@@ -673,7 +680,7 @@ public final class TranscriptStore {
         openBubbleIndex = nil
 
         if let usage = TurnUsage(json: payload["usage"]) {
-            totalUsage.add(usage)
+            sessionUsage = usage
         }
     }
 

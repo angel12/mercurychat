@@ -34,6 +34,9 @@ public struct GatewayEvent: Sendable, Equatable {
         public static let sudoExpire = "sudo.expire"
         public static let secretRequest = "secret.request"
         public static let secretExpire = "secret.expire"
+        public static let mcpSetupRequest = "mcp.setup.request"
+        public static let mcpSetupExpire = "mcp.setup.expire"
+        public static let sessionUsage = "session.usage"
         public static let sessionInfo = "session.info"
         public static let sessionTitle = "session.title"
         public static let sessionsChanged = "sessions.changed"
@@ -47,22 +50,29 @@ public struct GatewayEvent: Sendable, Equatable {
 
 // MARK: - Typed payloads
 
-/// `approval.request` — session-keyed: at most one in flight per session and
-/// **no request_id**; answer with `approval.respond {session_id, choice}`.
+/// `approval.request` — session-keyed: at most one is SHOWN per session;
+/// answer with `approval.respond {session_id, choice, request_id?}`. The
+/// server queues approvals and resolves the oldest when no `request_id` is
+/// given, so pass one when the payload carries it — a queue of several must
+/// not resolve a different entry than the card the user saw.
 public struct ApprovalRequest: Sendable, Equatable, Identifiable {
     public var sessionID: String
+    /// Present on current backends (approvals are queued server-side);
+    /// absent on older ones, where session-keyed respond is exact.
+    public var requestID: String?
     public var command: String?
     public var description: String?
     /// Server-derived subset of once/session/always/deny.
     public var choices: [String]
 
-    public var id: String { sessionID }
+    public var id: String { requestID ?? sessionID }
 
     public init?(event: GatewayEvent) {
         guard event.type == GatewayEvent.Kind.approvalRequest,
             let sessionID = event.sessionID
         else { return nil }
         self.sessionID = sessionID
+        self.requestID = event.payload["request_id"]?.stringValue
         self.command = event.payload["command"]?.stringValue
         self.description = event.payload["description"]?.stringValue
 
@@ -151,12 +161,50 @@ public struct SecretRequest: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Token usage from `message.complete`'s `usage` payload.
+/// `mcp.setup.request` — the agent's `setup_mcp` tool proposes installing,
+/// enabling, or authorizing an MCP server and blocks (up to 10 minutes) on
+/// the user's consent. Correlated by `request_id`; may be cleared by a
+/// matching `mcp.setup.expire`. Answer with `mcp.setup.respond {request_id,
+/// result}` where `result` is a JSON string `{status, server, detail?}` and
+/// status ∈ installed|enabled|authorized|declined|error.
+public struct McpSetupRequest: Sendable, Equatable, Identifiable {
+    public var requestID: String
+    public var sessionID: String?
+    /// Catalog or config name of the MCP server.
+    public var server: String
+    /// One of install/enable/authorize.
+    public var action: String
+    /// The agent's one-line rationale, for display on the card.
+    public var reason: String
+
+    public var id: String { requestID }
+
+    public init?(event: GatewayEvent) {
+        guard event.type == GatewayEvent.Kind.mcpSetupRequest,
+            let requestID = event.payload["request_id"]?.stringValue
+        else { return nil }
+        self.requestID = requestID
+        self.sessionID = event.sessionID
+        self.server = event.payload["server"]?.stringValue ?? ""
+        self.action = event.payload["action"]?.stringValue ?? "install"
+        self.reason = event.payload["reason"]?.stringValue ?? ""
+    }
+}
+
+/// Usage counters from `message.complete` / `session.usage`. These are
+/// SESSION-CUMULATIVE snapshots (the server reports the agent's lifetime
+/// counters, not per-turn deltas) — the latest snapshot replaces the
+/// previous one; never sum them.
 public struct TurnUsage: Sendable, Equatable {
     public var calls: Int
     public var inputTokens: Int
     public var outputTokens: Int
     public var totalTokens: Int
+    /// Current context-window occupancy gauge. Only present when the
+    /// backend's compressor reports real per-window numbers.
+    public var contextUsed: Int?
+    public var contextMax: Int?
+    public var contextPercent: Int?
 
     public init?(json: JSONValue?) {
         guard let json, json.objectValue != nil else { return nil }
@@ -165,5 +213,8 @@ public struct TurnUsage: Sendable, Equatable {
         self.outputTokens = json["output"]?.intValue ?? 0
         self.totalTokens = json["total"]?.intValue
             ?? (self.inputTokens + self.outputTokens)
+        self.contextUsed = json["context_used"]?.intValue
+        self.contextMax = json["context_max"]?.intValue
+        self.contextPercent = json["context_percent"]?.intValue
     }
 }

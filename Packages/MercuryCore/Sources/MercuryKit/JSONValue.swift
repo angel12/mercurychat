@@ -114,6 +114,17 @@ extension JSONValue {
     }
 }
 
+// MARK: - Serialization
+
+extension JSONValue {
+    /// Compact JSON text of this value — for protocol fields whose value is
+    /// itself a JSON-encoded string (e.g. `mcp.setup.respond.result`).
+    public func encodedString() -> String {
+        guard let data = try? JSONEncoder().encode(self) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
 // MARK: - Literal conveniences (used heavily when building RPC params)
 
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
