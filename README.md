@@ -72,5 +72,5 @@ All verified live against `hermes serve` 0.20.0 in token mode on 2026-08-11 unle
 - [x] Revoked token → terminal auth-expired (no retry storm), connect screen with "paste a fresh dashboard URL" message.
 - [x] 4403 Host/Origin guard mapped to a terminal, explanatory disconnect.
 - [x] Contract-drift notice (v5 server vs v6 build) as a transient, hit-transparent toast.
-- [ ] PKCE against a real OAuth provider (no gated IdP available in this environment; listener + exchange covered by unit tests and built strictly to `dashboard_auth/routes.py`).
+- [x] PKCE against a real OAuth provider — native `native_pkce` sign-in exercised end to end (loopback listener → code exchange → authenticated WS dial) on 2026-08-20.
 - [ ] iOS 10-minute background → foreground poke-reconnect (wired via scenePhase; not soak-tested).
