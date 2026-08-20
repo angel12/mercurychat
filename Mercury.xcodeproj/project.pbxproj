@@ -26,7 +26,7 @@
 		10E6E34D97806B51F0F8A12A /* Mercury.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Mercury.entitlements; sourceTree = "<group>"; };
 		261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptItemView.swift; sourceTree = "<group>"; };
 		31F7DAA740A01BE642F7A9F5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		590FA74BCF5DB7884E8C404F /* Mercury.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mercury.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		590FA74BCF5DB7884E8C404F /* Mercury.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mercury.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F29F375C5956F20E4F2A200 /* MercuryCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MercuryCore; path = Packages/MercuryCore; sourceTree = SOURCE_ROOT; };
 		696FDD7EA0879D6A21F3E07B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		8DF179C9F278DF4C94236661 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
@@ -213,7 +213,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = biz.pescoinc.mercury;
+				PRODUCT_BUNDLE_IDENTIFIER = com.angelsolutionsnm.merv;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -243,7 +243,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = biz.pescoinc.mercury;
+				PRODUCT_BUNDLE_IDENTIFIER = com.angelsolutionsnm.merv;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
