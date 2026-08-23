@@ -137,16 +137,26 @@ extension HermesConnection {
     // MARK: Projects
 
     /// `projects.tree` — the authoritative sidebar grouping (explicit
-    /// projects, auto repo projects, `__no_project__` Home bucket).
-    public func projectsTree(previewLimit: Int = 3) async throws -> ProjectTree {
-        let result = try await request(
-            "projects.tree", params: ["preview_limit": .number(Double(previewLimit))])
+    /// projects, auto repo projects, `__no_project__` Home bucket). Pass the
+    /// selected `profile` — the RPC is profile-scoped and defaults to the
+    /// gateway's launch profile when the param is omitted.
+    public func projectsTree(
+        previewLimit: Int = 3, profile: String? = nil
+    ) async throws -> ProjectTree {
+        var params: [String: JSONValue] = [
+            "preview_limit": .number(Double(previewLimit))
+        ]
+        if let profile, !profile.isEmpty { params["profile"] = .string(profile) }
+        let result = try await request("projects.tree", params: .object(params))
         return ProjectTree(json: result)
     }
 
-    public func projectSessions(projectID: String) async throws -> [SessionSummary] {
-        let result = try await request(
-            "projects.project_sessions", params: ["project_id": .string(projectID)])
+    public func projectSessions(
+        projectID: String, profile: String? = nil
+    ) async throws -> [SessionSummary] {
+        var params: [String: JSONValue] = ["project_id": .string(projectID)]
+        if let profile, !profile.isEmpty { params["profile"] = .string(profile) }
+        let result = try await request("projects.project_sessions", params: .object(params))
         return result["sessions"]?.arrayValue?.compactMap(SessionSummary.init(json:)) ?? []
     }
 

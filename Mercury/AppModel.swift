@@ -570,7 +570,7 @@ final class AppModel {
         browseLoading = true
         defer { browseLoading = false }
         do {
-            projectTree = try await connection.projectsTree()
+            projectTree = try await connection.projectsTree(profile: selectedProfile)
             let profile = selectedProfile ?? "all"
             recentSessions = try await connection.rest.profileSessions(
                 profile: profile, limit: 30)
