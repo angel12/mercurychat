@@ -19,6 +19,11 @@ final class AppModel {
     /// Contract-version drift notice (non-blocking, shown in settings/banner).
     private(set) var contractNotice: String?
 
+    /// Whether the gateway speaks the `profiles.*` RPC family Bot Mode is
+    /// built on. `nil` until probed (or when the probe failed on transport) —
+    /// the future Bots tab gates on `== true`.
+    private(set) var botModeSupported: Bool?
+
     var isConnected: Bool {
         if case .ready = phase { return true }
         // Stay on the browse screen through transient reconnects.
@@ -405,6 +410,7 @@ final class AppModel {
         recentSessions = []
         selectedProfile = nil
         contractNotice = nil
+        botModeSupported = nil
     }
 
     /// Immediate re-dial on foreground (backoff skip).
@@ -543,6 +549,15 @@ final class AppModel {
                         selectedProfile =
                             loaded.first(where: \.isDefault)?.name ?? loaded.first?.name
                     }
+                }
+            }
+        }
+        // Bot Mode probe: once per connection (reconnects keep the verdict; a
+        // transport-shaped failure leaves nil so the next connect re-probes).
+        if botModeSupported == nil {
+            Task {
+                if let supported = await connection.probeBotModeSupport() {
+                    botModeSupported = supported
                 }
             }
         }
