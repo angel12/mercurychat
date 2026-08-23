@@ -75,11 +75,20 @@ struct ConnectionBannerView: View {
                     LabeledContent(
                         "Built against contract",
                         value: "v\(GatewayClient.builtAgainstDesktopContract)")
+                    LabeledContent("Bot Mode (profiles RPC)", value: botModeDescription)
                 }
             }
             .formStyle(.grouped)
             .frame(width: 440)
             .padding(.vertical)
+        }
+
+        private var botModeDescription: String {
+            switch model.botModeSupported {
+            case true?: return "supported"
+            case false?: return "not supported (update the backend)"
+            case nil: return "unknown"
+            }
         }
 
         private var phaseDescription: String {
