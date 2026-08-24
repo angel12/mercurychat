@@ -60,6 +60,13 @@ final class ChatController: Identifiable {
     func begin(_ mode: Mode) async {
         beginGeneration += 1
         let generation = beginGeneration
+        // A resume supersedes any text buffered or held from the previous
+        // socket — the resume payload's inflight snapshot carries the whole
+        // turn, so replaying stale events after it would duplicate content.
+        pendingMessageText = ""
+        pendingReasoningText = ""
+        heldEvents = []
+        transcriptHoldActive = false
         isLoading = true
         defer { if generation == beginGeneration { isLoading = false } }
         do {
@@ -238,16 +245,133 @@ final class ChatController: Identifiable {
     // MARK: Events
 
     /// Route one gateway event; events for other sessions are ignored.
+    ///
+    /// Streaming text deltas are BATCHED (~12Hz) instead of applied per
+    /// event: every store mutation runs a full SwiftUI transaction, and while
+    /// the viewport sits over the LazyVStack's *estimated* (un-materialized)
+    /// region — reader scrolled up, reply growing below — each transaction
+    /// re-runs the lazy item-phase pass for the whole transcript. At the
+    /// per-token WS cadence those passes arrive faster than the device can
+    /// retire them and the main thread livelocks for the entire turn (the
+    /// "window freezes when I send while scrolled up" report; 84s Severe
+    /// Hang, 100% Running inside LazyLayoutViewCache.updateItemPhases, traced
+    /// on an iPhone 17 Pro Max). Structural events still apply immediately,
+    /// flushing buffered text first so ordering is preserved.
     func handle(event: GatewayEvent) {
         guard let runtimeID else { return }
         guard event.sessionID == nil || event.sessionID == runtimeID else { return }
-        store.apply(event)
+        if transcriptHoldActive {
+            if event.type == GatewayEvent.Kind.sessionInfo {
+                // The turn-end carrier (`running: false` seals the open
+                // bubble): everything buffered must land BEFORE the seal or
+                // drained text would open a stray bubble below it.
+                drainHeldEvents()
+            } else if !Self.holdExemptTypes.contains(event.type) {
+                heldEvents.append(event)
+                return
+            }
+        }
+        applyLive(event)
+    }
+
+    /// The reader is away from the bottom while a reply streams: STOP
+    /// mutating the transcript. Every store mutation runs a LazyVStack
+    /// item-phase pass over the whole transcript, and with the viewport over
+    /// the lazy container's estimated span one pass costs more than a frame —
+    /// even the 80ms-batched cadence saturated the main thread the moment
+    /// the user scrolled around mid-stream (traced: 95s Severe Hang inside
+    /// LazyLayoutViewCache.updateItemPhases). None of the held content is
+    /// visible anyway; it replays in order when the reader returns to the
+    /// bottom or the turn ends. Blocking prompts, usage, and title events
+    /// stay live — they render outside the transcript.
+    func setTranscriptHold(_ hold: Bool) {
+        guard hold != transcriptHoldActive else { return }
+        transcriptHoldActive = hold
+        if !hold { drainHeldEvents() }
+    }
+
+    private(set) var transcriptHoldActive = false
+    private var heldEvents: [GatewayEvent] = []
+
+    /// Events that never touch transcript items (pending-prompt fields and
+    /// header chrome only) — safe and necessary to apply while holding.
+    private static let holdExemptTypes: Set<String> = [
+        GatewayEvent.Kind.sessionUsage,
+        GatewayEvent.Kind.sessionTitle,
+        GatewayEvent.Kind.sessionsChanged,
+        GatewayEvent.Kind.statusUpdate,
+        GatewayEvent.Kind.notificationClear,
+        GatewayEvent.Kind.approvalRequest,
+        GatewayEvent.Kind.clarifyRequest,
+        GatewayEvent.Kind.clarifyExpire,
+        GatewayEvent.Kind.sudoRequest,
+        GatewayEvent.Kind.sudoExpire,
+        GatewayEvent.Kind.secretRequest,
+        GatewayEvent.Kind.secretExpire,
+        GatewayEvent.Kind.mcpSetupRequest,
+        GatewayEvent.Kind.mcpSetupExpire,
+    ]
+
+    private func drainHeldEvents() {
+        if !heldEvents.isEmpty {
+            let events = heldEvents
+            heldEvents = []
+            for event in events { applyLive(event) }
+        }
+        flushPendingDeltas()
+    }
+
+    private func applyLive(_ event: GatewayEvent) {
+        switch event.type {
+        case GatewayEvent.Kind.messageDelta:
+            pendingMessageText += event.payload["text"]?.stringValue ?? ""
+            scheduleDeltaFlush()
+            return
+        case GatewayEvent.Kind.reasoningDelta, GatewayEvent.Kind.thinkingDelta:
+            pendingReasoningText += event.payload["text"]?.stringValue ?? ""
+            scheduleDeltaFlush()
+            return
+        default:
+            flushPendingDeltas()
+            store.apply(event)
+        }
         // A session.title event may also rename; keep the stored id fresh
         // if the server re-anchors it.
         if event.type == GatewayEvent.Kind.sessionInfo,
             let stored = event.payload["stored_session_id"]?.stringValue, !stored.isEmpty
         {
             storedID = stored
+        }
+    }
+
+    private var pendingMessageText = ""
+    private var pendingReasoningText = ""
+    private var deltaFlushScheduled = false
+
+    private func scheduleDeltaFlush() {
+        guard !deltaFlushScheduled else { return }
+        deltaFlushScheduled = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            deltaFlushScheduled = false
+            flushPendingDeltas()
+        }
+    }
+
+    private func flushPendingDeltas() {
+        if !pendingReasoningText.isEmpty {
+            store.apply(
+                GatewayEvent(
+                    type: GatewayEvent.Kind.reasoningDelta, sessionID: runtimeID,
+                    payload: .object(["text": .string(pendingReasoningText)])))
+            pendingReasoningText = ""
+        }
+        if !pendingMessageText.isEmpty {
+            store.apply(
+                GatewayEvent(
+                    type: GatewayEvent.Kind.messageDelta, sessionID: runtimeID,
+                    payload: .object(["text": .string(pendingMessageText)])))
+            pendingMessageText = ""
         }
     }
 
