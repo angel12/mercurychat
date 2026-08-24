@@ -19,6 +19,14 @@ final class AppModel {
     /// Contract-version drift notice (non-blocking, shown in settings/banner).
     private(set) var contractNotice: String?
 
+    /// A keychain credential write failed (locked keychain, auth failure):
+    /// the stale item persists and the next launch will present dead
+    /// credentials. Non-blocking — the live connection is unaffected.
+    private(set) var keychainNotice: String?
+
+    private static let keychainWriteFailureNotice =
+        "Couldn't save credentials to the Keychain — you may need to sign in again next launch."
+
     /// Whether the gateway speaks the `profiles.*` RPC family Bot Mode is
     /// built on. `nil` until probed (or when the probe failed on transport) —
     /// the future Bots tab gates on `== true`.
@@ -206,8 +214,12 @@ final class AppModel {
         let store = tokenStore
         let authenticator = HermesAuthenticator(
             endpoint: endpoint, credentials: credentials
-        ) { rotated in
-            store.setCredentials(rotated, for: endpoint)
+        ) { [weak self] rotated in
+            if !store.setCredentials(rotated, for: endpoint) {
+                Task { @MainActor [weak self] in
+                    self?.keychainNotice = Self.keychainWriteFailureNotice
+                }
+            }
         }
         let probe = HermesRESTClient(endpoint: endpoint, authenticator: authenticator)
         do {
@@ -410,6 +422,7 @@ final class AppModel {
         recentSessions = []
         selectedProfile = nil
         contractNotice = nil
+        keychainNotice = nil
         botModeSupported = nil
     }
 
@@ -512,7 +525,9 @@ final class AppModel {
     private func persistValidatedServer(
         endpoint: ServerEndpoint, credentials: ServerCredentials
     ) {
-        tokenStore.setCredentials(credentials, for: endpoint)
+        if !tokenStore.setCredentials(credentials, for: endpoint) {
+            keychainNotice = Self.keychainWriteFailureNotice
+        }
         UserDefaults.standard.set(endpoint.key, forKey: "lastServer")
         if !savedServers.contains(where: { $0.urlString == endpoint.key }) {
             savedServers.append(SavedServer(urlString: endpoint.key))

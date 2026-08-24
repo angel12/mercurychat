@@ -25,7 +25,7 @@ struct ConnectionBannerView: View {
             .background(.thinMaterial, in: Capsule())
             .padding(.bottom, 72)
             .transition(.move(edge: .bottom).combined(with: .opacity))
-        } else if let notice = model.contractNotice, noticeVisible {
+        } else if let notice = model.contractNotice ?? model.keychainNotice, noticeVisible {
             Text(notice)
                 .font(.caption)
                 .padding(.horizontal, 14)
@@ -65,6 +65,9 @@ struct ConnectionBannerView: View {
                             "Auth", value: status.authRequired ? "Gated" : "Token (loopback)")
                     }
                     if let notice = model.contractNotice {
+                        Text(notice).font(.callout).foregroundStyle(.orange)
+                    }
+                    if let notice = model.keychainNotice {
                         Text(notice).font(.callout).foregroundStyle(.orange)
                     }
                     Button("Disconnect", role: .destructive) { model.disconnect() }
