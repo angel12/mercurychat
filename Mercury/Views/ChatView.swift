@@ -128,52 +128,48 @@ private struct ChatContentView: View {
     }
 
     private var transcript: some View {
-        GeometryReader { viewport in
-            ScrollViewReader { proxy in
-                // Modern OSes report scroll offsets via onScrollGeometryChange.
-                // The pre-iOS-18 fallback reads a preference off a GeometryReader
-                // in the content's background — that pattern stopped emitting on
-                // pure scroll-position changes in newer SwiftUI (verified on
-                // iOS 26: zero preference events during a 400pt drag), so it is
-                // ONLY the fallback, never the primary path.
-                let base = ScrollView {
-                    transcriptItems(proxy)
-                        .padding(.vertical, 12)
-                        .background(
-                            GeometryReader { content in
-                                Color.clear.preference(
-                                    key: BottomDistanceKey.self,
-                                    value: content.frame(in: .named("transcript")).maxY
-                                        - viewport.size.height)
-                            }
-                        )
-                }
-                .coordinateSpace(name: "transcript")
+        ScrollViewReader { proxy in
+            // List (UICollectionView-backed) instead of ScrollView+LazyVStack
+            // ON PURPOSE: LazyVStack re-runs a whole-container item-phase pass
+            // on every layout change, and with a long transcript the pass
+            // costs more than a frame — merely SCROLLING across the lazy
+            // container's estimated span livelocked a device for over a
+            // minute (Time Profiler: 47% LazyLayout, 29% Text.sizeThatFits,
+            // zero app frames). List virtualizes with per-row height caching
+            // and never pays whole-container passes.
+            let base = List {
+                transcriptItems(proxy)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
 
-                Group {
-                    if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
-                        base.onScrollGeometryChange(for: BottomGeometry.self) { geo in
-                            BottomGeometry(
-                                distance: geo.contentSize.height - geo.visibleRect.maxY,
-                                contentHeight: geo.contentSize.height)
-                        } action: { [scroll] old, new in
-                            // Distinguish "content grew under me" from "the
-                            // user scrolled": streaming deltas re-estimate the
-                            // lazy layout and produce large fake distance
-                            // jumps with zero user input — those must never
-                            // release the pin.
-                            scroll.update(
-                                bottomDistance: new.distance,
-                                contentGrew: new.contentHeight != old.contentHeight)
-                        }
-                    } else {
-                        // The preference fallback only re-emits on content
-                        // changes at all, so every reading is content-driven.
-                        base.onPreferenceChange(BottomDistanceKey.self) { [scroll] distance in
-                            scroll.update(bottomDistance: distance, contentGrew: true)
-                        }
+            Group {
+                if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+                    base.onScrollGeometryChange(for: BottomGeometry.self) { geo in
+                        BottomGeometry(
+                            distance: geo.contentSize.height - geo.visibleRect.maxY,
+                            contentHeight: geo.contentSize.height)
+                    } action: { [scroll] old, new in
+                        // Distinguish "content grew under me" from "the
+                        // user scrolled": streaming appends re-measure rows
+                        // and produce distance jumps with zero user input —
+                        // those must never release the pin.
+                        scroll.update(
+                            bottomDistance: new.distance,
+                            contentGrew: new.contentHeight != old.contentHeight)
                     }
+                } else {
+                    // Pre-18 has no scroll-geometry source for List (the old
+                    // preference trick measured the LazyVStack's frame, which
+                    // List doesn't expose). Degraded but functional: the drag
+                    // gesture still unpins; with bottomDistance stuck at its
+                    // last value the drag-end repin is approximate.
+                    base
                 }
+            }
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 1)
                         .onChanged { [scroll] _ in
@@ -226,12 +222,12 @@ private struct ChatContentView: View {
                 .onChange(of: controller.store.running) { _, running in
                     controller.setTranscriptHold(running && !scroll.isPinnedToBottom)
                 }
-            }
         }
     }
 
+    @ViewBuilder
     private func transcriptItems(_ proxy: ScrollViewProxy) -> some View {
-        LazyVStack(alignment: .leading, spacing: 12) {
+        Group {
             if let historyError = controller.historyError {
                 VStack(spacing: 6) {
                     Text(historyError)
@@ -976,13 +972,4 @@ private struct BottomGeometry: Equatable {
     var contentHeight: CGFloat
 }
 
-/// How far the transcript content's bottom edge sits below the visible
-/// viewport's bottom edge — ~0 when scrolled fully down, growing as the
-/// reader scrolls up into history.
-private struct BottomDistanceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
 
