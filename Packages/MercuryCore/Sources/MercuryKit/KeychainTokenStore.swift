@@ -27,17 +27,21 @@ public struct KeychainTokenStore: Sendable {
         return .sessionToken(raw)  // legacy pre-credentials item
     }
 
+    /// Returns false when the keychain write failed — silently keeping the
+    /// old item means presenting stale credentials next launch, so callers
+    /// should surface it.
+    @discardableResult
     public func setCredentials(
         _ credentials: ServerCredentials?, for endpoint: ServerEndpoint
-    ) {
+    ) -> Bool {
         guard let credentials,
             let data = try? JSONEncoder().encode(credentials),
             let json = String(data: data, encoding: .utf8)
         else {
             deleteToken(for: endpoint)
-            return
+            return true
         }
-        setToken(json, for: endpoint)
+        return setToken(json, for: endpoint)
     }
 
     public func token(for endpoint: ServerEndpoint) -> String? {
@@ -51,22 +55,27 @@ public struct KeychainTokenStore: Sendable {
         return String(data: data, encoding: .utf8)
     }
 
-    public func setToken(_ token: String?, for endpoint: ServerEndpoint) {
+    @discardableResult
+    public func setToken(_ token: String?, for endpoint: ServerEndpoint) -> Bool {
         guard let token, !token.isEmpty else {
             deleteToken(for: endpoint)
-            return
+            return true
         }
         let data = Data(token.utf8)
         let query = baseQuery(account: endpoint.key)
         let update: [String: Any] = [kSecValueData as String: data]
 
-        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        var status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if status == errSecItemNotFound {
             var add = query
             add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-            SecItemAdd(add as CFDictionary, nil)
+            // ThisDeviceOnly: these are per-server session credentials —
+            // they must not spread to other devices via iCloud Keychain.
+            add[kSecAttrAccessible as String] =
+                kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(add as CFDictionary, nil)
         }
+        return status == errSecSuccess
     }
 
     public func deleteToken(for endpoint: ServerEndpoint) {

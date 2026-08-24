@@ -81,9 +81,9 @@ extension JSONValue {
     }
 
     public var intValue: Int? {
-        if case .number(let value) = self, value.truncatingRemainder(dividingBy: 1) == 0 {
-            return Int(value)
-        }
+        // Int(exactly:) also rejects out-of-range magnitudes — these are
+        // server-controlled numbers, and an unchecked Int(Double) traps.
+        if case .number(let value) = self { return Int(exactly: value) }
         return nil
     }
 
