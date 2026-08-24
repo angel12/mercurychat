@@ -204,6 +204,24 @@ struct HermesConnectionTests {
         #expect(!seen.contains(where: isUnreachable))
     }
 
+    @Test func transportErrorsPublishTheShortDescription() async {
+        // A raw URLError stringifies to a multi-line NSError dump (UserInfo,
+        // stream keys, failing URL) — that must never reach the banner.
+        let harness = Harness(fallback: .fail(URLError(.cannotConnectToHost)))
+        var updates = await harness.connection.updates().makeAsyncIterator()
+        await harness.connection.start()
+
+        let seen = await phases(
+            upTo: { if case .disconnected = $0 { return true } else { return false } },
+            from: &updates)
+        guard case .disconnected(let reason)? = seen.last else {
+            Issue.record("expected a disconnected phase")
+            return
+        }
+        #expect(reason == URLError(.cannotConnectToHost).localizedDescription)
+        #expect(reason?.contains("UserInfo") != true)
+    }
+
     @Test func dialTime4401StopsWithAuthExpired() async {
         let harness = Harness(
             fallback: .fail(

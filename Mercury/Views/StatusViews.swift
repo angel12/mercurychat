@@ -38,7 +38,9 @@ struct ConnectionBannerView: View {
         if let text = bannerText {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text(text).font(.callout)
+                // Hard cap: a verbose close reason must never take over the
+                // screen — the full text lives in Settings > Diagnostics.
+                Text(text).font(.callout).lineLimit(2)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)

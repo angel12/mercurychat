@@ -174,7 +174,11 @@ public actor HermesConnection {
                     supervisor = nil
                     return
                 }
-                let reason = (error as? HermesError)?.errorDescription ?? "\(error)"
+                // localizedDescription, never "\(error)": a stringified
+                // NSError is a multi-line UserInfo dump, and this reason
+                // lands verbatim in the connection banner.
+                let reason = (error as? HermesError)?.errorDescription
+                    ?? error.localizedDescription
                 if Self.isCredentialRejection(reason) {
                     // 4401: the server actively rejected the credentials
                     // (revoked token / dead ticket). Redialing is a retry
