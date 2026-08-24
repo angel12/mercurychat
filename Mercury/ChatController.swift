@@ -60,6 +60,11 @@ final class ChatController: Identifiable {
     func begin(_ mode: Mode) async {
         beginGeneration += 1
         let generation = beginGeneration
+        // A resume supersedes any text buffered from the previous socket —
+        // the resume payload's inflight snapshot carries the whole turn, so
+        // flushing stale deltas after it would duplicate text.
+        pendingMessageText = ""
+        pendingReasoningText = ""
         isLoading = true
         defer { if generation == beginGeneration { isLoading = false } }
         do {
@@ -238,16 +243,71 @@ final class ChatController: Identifiable {
     // MARK: Events
 
     /// Route one gateway event; events for other sessions are ignored.
+    ///
+    /// Streaming text deltas are BATCHED (~12Hz) instead of applied per
+    /// event: every store mutation runs a full SwiftUI transaction, and while
+    /// the viewport sits over the LazyVStack's *estimated* (un-materialized)
+    /// region — reader scrolled up, reply growing below — each transaction
+    /// re-runs the lazy item-phase pass for the whole transcript. At the
+    /// per-token WS cadence those passes arrive faster than the device can
+    /// retire them and the main thread livelocks for the entire turn (the
+    /// "window freezes when I send while scrolled up" report; 84s Severe
+    /// Hang, 100% Running inside LazyLayoutViewCache.updateItemPhases, traced
+    /// on an iPhone 17 Pro Max). Structural events still apply immediately,
+    /// flushing buffered text first so ordering is preserved.
     func handle(event: GatewayEvent) {
         guard let runtimeID else { return }
         guard event.sessionID == nil || event.sessionID == runtimeID else { return }
-        store.apply(event)
+        switch event.type {
+        case GatewayEvent.Kind.messageDelta:
+            pendingMessageText += event.payload["text"]?.stringValue ?? ""
+            scheduleDeltaFlush()
+            return
+        case GatewayEvent.Kind.reasoningDelta, GatewayEvent.Kind.thinkingDelta:
+            pendingReasoningText += event.payload["text"]?.stringValue ?? ""
+            scheduleDeltaFlush()
+            return
+        default:
+            flushPendingDeltas()
+            store.apply(event)
+        }
         // A session.title event may also rename; keep the stored id fresh
         // if the server re-anchors it.
         if event.type == GatewayEvent.Kind.sessionInfo,
             let stored = event.payload["stored_session_id"]?.stringValue, !stored.isEmpty
         {
             storedID = stored
+        }
+    }
+
+    private var pendingMessageText = ""
+    private var pendingReasoningText = ""
+    private var deltaFlushScheduled = false
+
+    private func scheduleDeltaFlush() {
+        guard !deltaFlushScheduled else { return }
+        deltaFlushScheduled = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            deltaFlushScheduled = false
+            flushPendingDeltas()
+        }
+    }
+
+    private func flushPendingDeltas() {
+        if !pendingReasoningText.isEmpty {
+            store.apply(
+                GatewayEvent(
+                    type: GatewayEvent.Kind.reasoningDelta, sessionID: runtimeID,
+                    payload: .object(["text": .string(pendingReasoningText)])))
+            pendingReasoningText = ""
+        }
+        if !pendingMessageText.isEmpty {
+            store.apply(
+                GatewayEvent(
+                    type: GatewayEvent.Kind.messageDelta, sessionID: runtimeID,
+                    payload: .object(["text": .string(pendingMessageText)])))
+            pendingMessageText = ""
         }
     }
 
