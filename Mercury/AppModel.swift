@@ -1,5 +1,6 @@
 import Foundation
 import MercuryKit
+import Network
 import Observation
 import SwiftUI
 
@@ -34,9 +35,11 @@ final class AppModel {
 
     var isConnected: Bool {
         if case .ready = phase { return true }
-        // Stay on the browse screen through transient reconnects.
+        // Stay on the browse screen through transient reconnects — and
+        // through a give-up, where the banner offers the retry.
         if case .connecting = phase, connection != nil { return true }
         if case .disconnected = phase, connection != nil { return true }
+        if case .unreachable = phase, connection != nil { return true }
         return false
     }
 
@@ -260,6 +263,7 @@ final class AppModel {
         let connection = HermesConnection(endpoint: endpoint, authenticator: authenticator)
         self.connection = connection
         startUpdatePump(connection, credentialsToSave: credentials)
+        startPathMonitor()
         await connection.start()
     }
 
@@ -408,6 +412,7 @@ final class AppModel {
     func disconnect() {
         connectGeneration += 1  // invalidate any in-flight connect()
         cancelOAuthFlow()
+        stopPathMonitor()
         updatePump?.cancel()
         updatePump = nil
         let connection = connection
@@ -430,6 +435,37 @@ final class AppModel {
     func appBecameActive() {
         guard let connection else { return }
         Task { await connection.pokeReconnect() }
+    }
+
+    /// The unreachable banner's retry button.
+    func retryConnection() {
+        guard let connection else { return }
+        Task { await connection.pokeReconnect() }
+    }
+
+    // MARK: Network-path watching
+
+    private var pathMonitor: NWPathMonitor?
+
+    /// Re-dial the moment the network comes back (or changes) instead of
+    /// waiting out a backoff — a poke also restarts a given-up supervisor.
+    private func startPathMonitor() {
+        guard pathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor [weak self] in
+                guard let self, let connection = self.connection else { return }
+                await connection.pokeReconnect()
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "mercury.path-monitor"))
+        pathMonitor = monitor
+    }
+
+    private func stopPathMonitor() {
+        pathMonitor?.cancel()
+        pathMonitor = nil
     }
 
     func requestNewSession(cwd: String? = nil) {
