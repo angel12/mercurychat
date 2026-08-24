@@ -44,6 +44,24 @@ struct TranscriptStoreTests {
         #expect(store.items.count == 2)
     }
 
+    @Test func userEchoCounterTracksLiveEchoesOnly() {
+        let store = TranscriptStore()
+        #expect(store.userEchoCounter == 0)
+        // Live echoes bump the counter — the transcript view keys its
+        // snap-to-bottom on it (items.count coalescing can hide the echo).
+        store.appendUserMessage("first")
+        #expect(store.userEchoCounter == 1)
+        store.restoreQueuedPrompt("queued while busy")
+        #expect(store.userEchoCounter == 2)
+        // Hydration replaces history without bumping: a reconnect must not
+        // yank a reader who scrolled away back to the bottom.
+        store.hydrate([
+            TranscriptMessage(json: json(#"{"role": "user", "content": "old", "id": 1}"#))!,
+            TranscriptMessage(json: json(#"{"role": "assistant", "content": "reply", "id": 2}"#))!,
+        ])
+        #expect(store.userEchoCounter == 2)
+    }
+
     @Test func reasoningAccumulatesSeparately() {
         let store = TranscriptStore()
         store.apply(event("message.start"))

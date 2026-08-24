@@ -407,6 +407,14 @@ public final class TranscriptStore {
     /// Append the user's message optimistically at submit time. Returns the
     /// echo's stable live id so the submit flow can mark the EXACT message
     /// delivered/queued/failed once the RPC settles.
+    /// Bumped on every live user echo (send, queued-prompt restore, inflight
+    /// rebuild) — never by hydration. The transcript view observes this to
+    /// snap to the bottom on the user's own message: watching `items.count`
+    /// and checking `items.last` misses the echo whenever the reply's first
+    /// event lands in the same SwiftUI update cycle (onChange coalesces both
+    /// appends into one fire whose `last` is already the assistant bubble).
+    public private(set) var userEchoCounter = 0
+
     @discardableResult
     public func appendUserMessage(
         _ text: String, state: UserMessage.SendState = .sent
@@ -415,6 +423,7 @@ public final class TranscriptStore {
         items.append(
             .user(UserMessage(id: id, text: text, sendState: state, timestamp: Date())))
         lastError = nil
+        userEchoCounter += 1
         return id
     }
 

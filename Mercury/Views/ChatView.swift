@@ -1,5 +1,6 @@
 import ChatCore
 import MercuryKit
+import QuartzCore
 import SwiftUI
 
 /// The heart of the app: one session's streaming transcript + composer.
@@ -151,14 +152,25 @@ private struct ChatContentView: View {
 
                 Group {
                     if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
-                        base.onScrollGeometryChange(for: CGFloat.self) { geo in
-                            geo.contentSize.height - geo.visibleRect.maxY
-                        } action: { [scroll] _, distance in
-                            scroll.update(bottomDistance: distance)
+                        base.onScrollGeometryChange(for: BottomGeometry.self) { geo in
+                            BottomGeometry(
+                                distance: geo.contentSize.height - geo.visibleRect.maxY,
+                                contentHeight: geo.contentSize.height)
+                        } action: { [scroll] old, new in
+                            // Distinguish "content grew under me" from "the
+                            // user scrolled": streaming deltas re-estimate the
+                            // lazy layout and produce large fake distance
+                            // jumps with zero user input — those must never
+                            // release the pin.
+                            scroll.update(
+                                bottomDistance: new.distance,
+                                contentGrew: new.contentHeight != old.contentHeight)
                         }
                     } else {
+                        // The preference fallback only re-emits on content
+                        // changes at all, so every reading is content-driven.
                         base.onPreferenceChange(BottomDistanceKey.self) { [scroll] distance in
-                            scroll.update(bottomDistance: distance)
+                            scroll.update(bottomDistance: distance, contentGrew: true)
                         }
                     }
                 }
@@ -186,10 +198,17 @@ private struct ChatContentView: View {
                     }
                 }
                 .animation(.easeInOut(duration: 0.15), value: scroll.isPinnedToBottom)
+                .onChange(of: controller.store.userEchoCounter) {
+                    // The user's own message always snaps the view back down.
+                    // This is its own signal (not derived from items.count):
+                    // checking `items.last` missed the echo whenever the
+                    // reply's first event landed in the same update cycle,
+                    // leaving the view parked while the answer streamed in
+                    // below the fold.
+                    scroll.setPinned(true)
+                    scrollToBottom(proxy, animated: true)
+                }
                 .onChange(of: controller.store.items.count) {
-                    // The user's own message always snaps the view back down;
-                    // otherwise respect a reader who scrolled away.
-                    if case .user = controller.store.items.last { scroll.setPinned(true) }
                     guard scroll.isPinnedToBottom else { return }
                     scrollToBottom(proxy, animated: true)
                 }
@@ -270,20 +289,53 @@ private struct ChatContentView: View {
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
         guard !scroll.scrollQueued else { return }
         scroll.scrollQueued = true
+        // Suppress geometry-driven unpinning for the whole deferral window:
+        // between pinning and the deferred scrollTo, the next scroll-geometry
+        // callback still reports the OLD far-from-bottom distance, and that
+        // reading used to unpin and abort the queued scroll — the send-snap
+        // and hydration-snap never ran at all when the reader was >80pt up
+        // (the "transcript freezes when I send while scrolled up" report).
+        // A real user drag still wins instantly via the drag gesture.
+        scroll.isAutoScrolling = true
         Task { @MainActor [scroll] in
             try? await Task.sleep(for: .milliseconds(16))
             scroll.scrollQueued = false
-            guard scroll.isPinnedToBottom else { return }
+            guard scroll.isPinnedToBottom else {
+                scroll.isAutoScrolling = false
+                return
+            }
             // Long animated hops overshoot LazyVStack's estimated layout and
             // strand the viewport in blank space — only animate near-bottom.
             if animated, scroll.bottomDistance < 600 {
-                scroll.isAutoScrolling = true
                 withAnimation {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 } completion: {
-                    scroll.isAutoScrolling = false
+                    settleToBottom(proxy)
                 }
             } else {
+                proxy.scrollTo("bottom", anchor: .bottom)
+                settleToBottom(proxy)
+            }
+        }
+    }
+
+    /// One `scrollTo` across a long un-laid-out LazyVStack lands SHORT of the
+    /// bottom (the lazy layout only estimates the un-rendered span — verified
+    /// on iOS 26.5, where a ~20k-pt jump strands hundreds of points up). Keep
+    /// re-issuing instant hops until the geometry actually reads "at bottom",
+    /// bounded so a pathological layout can't loop forever. Landing clears
+    /// `isAutoScrolling` (via the repin branch of `update`), which ends the
+    /// chain; a user drag cancels it the same way.
+    private func settleToBottom(_ proxy: ScrollViewProxy) {
+        guard !scroll.settleActive else { return }
+        scroll.settleActive = true
+        Task { @MainActor [scroll] in
+            defer { scroll.settleActive = false }
+            for _ in 0..<40 {
+                try? await Task.sleep(for: .milliseconds(32))
+                guard scroll.isPinnedToBottom, scroll.isAutoScrolling,
+                    scroll.bottomDistance >= TranscriptScrollState.repinDistance
+                else { return }
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
         }
@@ -319,8 +371,10 @@ private struct ChatContentView: View {
             // Deliberately NOT animated: an animated scrollTo across a long
             // LazyVStack overshoots the lazy layout estimate and strands the
             // viewport in un-laid-out blank space (reproduced on iOS 26).
-            // An instant jump resolves the target layout synchronously.
             proxy.scrollTo("bottom", anchor: .bottom)
+            // A single instant hop across a long lazy span lands short —
+            // keep hopping until the geometry confirms the bottom.
+            settleToBottom(proxy)
         } label: {
             Image(systemName: "arrow.down")
                 .font(.system(size: 15, weight: .semibold))
@@ -851,11 +905,18 @@ private final class TranscriptScrollState {
     /// threshold re-pins anyone the auto-scroll just yanked down, which made
     /// the pin impossible to escape mid-stream.
     @ObservationIgnored static let unpinDistance: CGFloat = 80
-    @ObservationIgnored static let repinDistance: CGFloat = 8
+    /// "At the bottom" must clear the transcript content's 12pt bottom
+    /// padding: the scroll anchor sits INSIDE the padded LazyVStack, so a
+    /// perfect `scrollTo("bottom", anchor: .bottom)` landing reads ~12pt of
+    /// remaining distance, never 0.
+    @ObservationIgnored static let repinDistance: CGFloat = 16
 
     private(set) var isPinnedToBottom = true
     /// True while a deferred scroll is queued so extra requests coalesce.
     @ObservationIgnored var scrollQueued = false
+    /// True while a settle chain (post-scrollTo landing correction) runs so
+    /// concurrent requests don't stack duplicate chains.
+    @ObservationIgnored var settleActive = false
     /// Latest scroll-geometry reading, kept so gesture callbacks (which
     /// can't see geometry) can decide whether the drag ended at the bottom.
     @ObservationIgnored var bottomDistance: CGFloat = 0
@@ -870,16 +931,39 @@ private final class TranscriptScrollState {
         isPinnedToBottom = pinned
     }
 
-    func update(bottomDistance distance: CGFloat) {
+    func update(bottomDistance distance: CGFloat, contentGrew: Bool = false) {
+        if contentGrew { lastContentGrowth = CACurrentMediaTime() }
         bottomDistance = distance
         if distance > Self.unpinDistance {
-            guard !isAutoScrolling else { return }
+            // Only a reading the USER caused may release the pin: while a
+            // programmatic scroll is in flight (isAutoScrolling) the geometry
+            // reports mid-seek positions, and while content is growing the
+            // lazy layout re-estimates produce far readings out of thin air.
+            // The growth flag alone is not enough — appends re-layout in
+            // multiple passes, and a second pass reports a jumped distance
+            // with the contentHeight UNCHANGED (verified: tool-row appends
+            // unpinned the follow mid-stream) — so any reading within a short
+            // cool-down of a growth is still treated as content-driven. A
+            // real drag unpins synchronously via the gesture, never here.
+            guard !isAutoScrolling, !contentGrew,
+                CACurrentMediaTime() - lastContentGrowth > 0.15
+            else { return }
             setPinned(false)
         } else if distance < Self.repinDistance, !isDragging {
             isAutoScrolling = false
             setPinned(true)
         }
     }
+
+    @ObservationIgnored private var lastContentGrowth: CFTimeInterval = 0
+}
+
+/// Scroll reading pairing the bottom distance with the content height, so
+/// the action can tell user scrolls (height unchanged) apart from content
+/// growth (height changed) — only the former may release the pin.
+private struct BottomGeometry: Equatable {
+    var distance: CGFloat
+    var contentHeight: CGFloat
 }
 
 /// How far the transcript content's bottom edge sits below the visible
