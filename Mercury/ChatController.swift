@@ -60,11 +60,13 @@ final class ChatController: Identifiable {
     func begin(_ mode: Mode) async {
         beginGeneration += 1
         let generation = beginGeneration
-        // A resume supersedes any text buffered from the previous socket —
-        // the resume payload's inflight snapshot carries the whole turn, so
-        // flushing stale deltas after it would duplicate text.
+        // A resume supersedes any text buffered or held from the previous
+        // socket — the resume payload's inflight snapshot carries the whole
+        // turn, so replaying stale events after it would duplicate content.
         pendingMessageText = ""
         pendingReasoningText = ""
+        heldEvents = []
+        transcriptHoldActive = false
         isLoading = true
         defer { if generation == beginGeneration { isLoading = false } }
         do {
@@ -258,6 +260,68 @@ final class ChatController: Identifiable {
     func handle(event: GatewayEvent) {
         guard let runtimeID else { return }
         guard event.sessionID == nil || event.sessionID == runtimeID else { return }
+        if transcriptHoldActive {
+            if event.type == GatewayEvent.Kind.sessionInfo {
+                // The turn-end carrier (`running: false` seals the open
+                // bubble): everything buffered must land BEFORE the seal or
+                // drained text would open a stray bubble below it.
+                drainHeldEvents()
+            } else if !Self.holdExemptTypes.contains(event.type) {
+                heldEvents.append(event)
+                return
+            }
+        }
+        applyLive(event)
+    }
+
+    /// The reader is away from the bottom while a reply streams: STOP
+    /// mutating the transcript. Every store mutation runs a LazyVStack
+    /// item-phase pass over the whole transcript, and with the viewport over
+    /// the lazy container's estimated span one pass costs more than a frame —
+    /// even the 80ms-batched cadence saturated the main thread the moment
+    /// the user scrolled around mid-stream (traced: 95s Severe Hang inside
+    /// LazyLayoutViewCache.updateItemPhases). None of the held content is
+    /// visible anyway; it replays in order when the reader returns to the
+    /// bottom or the turn ends. Blocking prompts, usage, and title events
+    /// stay live — they render outside the transcript.
+    func setTranscriptHold(_ hold: Bool) {
+        guard hold != transcriptHoldActive else { return }
+        transcriptHoldActive = hold
+        if !hold { drainHeldEvents() }
+    }
+
+    private(set) var transcriptHoldActive = false
+    private var heldEvents: [GatewayEvent] = []
+
+    /// Events that never touch transcript items (pending-prompt fields and
+    /// header chrome only) — safe and necessary to apply while holding.
+    private static let holdExemptTypes: Set<String> = [
+        GatewayEvent.Kind.sessionUsage,
+        GatewayEvent.Kind.sessionTitle,
+        GatewayEvent.Kind.sessionsChanged,
+        GatewayEvent.Kind.statusUpdate,
+        GatewayEvent.Kind.notificationClear,
+        GatewayEvent.Kind.approvalRequest,
+        GatewayEvent.Kind.clarifyRequest,
+        GatewayEvent.Kind.clarifyExpire,
+        GatewayEvent.Kind.sudoRequest,
+        GatewayEvent.Kind.sudoExpire,
+        GatewayEvent.Kind.secretRequest,
+        GatewayEvent.Kind.secretExpire,
+        GatewayEvent.Kind.mcpSetupRequest,
+        GatewayEvent.Kind.mcpSetupExpire,
+    ]
+
+    private func drainHeldEvents() {
+        if !heldEvents.isEmpty {
+            let events = heldEvents
+            heldEvents = []
+            for event in events { applyLive(event) }
+        }
+        flushPendingDeltas()
+    }
+
+    private func applyLive(_ event: GatewayEvent) {
         switch event.type {
         case GatewayEvent.Kind.messageDelta:
             pendingMessageText += event.payload["text"]?.stringValue ?? ""

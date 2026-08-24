@@ -216,6 +216,16 @@ private struct ChatContentView: View {
                     guard scroll.isPinnedToBottom else { return }
                     scrollToBottom(proxy, animated: false)
                 }
+                // Reading away from the bottom while a reply streams: freeze
+                // the transcript (the controller buffers events) — mutating
+                // the LazyVStack under a viewport parked over its estimated
+                // span costs more than a frame per pass and hangs the device.
+                .onChange(of: scroll.isPinnedToBottom) { _, pinned in
+                    controller.setTranscriptHold(!pinned && controller.store.running)
+                }
+                .onChange(of: controller.store.running) { _, running in
+                    controller.setTranscriptHold(running && !scroll.isPinnedToBottom)
+                }
             }
         }
     }
