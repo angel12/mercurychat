@@ -1,5 +1,17 @@
 import Foundation
 
+/// The slice of `GatewayClient` the reconnect supervisor drives — a seam so
+/// supervisor behavior (backoff, give-up, auth expiry) is testable without a
+/// live server.
+public protocol GatewayDialing: Actor {
+    var state: GatewayClient.State { get }
+    func connect(timeout: TimeInterval) async throws
+    func request(_ method: String, params: JSONValue?, timeout: TimeInterval)
+        async throws -> JSONValue
+    func events() -> AsyncStream<GatewayEvent>
+    func close(reason: String?)
+}
+
 /// One live JSON-RPC 2.0 connection to `/api/ws`.
 ///
 /// Single-connection lifetime: dial once, use until it drops, then discard.
@@ -8,7 +20,7 @@ import Foundation
 /// Keepalive expectation: the server disables WS pings on loopback binds and
 /// a busy agent turn can legitimately go minutes without a frame — quiet is
 /// NOT dead here, so no read timeout is applied.
-public actor GatewayClient {
+public actor GatewayClient: GatewayDialing {
     public enum State: Sendable, Equatable {
         case idle
         case connecting

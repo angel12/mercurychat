@@ -8,9 +8,29 @@ struct ConnectionBannerView: View {
     @State private var noticeVisible = true
 
     var body: some View {
-        // Purely informational — never intercept touches meant for the UI
-        // underneath (the composer lives at the same edge).
-        banner.allowsHitTesting(false)
+        if case .unreachable = model.phase {
+            // The one interactive banner: retries have given up and the only
+            // way back is an explicit poke (or a network-path change).
+            unreachableBanner
+        } else {
+            // Purely informational — never intercept touches meant for the UI
+            // underneath (the composer lives at the same edge).
+            banner.allowsHitTesting(false)
+        }
+    }
+
+    private var unreachableBanner: some View {
+        HStack(spacing: 10) {
+            Text("Server unreachable").font(.callout)
+            Button("Retry") { model.retryConnection() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.thinMaterial, in: Capsule())
+        .padding(.bottom, 72)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     @ViewBuilder
@@ -18,7 +38,9 @@ struct ConnectionBannerView: View {
         if let text = bannerText {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text(text).font(.callout)
+                // Hard cap: a verbose close reason must never take over the
+                // screen — the full text lives in Settings > Diagnostics.
+                Text(text).font(.callout).lineLimit(2)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -101,6 +123,8 @@ struct ConnectionBannerView: View {
             case .ready(let isReconnect): return isReconnect ? "ready (reconnected)" : "ready"
             case .disconnected(let reason): return "disconnected\(reason.map { ": \($0)" } ?? "")"
             case .authExpired: return "auth expired"
+            case .unreachable(let reason):
+                return "unreachable\(reason.map { ": \($0)" } ?? "")"
             }
         }
     }

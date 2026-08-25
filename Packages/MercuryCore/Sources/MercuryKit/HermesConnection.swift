@@ -16,6 +16,10 @@ public actor HermesConnection {
         /// Password-mode refresh token is dead; redialing is pointless. The
         /// supervisor has stopped — the app must prompt for a fresh sign-in.
         case authExpired
+        /// Retries kept failing for the whole give-up window; the supervisor
+        /// has stopped. `pokeReconnect()` (the retry button, a network-path
+        /// change) starts a fresh dial cycle.
+        case unreachable(reason: String?)
     }
 
     public enum Update: Sendable {
@@ -28,17 +32,49 @@ public actor HermesConnection {
     public nonisolated let rest: HermesRESTClient
 
     public private(set) var phase: Phase = .stopped
-    private var gateway: GatewayClient?
+    private var gateway: (any GatewayDialing)?
     private var supervisor: Task<Void, Never>?
     private var everConnected = false
     private var reconnectPoke: CheckedContinuation<Void, Never>?
     private var backoffTimer: Task<Void, Never>?
     private var subscribers: [UUID: AsyncStream<Update>.Continuation] = [:]
 
+    /// Consecutive failures spanning this window (seconds) end the retry
+    /// loop with `.unreachable` instead of spinning forever.
+    private let giveUpAfter: TimeInterval
+    private let now: @Sendable () -> TimeInterval
+    private let sleeper: @Sendable (TimeInterval) async -> Void
+    private let makeClient:
+        @Sendable (ServerEndpoint, HermesAuthenticator) -> any GatewayDialing
+
     public init(endpoint: ServerEndpoint, authenticator: HermesAuthenticator) {
+        self.init(
+            endpoint: endpoint,
+            authenticator: authenticator,
+            giveUpAfter: 120,
+            now: { ProcessInfo.processInfo.systemUptime },
+            sleeper: { delay in try? await Task.sleep(for: .seconds(delay)) },
+            makeClient: { GatewayClient(endpoint: $0, authenticator: $1) })
+    }
+
+    /// Full injection surface — tests drive the supervisor with a scripted
+    /// dialer and a fake clock so backoff runs in microseconds.
+    init(
+        endpoint: ServerEndpoint,
+        authenticator: HermesAuthenticator,
+        giveUpAfter: TimeInterval,
+        now: @escaping @Sendable () -> TimeInterval,
+        sleeper: @escaping @Sendable (TimeInterval) async -> Void,
+        makeClient: @escaping @Sendable (ServerEndpoint, HermesAuthenticator) ->
+            any GatewayDialing
+    ) {
         self.endpoint = endpoint
         self.authenticator = authenticator
         self.rest = HermesRESTClient(endpoint: endpoint, authenticator: authenticator)
+        self.giveUpAfter = giveUpAfter
+        self.now = now
+        self.sleeper = sleeper
+        self.makeClient = makeClient
     }
 
     public init(endpoint: ServerEndpoint, token: String?) {
@@ -92,8 +128,14 @@ public actor HermesConnection {
     }
 
     /// Skip the current backoff delay — call on app-foreground or
-    /// network-path change.
+    /// network-path change. After a give-up (`.unreachable`) this restarts
+    /// the supervisor instead: the retry button and a network-path change
+    /// are exactly the cues that dialing is worth trying again.
     public func pokeReconnect() {
+        if case .unreachable = phase, supervisor == nil {
+            start()
+            return
+        }
         backoffTimer?.cancel()
         backoffTimer = nil
         reconnectPoke?.resume()
@@ -113,12 +155,15 @@ public actor HermesConnection {
 
     private func runSupervisor() async {
         var attempt = 0
+        // Start of the current stretch of consecutive failures; nil while
+        // healthy. When it spans `giveUpAfter`, retrying stops.
+        var failingSince: TimeInterval?
         while !Task.isCancelled {
             publish(.phase(.connecting(attempt: attempt)))
 
-            let client = GatewayClient(endpoint: endpoint, authenticator: authenticator)
+            let client = makeClient(endpoint, authenticator)
             do {
-                try await client.connect()
+                try await client.connect(timeout: 10)
             } catch {
                 await client.close(reason: nil)
                 if Task.isCancelled { return }  // stop() already published .stopped
@@ -129,7 +174,11 @@ public actor HermesConnection {
                     supervisor = nil
                     return
                 }
-                let reason = (error as? HermesError)?.errorDescription ?? "\(error)"
+                // localizedDescription, never "\(error)": a stringified
+                // NSError is a multi-line UserInfo dump, and this reason
+                // lands verbatim in the connection banner.
+                let reason = (error as? HermesError)?.errorDescription
+                    ?? error.localizedDescription
                 if Self.isCredentialRejection(reason) {
                     // 4401: the server actively rejected the credentials
                     // (revoked token / dead ticket). Redialing is a retry
@@ -146,6 +195,7 @@ public actor HermesConnection {
                     supervisor = nil
                     return
                 }
+                if giveUp(failingSince: &failingSince, reason: reason) { return }
                 publish(.phase(.disconnected(reason: reason)))
                 attempt += 1
                 await backoff(attempt: attempt)
@@ -162,6 +212,7 @@ public actor HermesConnection {
 
             gateway = client
             attempt = 0
+            failingSince = nil
             publish(.phase(.ready(isReconnect: everConnected)))
             everConnected = true
 
@@ -188,10 +239,23 @@ public actor HermesConnection {
                 supervisor = nil
                 return
             }
+            if giveUp(failingSince: &failingSince, reason: reason) { return }
             publish(.phase(.disconnected(reason: reason)))
             attempt += 1
             await backoff(attempt: attempt)
         }
+    }
+
+    /// Anchor the failure window at the first failure of the current stretch
+    /// and, once it spans `giveUpAfter`, stop the supervisor with
+    /// `.unreachable`. Returns true when the caller must exit the loop.
+    private func giveUp(failingSince: inout TimeInterval?, reason: String?) -> Bool {
+        let start = failingSince ?? now()
+        failingSince = start
+        guard now() - start >= giveUpAfter else { return false }
+        publish(.phase(.unreachable(reason: reason)))
+        supervisor = nil
+        return true
     }
 
     /// A 4401 close means the server rejected the credentials outright —
@@ -205,7 +269,7 @@ public actor HermesConnection {
         reason.contains("(4403)")
     }
 
-    private func closeReason(of client: GatewayClient) async -> String? {
+    private func closeReason(of client: any GatewayDialing) async -> String? {
         if case .closed(let reason) = await client.state { return reason }
         return nil
     }
@@ -222,7 +286,7 @@ public actor HermesConnection {
             // surviving a pokeReconnect() would resume the NEXT backoff's
             // continuation early and collapse the exponential delay.
             backoffTimer = Task {
-                try? await Task.sleep(for: .seconds(delay))
+                await sleeper(delay)
                 guard !Task.isCancelled else { return }
                 self.finishBackoff()
             }
