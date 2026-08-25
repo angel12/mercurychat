@@ -49,7 +49,11 @@ struct ChatView: View {
                 Group {
                     switch sheet {
                     case .clarify(let request):
-                        ClarifySheet(controller: controller, request: request)
+                        if request.isBatch {
+                            BatchClarifySheet(controller: controller, request: request)
+                        } else {
+                            ClarifySheet(controller: controller, request: request)
+                        }
                     case .sudo(let request):
                         SudoSheet(controller: controller, request: request)
                     case .secret(let request):
@@ -734,6 +738,150 @@ private struct ClarifySheet: View {
                 // the controller posted a visible expiry notice. A newer
                 // clarify may have replaced this one mid-RPC — the sheet is
                 // now presenting it, so dismiss only when nothing is pending.
+                if controller.store.pendingClarify == nil { dismiss() }
+            case .failed:
+                submitError = controller.errorMessage
+                    ?? "The answer didn't reach the server — try again."
+            }
+        }
+    }
+}
+
+/// Batch clarify (v0.20.5+): one `clarify.request` carrying several
+/// questions. Answers lock per question via `clarify.respond {request_id,
+/// question_id, answer}`; the batch resolves when the last one locks, so
+/// this sheet collects everything and submits sequentially on confirm.
+/// "Skip All" cancels the batch with one no-question_id respond.
+private struct BatchClarifySheet: View {
+    let controller: ChatController
+    let request: ClarifyRequest
+    @Environment(\.dismiss) private var dismiss
+    @State private var freeText: [String: String] = [:]
+    @State private var selected: [String: Set<String>] = [:]
+    @State private var submitError: String?
+    @State private var isSubmitting = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                SubmitErrorSection(error: submitError)
+                ForEach(request.questions) { question in
+                    Section(question.question) {
+                        ForEach(question.choices, id: \.self) { choice in
+                            Button {
+                                toggle(choice, for: question)
+                            } label: {
+                                HStack {
+                                    Text(choice).foregroundStyle(.primary)
+                                    Spacer()
+                                    if selected[question.qid, default: []].contains(choice) {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                        TextField(
+                            question.choices.isEmpty
+                                ? "Your answer" : "Or answer in your own words",
+                            text: bindingForFreeText(question.qid), axis: .vertical
+                        )
+                        .lineLimit(1...3)
+                    }
+                }
+            }
+            .disabled(isSubmitting)
+            .navigationTitle("Questions (\(request.questions.count))")
+            #if !os(macOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Skip All") { skipAll() }
+                        .disabled(isSubmitting)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Answer") { submitAll() }
+                        .disabled(isSubmitting)
+                }
+            }
+            .onAppear {
+                // A reconnect re-presents the card with any answers the
+                // server already locked — prefill so they stay editable.
+                for (qid, answer) in request.lockedAnswers where !answer.isEmpty {
+                    if freeText[qid] == nil { freeText[qid] = answer }
+                }
+            }
+        }
+        #if os(macOS)
+            .frame(minWidth: 460, minHeight: 380)
+        #endif
+    }
+
+    private func bindingForFreeText(_ qid: String) -> Binding<String> {
+        Binding(
+            get: { freeText[qid] ?? "" },
+            set: { freeText[qid] = $0 })
+    }
+
+    private func toggle(_ choice: String, for question: ClarifyRequest.Question) {
+        var picks = selected[question.qid, default: []]
+        if question.multiSelect {
+            if !picks.insert(choice).inserted { picks.remove(choice) }
+        } else {
+            picks = picks.contains(choice) ? [] : [choice]
+        }
+        selected[question.qid] = picks
+    }
+
+    private func composedAnswer(_ question: ClarifyRequest.Question) -> String {
+        let picks = selected[question.qid, default: []]
+        if !picks.isEmpty { return picks.sorted().joined(separator: ", ") }
+        return freeText[question.qid] ?? ""
+    }
+
+    /// Lock every question in order; the last lock resolves the batch.
+    /// An unanswered question locks as "" (= skip, same as single clarify).
+    private func submitAll() {
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        submitError = nil
+        Task {
+            for question in request.questions {
+                let outcome = await controller.respondClarifyQuestion(
+                    requestID: request.requestID,
+                    questionID: question.qid,
+                    answer: composedAnswer(question))
+                switch outcome {
+                case .progress:
+                    continue
+                case .completed, .expired:
+                    isSubmitting = false
+                    if controller.store.pendingClarify == nil { dismiss() }
+                    return
+                case .failed:
+                    isSubmitting = false
+                    submitError = controller.errorMessage
+                        ?? "The answer didn't reach the server — try again."
+                    return
+                }
+            }
+            // Every question locked but the server still reports remaining
+            // qids (shouldn't happen — qid mismatch would 4002 as .failed).
+            isSubmitting = false
+            if controller.store.pendingClarify == nil { dismiss() }
+        }
+    }
+
+    private func skipAll() {
+        guard !isSubmitting else { return }
+        isSubmitting = true
+        submitError = nil
+        Task {
+            let outcome = await controller.respondClarify(
+                requestID: request.requestID, answer: "")
+            isSubmitting = false
+            switch outcome {
+            case .delivered, .expired:
                 if controller.store.pendingClarify == nil { dismiss() }
             case .failed:
                 submitError = controller.errorMessage

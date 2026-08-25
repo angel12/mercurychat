@@ -6,11 +6,16 @@ public struct GatewayEvent: Sendable, Equatable {
     public var type: String
     public var sessionID: String?
     public var payload: JSONValue
+    /// Per-session monotonic sequence stamp (v0.20.5+; nil from older
+    /// backends). Sibling of `type` in the frame's params, NOT in `payload`.
+    /// Basis of the reconnect replay contract (`session.events.since`).
+    public var seq: Int?
 
-    public init(type: String, sessionID: String?, payload: JSONValue) {
+    public init(type: String, sessionID: String?, payload: JSONValue, seq: Int? = nil) {
         self.type = type
         self.sessionID = sessionID
         self.payload = payload
+        self.seq = seq
     }
 
     /// Well-known event names (open set — unknown types must be tolerated).
@@ -96,15 +101,38 @@ public struct ApprovalRequest: Sendable, Equatable, Identifiable {
 
 /// `clarify.request` — correlated by `request_id`; may be cleared by a
 /// matching `clarify.expire`. Empty answer = skip.
+///
+/// Two wire shapes: the historical single question (`question`/`choices` at
+/// the top level), and the batch shape (v0.20.5+) — `questions: [{qid,
+/// question, choices, multi_select}]` with NO top-level question. Batch
+/// answers go per question via `clarify.respond {request_id, question_id,
+/// answer}` (each returns the still-unanswered `remaining` qids; the batch
+/// resolves when it empties); a respond with no question_id cancels the
+/// whole batch.
 public struct ClarifyRequest: Sendable, Equatable, Identifiable {
+    public struct Question: Sendable, Equatable, Identifiable {
+        public var qid: String
+        public var question: String
+        public var choices: [String]
+        public var multiSelect: Bool
+
+        public var id: String { qid }
+    }
+
     public var requestID: String
     public var sessionID: String?
     public var question: String
     /// nil/empty = free-text question.
     public var choices: [String]
     public var multiSelect: Bool
+    /// Non-empty = batch shape; `question`/`choices` above are then empty.
+    public var questions: [Question]
+    /// Batch answers already locked server-side (qid → answer) — present on
+    /// the resume payload's `pending_clarify` snapshot after a reconnect.
+    public var lockedAnswers: [String: String]
 
     public var id: String { requestID }
+    public var isBatch: Bool { !questions.isEmpty }
 
     public init?(event: GatewayEvent) {
         guard event.type == GatewayEvent.Kind.clarifyRequest,
@@ -113,11 +141,28 @@ public struct ClarifyRequest: Sendable, Equatable, Identifiable {
         self.requestID = requestID
         self.sessionID = event.sessionID
         self.question = event.payload["question"]?.stringValue ?? ""
-        self.choices =
-            event.payload["choices"]?.arrayValue?
+        self.choices = Self.cleanChoices(event.payload["choices"])
+        self.multiSelect = event.payload["multi_select"]?.truthy ?? false
+        self.questions =
+            event.payload["questions"]?.arrayValue?.compactMap { entry -> Question? in
+                guard let qid = entry["qid"]?.stringValue, !qid.isEmpty else { return nil }
+                return Question(
+                    qid: qid,
+                    question: entry["question"]?.stringValue ?? "",
+                    choices: Self.cleanChoices(entry["choices"]),
+                    multiSelect: entry["multi_select"]?.truthy ?? false)
+            } ?? []
+        var locked: [String: String] = [:]
+        if let answers = event.payload["answers"]?.objectValue {
+            for (qid, value) in answers { locked[qid] = value.stringValue ?? "" }
+        }
+        self.lockedAnswers = locked
+    }
+
+    private static func cleanChoices(_ json: JSONValue?) -> [String] {
+        json?.arrayValue?
             .compactMap(\.stringValue)
             .filter { !$0.isEmpty && $0.count <= 200 && !$0.contains("\n") } ?? []
-        self.multiSelect = event.payload["multi_select"]?.truthy ?? false
     }
 }
 

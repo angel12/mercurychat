@@ -262,7 +262,8 @@ public actor GatewayClient: GatewayDialing {
             let event = GatewayEvent(
                 type: type,
                 sessionID: frame["params"]?["session_id"]?.stringValue,
-                payload: frame["params"]?["payload"] ?? .null)
+                payload: frame["params"]?["payload"] ?? .null,
+                seq: frame["params"]?["seq"]?.intValue)
 
             if type == GatewayEvent.Kind.gatewayReady, state == .connecting {
                 state = .ready

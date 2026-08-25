@@ -60,6 +60,68 @@ struct TranscriptMessageTests {
                 json: json(#"{"role": "assistant", "content": [{"type": "text"}]}"#)))
         #expect(message.text.isEmpty)
     }
+
+    @Test func prefersDisplayContentProjection() throws {
+        // v0.20.5 projects compaction-summary rows: display_content is what
+        // desktop renders; the physical content stays for tooling.
+        let message = try #require(
+            TranscriptMessage(
+                json: json(
+                    #"{"role": "assistant", "content": "<summary blob>", "display_content": "Earlier conversation summarized."}"#
+                )))
+        #expect(message.text == "Earlier conversation summarized.")
+
+        let plain = try #require(
+            TranscriptMessage(json: json(#"{"role": "assistant", "content": "hi"}"#)))
+        #expect(plain.text == "hi")
+    }
+}
+
+@Suite("ClarifyRequest parsing")
+struct ClarifyRequestTests {
+    private func clarifyEvent(_ payload: String) -> GatewayEvent {
+        GatewayEvent(type: "clarify.request", sessionID: "s1", payload: json(payload))
+    }
+
+    @Test func singleQuestionShapeUnchanged() throws {
+        let request = try #require(
+            ClarifyRequest(
+                event: clarifyEvent(
+                    #"{"request_id": "c1", "question": "Which db?", "choices": ["dev", "prod"]}"#
+                )))
+        #expect(!request.isBatch)
+        #expect(request.question == "Which db?")
+        #expect(request.choices == ["dev", "prod"])
+        #expect(request.questions.isEmpty)
+    }
+
+    @Test func batchShapeParsesQuestions() throws {
+        let request = try #require(
+            ClarifyRequest(
+                event: clarifyEvent(
+                    """
+                    {"request_id": "c2", "questions": [
+                      {"qid": "q1", "question": "Env?", "choices": ["dev", "prod"], "multi_select": false},
+                      {"qid": "q2", "question": "Regions?", "choices": ["us", "eu"], "multi_select": true}
+                    ], "answers": {"q1": "dev"}}
+                    """)))
+        #expect(request.isBatch)
+        #expect(request.question.isEmpty)
+        #expect(request.questions.count == 2)
+        #expect(request.questions[0].qid == "q1")
+        #expect(request.questions[1].multiSelect)
+        #expect(request.lockedAnswers == ["q1": "dev"])
+    }
+
+    @Test func batchEntriesWithoutQIDAreDropped() throws {
+        let request = try #require(
+            ClarifyRequest(
+                event: clarifyEvent(
+                    #"{"request_id": "c3", "questions": [{"question": "no qid"}, {"qid": "ok", "question": "fine"}]}"#
+                )))
+        #expect(request.questions.count == 1)
+        #expect(request.questions[0].qid == "ok")
+    }
 }
 
 @Suite("TranscriptPage parsing")

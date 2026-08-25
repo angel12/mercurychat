@@ -238,7 +238,10 @@ public struct TranscriptMessage: Sendable, Equatable, Identifiable {
         // Content is usually a string; tolerate structured content by
         // falling back to a `text` field or empty (empty means "nothing",
         // never an error).
-        self.text = json["content"]?.stringValue
+        // display_content (v0.20.5+) is the server's display projection of a
+        // compaction-summary row; the physical `content` is kept for tooling.
+        // Prefer it so Mercury renders what desktop renders.
+        self.text = json["display_content"]?.stringValue ?? json["content"]?.stringValue
             ?? json["text"]?.stringValue
             ?? ""
         self.reasoning = json["reasoning"]?.stringValue

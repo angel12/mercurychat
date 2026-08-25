@@ -179,6 +179,9 @@ extension HermesConnection {
     /// `clarify.respond` — empty answer = skip. A late respond after expiry
     /// returns `{"status":"expired"}`, never an error — a successful
     /// transport call is NOT delivery; check the returned status.
+    ///
+    /// On a BATCH clarify, calling this without a question id cancels the
+    /// whole batch (server resolves every question with this one answer).
     public func respondClarify(
         requestID: String, answer: String
     ) async throws -> PromptResponseStatus {
@@ -186,6 +189,24 @@ extension HermesConnection {
             "clarify.respond",
             params: ["request_id": .string(requestID), "answer": .string(answer)])
         return try PromptResponseStatus(result: result)
+    }
+
+    /// Answer ONE question of a batch clarify. Returns the qids still
+    /// unanswered (nil when the request had already expired); the batch
+    /// resolves server-side when the list empties. A locked answer stays
+    /// editable until then — re-responding the same qid overwrites it.
+    public func respondClarifyQuestion(
+        requestID: String, questionID: String, answer: String
+    ) async throws -> [String]? {
+        let result = try await request(
+            "clarify.respond",
+            params: [
+                "request_id": .string(requestID),
+                "question_id": .string(questionID),
+                "answer": .string(answer),
+            ])
+        if case .expired = try PromptResponseStatus(result: result) { return nil }
+        return result["remaining"]?.arrayValue?.compactMap(\.stringValue) ?? []
     }
 }
 
@@ -250,6 +271,46 @@ extension HermesConnection {
         var params: [String: JSONValue] = ["session_id": .string(storedID)]
         if let profile, !profile.isEmpty { params["profile"] = .string(profile) }
         _ = try await request("session.delete", params: .object(params))
+    }
+
+    /// One page of the gateway's reconnect replay ring (v0.20.5+).
+    public struct EventReplayPage: Sendable {
+        /// The missed events, oldest first, ready for normal dispatch.
+        public var events: [GatewayEvent]
+        public var latestSeq: Int?
+        /// True when the ring evicted part of the gap — the replay is
+        /// incomplete and the caller must fall back to full re-hydration.
+        public var truncated: Bool
+        /// Process identity of the seq numbering; a change means the gateway
+        /// restarted and every watermark is void.
+        public var epoch: String?
+    }
+
+    /// `session.events.since` — replay session events newer than `lastSeen`
+    /// after a reconnect (the server buffers the last 512 per session, even
+    /// while the socket is down). Throws -32601 on pre-0.20.5 backends.
+    public func sessionEventsSince(
+        sessionID: String, lastSeen: Int
+    ) async throws -> EventReplayPage {
+        let result = try await request(
+            "session.events.since",
+            params: [
+                "session_id": .string(sessionID),
+                "last_seen": .number(Double(lastSeen)),
+            ])
+        let events = result["events"]?.arrayValue?.compactMap { frame -> GatewayEvent? in
+            guard let type = frame["type"]?.stringValue else { return nil }
+            return GatewayEvent(
+                type: type,
+                sessionID: frame["session_id"]?.stringValue,
+                payload: frame["payload"] ?? .null,
+                seq: frame["seq"]?.intValue)
+        }
+        return EventReplayPage(
+            events: events ?? [],
+            latestSeq: result["latest_seq"]?.intValue,
+            truncated: result["truncated"]?.truthy ?? true,
+            epoch: result["epoch"]?.stringValue)
     }
 
     /// `session.branch` — fork the session's history into a new session.
