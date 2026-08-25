@@ -50,6 +50,22 @@ final class ChatController: Identifiable {
     /// transcript pages, or inflight state (mirrors AppModel.connectGeneration).
     private var beginGeneration = 0
 
+    // MARK: Event-replay bookkeeping (v0.20.5+ reconnect contract)
+
+    /// Highest `seq` applied to the store. Session events are stamped with a
+    /// per-session monotonic seq; the server buffers the last 512 (even
+    /// while our socket is down) and replays the gap via
+    /// `session.events.since`. nil = backend doesn't stamp (pre-0.20.5) or
+    /// the epoch changed — full resume+rehydrate is the only path then.
+    private var lastSeenSeq: Int?
+    /// Process identity of the seq numbering, learned from `gateway.ready`.
+    /// A different epoch on reconnect = gateway restart = watermark void.
+    private var replayEpoch: String?
+    /// While a replay is being fetched, live events park here so the gap
+    /// events apply first (seq dedupe drops any overlap on drain).
+    private var replayBuffer: [GatewayEvent] = []
+    private var isReplaying = false
+
     init(connection: HermesConnection, profile: String?) {
         self.connection = connection
         self.profile = profile
@@ -86,7 +102,7 @@ final class ChatController: Identifiable {
                 // the OLDEST rows.
                 async let hydration = Self.fetchPage(
                     connection, storedID: session.storedID, offset: 0, profile: profile)
-                let handle = try await connection.resumeSession(
+                let handle = try await resumeWithRetry(
                     storedID: session.storedID, profile: profile)
                 guard generation == beginGeneration else { return }
                 adopt(handle)
@@ -123,6 +139,34 @@ final class ChatController: Identifiable {
         } catch {
             guard generation == beginGeneration else { return }
             errorMessage = Self.describe(error)
+        }
+    }
+
+    /// `session.resume` with a bounded retry on the two transient refusals
+    /// v0.20.5 introduced around its orphan-reap: 4009 "disconnect interrupt
+    /// settling" (the server is still winding down the turn our dropped
+    /// socket triggered) and 4007 "session no longer live; retry resume".
+    /// Both self-heal within a second or two. A genuinely missing session
+    /// also 4007s — the retries cost ~3.6s there, then the error surfaces.
+    private func resumeWithRetry(
+        storedID: String, profile: String?
+    ) async throws -> SessionHandle {
+        var attempt = 0
+        while true {
+            do {
+                return try await connection.resumeSession(
+                    storedID: storedID, profile: profile)
+            } catch let error as HermesError {
+                guard case .rpcError(let code, _) = error,
+                    code == HermesError.RPCCode.sessionBusy
+                        || code == HermesError.RPCCode.sessionNotFound,
+                    attempt < 3
+                else { throw error }
+                attempt += 1
+                Self.logger.info(
+                    "resume refused with \(code) — retry \(attempt)/3 after backoff")
+                try? await Task.sleep(for: .milliseconds(600 * attempt))
+            }
         }
     }
 
@@ -169,6 +213,10 @@ final class ChatController: Identifiable {
     }
 
     private func adopt(_ handle: SessionHandle) {
+        // The seq watermark is scoped to one runtime session: a new runtime
+        // (create, or resume after a backend restart) numbers from 1 again,
+        // and a kept high watermark would drop every event it emits.
+        if handle.runtimeID != runtimeID { lastSeenSeq = nil }
         self.handle = handle
         runtimeID = handle.runtimeID
         storedID = handle.storedID ?? storedID
@@ -220,12 +268,110 @@ final class ChatController: Identifiable {
         }
     }
 
-    /// The socket came back after a drop: runtime ids may be recycled, so
-    /// re-resume by **stored** id and re-hydrate.
+    /// The socket came back after a drop. Preferred path (v0.20.5+): re-bind
+    /// via resume, then replay the exact missed events from the server's
+    /// per-session ring (`session.events.since`) — the store continues from
+    /// its pre-drop state with no re-hydration and no inflight-snapshot
+    /// reconciliation. Fallback (older backend, gateway restart, ring
+    /// overflow, recycled runtime id): the full resume + REST re-hydrate.
     func connectionBecameReady(isReconnect: Bool) async {
         guard isReconnect, let storedID else { return }
+        if await replayAfterReconnect(storedID: storedID) { return }
         Self.logger.info("re-resuming \(storedID, privacy: .public) after reconnect")
         await begin(.resume(sessionSummaryForResume(storedID: storedID)))
+    }
+
+    /// Try the replay reconnect. Returns true when the store was brought
+    /// current; false = caller must run the full resume path. Live events
+    /// arriving during the RPCs are buffered and drained after the gap
+    /// events, with seq dedupe collapsing any overlap.
+    private func replayAfterReconnect(storedID: String) async -> Bool {
+        // No watermark = backend never stamped seq, or the epoch changed
+        // under us (gateway restart voids the ring's numbering).
+        guard let watermark = lastSeenSeq, let previousRuntimeID = runtimeID else {
+            return false
+        }
+        beginGeneration += 1
+        let generation = beginGeneration
+        isReplaying = true
+        defer {
+            if generation == beginGeneration {
+                isReplaying = false
+                replayBuffer.removeAll()
+            }
+        }
+        do {
+            let handle = try await resumeWithRetry(
+                storedID: storedID, profile: effectiveProfile ?? profile)
+            guard generation == beginGeneration else { return true }
+            // A different runtime id means the old session runtime is gone
+            // (backend restart / reclaim) — the replay ring with our seqs
+            // died with it.
+            guard handle.runtimeID == previousRuntimeID else { return false }
+            adopt(handle)
+
+            let page = try await connection.sessionEventsSince(
+                sessionID: previousRuntimeID, lastSeen: watermark)
+            guard generation == beginGeneration else { return true }
+            if page.truncated {
+                Self.logger.info("replay ring truncated past seq \(watermark) — full resume")
+                return false
+            }
+            if let epoch = page.epoch, let known = replayEpoch, epoch != known {
+                return false
+            }
+            for event in page.events { applyDeduped(event) }
+            // An empty replay can't carry the running transition; take the
+            // resume result's word for it then — BEFORE draining live events
+            // that arrived during the fetch, which postdate the resume
+            // snapshot. (A non-empty replay carries its own session.info
+            // frames — the resume flag predates them, so it is skipped.)
+            if page.events.isEmpty {
+                applyResumeExtras(handle.raw)
+            }
+            drainReplayBuffer()
+            Self.logger.info(
+                "replayed \(page.events.count) events after reconnect (seq \(watermark) → \(self.lastSeenSeq ?? watermark))"
+            )
+            return true
+        } catch {
+            guard generation == beginGeneration else { return true }
+            // -32601 (pre-0.20.5), transport errors, resume failures: the
+            // full path retries resume itself and surfaces real errors.
+            Self.logger.info(
+                "replay reconnect unavailable (\(Self.describe(error), privacy: .public)) — full resume"
+            )
+            return false
+        }
+    }
+
+    /// Apply one event with seq dedupe: a frame at or below the watermark
+    /// was already applied (live before the drop, or via an earlier replay).
+    /// Everything that passes flows through the normal hold/batching
+    /// pipeline — replayed events are ordinary events that arrived late.
+    private func applyDeduped(_ event: GatewayEvent) {
+        if let seq = event.seq {
+            guard seq > (lastSeenSeq ?? 0) else { return }
+            lastSeenSeq = seq
+        }
+        if transcriptHoldActive {
+            if event.type == GatewayEvent.Kind.sessionInfo {
+                // The turn-end carrier (`running: false` seals the open
+                // bubble): everything buffered must land BEFORE the seal or
+                // drained text would open a stray bubble below it.
+                drainHeldEvents()
+            } else if !Self.holdExemptTypes.contains(event.type) {
+                heldEvents.append(event)
+                return
+            }
+        }
+        applyLive(event)
+    }
+
+    private func drainReplayBuffer() {
+        let buffered = replayBuffer
+        replayBuffer.removeAll()
+        for event in buffered { applyDeduped(event) }
     }
 
     private func sessionSummaryForResume(storedID: String) -> SessionSummary {
@@ -258,20 +404,24 @@ final class ChatController: Identifiable {
     /// on an iPhone 17 Pro Max). Structural events still apply immediately,
     /// flushing buffered text first so ordering is preserved.
     func handle(event: GatewayEvent) {
+        // Replay-epoch bookkeeping rides on gateway.ready: a changed epoch
+        // means the gateway restarted — its seq counters reset to 1, so a
+        // kept watermark would silently drop every future event.
+        if event.type == GatewayEvent.Kind.gatewayReady {
+            let epoch = event.payload["replay_epoch"]?.stringValue
+            if replayEpoch != nil, epoch != replayEpoch { lastSeenSeq = nil }
+            replayEpoch = epoch
+        }
         guard let runtimeID else { return }
         guard event.sessionID == nil || event.sessionID == runtimeID else { return }
-        if transcriptHoldActive {
-            if event.type == GatewayEvent.Kind.sessionInfo {
-                // The turn-end carrier (`running: false` seals the open
-                // bubble): everything buffered must land BEFORE the seal or
-                // drained text would open a stray bubble below it.
-                drainHeldEvents()
-            } else if !Self.holdExemptTypes.contains(event.type) {
-                heldEvents.append(event)
-                return
-            }
+        if isReplaying, event.seq != nil {
+            // A replay fetch is in flight: gap events must land first. This
+            // live frame drains right after them (seq dedupe drops it if the
+            // replay page already carried it).
+            replayBuffer.append(event)
+            return
         }
-        applyLive(event)
+        applyDeduped(event)
     }
 
     /// The reader is away from the bottom while a reply streams: STOP
@@ -521,6 +671,41 @@ final class ChatController: Identifiable {
             return settlePrompt(
                 status, what: "answer",
                 clear: { self.store.clearClarify(requestID: requestID) })
+        } catch {
+            errorMessage = Self.describe(error)
+            return .failed
+        }
+    }
+
+    /// One answered question of a BATCH clarify. The batch resolves when the
+    /// last question locks; until then answers stay editable server-side.
+    enum BatchClarifyOutcome {
+        /// Locked; these qids are still waiting.
+        case progress(remaining: [String])
+        /// That was the last one — the batch resolved and the card cleared.
+        case completed
+        case expired
+        case failed
+    }
+
+    func respondClarifyQuestion(
+        requestID: String, questionID: String, answer: String
+    ) async -> BatchClarifyOutcome {
+        do {
+            guard
+                let remaining = try await connection.respondClarifyQuestion(
+                    requestID: requestID, questionID: questionID, answer: answer)
+            else {
+                _ = settlePrompt(
+                    .expired, what: "answer",
+                    clear: { self.store.clearClarify(requestID: requestID) })
+                return .expired
+            }
+            if remaining.isEmpty {
+                store.clearClarify(requestID: requestID)
+                return .completed
+            }
+            return .progress(remaining: remaining)
         } catch {
             errorMessage = Self.describe(error)
             return .failed
