@@ -205,12 +205,22 @@ public actor LoopbackRedirectListener {
                 return
             }
         }
-        guard let code = query["code"], !code.isEmpty else {
-            let detail = query["error"] ?? "missing code"
+        // An RFC 6749 error redirect (e.g. `error=access_denied`) is the
+        // server definitively ending the flow: fail the wait so the app can
+        // surface the reason. The value is attacker-controlled — never
+        // interpolate it into the page; it reaches the UI via the error only.
+        if let oauthError = query["error"], !oauthError.isEmpty {
             respond(
                 connection, status: "400 Bad Request",
-                body: "Sign-in failed: \(detail). You can close this tab.")
-            failWaiter(ListenerError.badRequest(detail))
+                body: "Sign-in failed. You can close this tab and return to Mercury.")
+            failWaiter(ListenerError.badRequest(oauthError))
+            return
+        }
+        // Neither code nor error: a stray local probe, not the browser
+        // redirect. Keep waiting — failing the waiter here would run
+        // waitForRedirect's shutdown and close the port under a live sign-in.
+        guard let code = query["code"], !code.isEmpty else {
+            respond(connection, status: "400 Bad Request", body: "Waiting for sign-in.")
             return
         }
         respond(
@@ -221,7 +231,11 @@ public actor LoopbackRedirectListener {
     }
 
     private func respond(_ connection: NWConnection, status: String, body: String) {
-        let html = "<html><body style=\"font-family:-apple-system\"><p>\(body)</p></body></html>"
+        // Escape unconditionally: the loopback page is a real browsing
+        // context, so no caller may reflect attacker-controlled text as
+        // markup, even if a future branch forgets and interpolates one.
+        let html =
+            "<html><body style=\"font-family:-apple-system\"><p>\(Self.htmlEscaped(body))</p></body></html>"
         let response = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
         // Graceful close, not cancel-on-send: an abortive cancel() can RST
         // the response out from under the peer before it reads the bytes —
@@ -239,6 +253,14 @@ public actor LoopbackRedirectListener {
             completion: .contentProcessed { _ in
                 Self.drainThenCancel(connection)
             })
+    }
+
+    private nonisolated static func htmlEscaped(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     /// Read until the peer closes (or errors), then cancel. A failsafe
