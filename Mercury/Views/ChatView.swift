@@ -37,7 +37,9 @@ struct ChatView: View {
             }
         }
         .task(id: sessionKey) {
-            let chat = model.openChat(profile: profileForMode)
+            // nil = disconnected before this body ran: keep the progress
+            // placeholder; RootView swaps to the connect screen.
+            guard let chat = model.openChat(profile: profileForMode) else { return }
             controller = chat
             await chat.begin(mode)
         }
