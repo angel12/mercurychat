@@ -1,6 +1,5 @@
 name: Mercury
 options:
-  bundleIdPrefix: biz.pescoinc
   deploymentTarget:
     iOS: "17.0"
     macOS: "14.0"
@@ -29,6 +28,7 @@ targets:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
+        PRODUCT_BUNDLE_IDENTIFIER: com.angelsolutionsnm.merv.MercuryTests
         CODE_SIGN_STYLE: Automatic
         CODE_SIGNING_ALLOWED: NO
         MACOSX_DEPLOYMENT_TARGET: "14.0"
@@ -60,6 +60,8 @@ targets:
       path: Mercury/Info.plist
       properties:
         CFBundleDisplayName: Mercury
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSLocalNetworkUsageDescription: >-
           Mercury connects to Hermes Agent servers running on your local
           network.
