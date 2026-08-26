@@ -83,8 +83,14 @@ final class AppModel {
         }
     }
 
-    private let tokenStore = KeychainTokenStore()
+    private let tokenStore: KeychainTokenStore
     private var updatePump: Task<Void, Never>?
+
+    /// Tests inject an isolated keychain service so fixtures never touch
+    /// the real `com.mercury.tokens` items.
+    init(tokenStore: KeychainTokenStore = KeychainTokenStore()) {
+        self.tokenStore = tokenStore
+    }
 
     /// Monotonic guard for the connect flow: `connect()` suspends across the
     /// status/validation probes and the WS dial, so an overlapping connect
@@ -522,9 +528,17 @@ final class AppModel {
                     if case .ready(let isReconnect) = phase {
                         if let credentials = pendingSave, let endpoint = self.endpoint {
                             // Authed probe + live socket: now the connection
-                            // has earned a spot in the saved list.
+                            // has earned a spot in the saved list. Persist the
+                            // authenticator's LIVE credentials, not the pair
+                            // connect() started with: the validation probe may
+                            // have rotated tokens (401 → refresh), and writing
+                            // the pre-rotation refresh token back strands the
+                            // next launch on a token the server already burned
+                            // — Nous reuse-detection then revokes the whole
+                            // session, forcing a browser sign-in (#37).
+                            let live = await connection.authenticator.credentials
                             self.persistValidatedServer(
-                                endpoint: endpoint, credentials: credentials)
+                                endpoint: endpoint, credentials: live ?? credentials)
                             pendingSave = nil
                         }
                         if !isReconnect {

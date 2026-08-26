@@ -10,25 +10,33 @@
 		0031121B30D2FAE2CA4A217C /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD7A5E0A36F16FD09E767AE6 /* SidebarView.swift */; };
 		003BB02CEE04C82DE745C92D /* MercuryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F8E655F17AF012AFCEA205 /* MercuryApp.swift */; };
 		16C6B3EB63A57219CDBA6293 /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DF179C9F278DF4C94236661 /* ConnectView.swift */; };
+		21A656ABC237B3E540CC7FB3 /* HermesTestServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */; };
 		373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10C155E77B1833A19AAA2F00 /* StatusViews.swift */; };
 		56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5AB9D4B96A47F2A0E24656A /* RootView.swift */; };
 		8B349087493237E06C15B9FD /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696FDD7EA0879D6A21F3E07B /* AppModel.swift */; };
 		8B5F8EF23C7156F46304EC10 /* ChatController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB97969196F04F2B48FCB03E /* ChatController.swift */; };
 		93CC0EB07156B09EF5B747D5 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 100C35A23B0A18D00444F5E1 /* ChatCore */; };
+		9F4B8D354F281AC44DEF9CB3 /* MercuryKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6A2149E41114F3E415ACCC47 /* MercuryKit */; };
 		A9518D13DF29336C88CD89AD /* MercuryKit in Frameworks */ = {isa = PBXBuildFile; productRef = 270DCD916107ED2451EA4BB3 /* MercuryKit */; };
+		BEA88BE18475FE4759E2506B /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696FDD7EA0879D6A21F3E07B /* AppModel.swift */; };
+		C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB97969196F04F2B48FCB03E /* ChatController.swift */; };
 		CED739D997A85C49B4F77C2A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */; };
+		DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */; };
 		DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */; };
+		E63E885D1E7DE15AC7776528 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 39C57500F981C503D4C31DD8 /* ChatCore */; };
 		FA95AE9AA589D021659E84B2 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF52417D9BAD3C00374A1420 /* ChatView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0C99AB79C63CE492D73E34BE /* MercuryTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MercuryTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		10C155E77B1833A19AAA2F00 /* StatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusViews.swift; sourceTree = "<group>"; };
 		10E6E34D97806B51F0F8A12A /* Mercury.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Mercury.entitlements; sourceTree = "<group>"; };
 		261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptItemView.swift; sourceTree = "<group>"; };
 		31F7DAA740A01BE642F7A9F5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		590FA74BCF5DB7884E8C404F /* Mercury.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mercury.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		590FA74BCF5DB7884E8C404F /* Mercury.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mercury.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F29F375C5956F20E4F2A200 /* MercuryCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MercuryCore; path = Packages/MercuryCore; sourceTree = SOURCE_ROOT; };
 		696FDD7EA0879D6A21F3E07B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesTestServer.swift; sourceTree = "<group>"; };
 		8DF179C9F278DF4C94236661 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C3F8E655F17AF012AFCEA205 /* MercuryApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MercuryApp.swift; sourceTree = "<group>"; };
@@ -36,6 +44,7 @@
 		CB97969196F04F2B48FCB03E /* ChatController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatController.swift; sourceTree = "<group>"; };
 		CD7A5E0A36F16FD09E767AE6 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		CF52417D9BAD3C00374A1420 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelCredentialPersistenceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -48,6 +57,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		EE5B0E383509D99E9D9A2B35 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9F4B8D354F281AC44DEF9CB3 /* MercuryKit in Frameworks */,
+				E63E885D1E7DE15AC7776528 /* ChatCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -55,9 +73,19 @@
 			isa = PBXGroup;
 			children = (
 				32CC2A933D91BD18026CB2F9 /* Mercury */,
+				16B9D390B9E721F086B0732D /* MercuryTests */,
 				A64A5206569B2C5FC5C81329 /* Packages */,
 				C3720C5B3CF5336173F4D614 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		16B9D390B9E721F086B0732D /* MercuryTests */ = {
+			isa = PBXGroup;
+			children = (
+				E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */,
+				7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */,
+			);
+			path = MercuryTests;
 			sourceTree = "<group>";
 		};
 		32CC2A933D91BD18026CB2F9 /* Mercury */ = {
@@ -99,6 +127,7 @@
 			isa = PBXGroup;
 			children = (
 				590FA74BCF5DB7884E8C404F /* Mercury.app */,
+				0C99AB79C63CE492D73E34BE /* MercuryTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -106,6 +135,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		026B3BB983239FEF2D64B554 /* MercuryTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4E5838CC5F72E5210C877A12 /* Build configuration list for PBXNativeTarget "MercuryTests" */;
+			buildPhases = (
+				F05A5A779DC1E237DE9DD353 /* Sources */,
+				EE5B0E383509D99E9D9A2B35 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MercuryTests;
+			packageProductDependencies = (
+				6A2149E41114F3E415ACCC47 /* MercuryKit */,
+				39C57500F981C503D4C31DD8 /* ChatCore */,
+			);
+			productName = MercuryTests;
+			productReference = 0C99AB79C63CE492D73E34BE /* MercuryTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		55A5F29E8FABDD5E83B6B3AD /* Mercury */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A08FC03B4A5260759541AF7B /* Build configuration list for PBXNativeTarget "Mercury" */;
@@ -136,6 +185,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
+					026B3BB983239FEF2D64B554 = {
+						ProvisioningStyle = Automatic;
+					};
 					55A5F29E8FABDD5E83B6B3AD = {
 						DevelopmentTeam = Z4JCFHY88D;
 						ProvisioningStyle = Automatic;
@@ -159,6 +211,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				026B3BB983239FEF2D64B554 /* MercuryTests */,
 				55A5F29E8FABDD5E83B6B3AD /* Mercury */,
 			);
 		};
@@ -189,6 +242,17 @@
 				0031121B30D2FAE2CA4A217C /* SidebarView.swift in Sources */,
 				373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */,
 				DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F05A5A779DC1E237DE9DD353 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BEA88BE18475FE4759E2506B /* AppModel.swift in Sources */,
+				DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */,
+				C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */,
+				21A656ABC237B3E540CC7FB3 /* HermesTestServer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -312,7 +376,6 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -370,7 +433,6 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -378,9 +440,58 @@
 			};
 			name = Release;
 		};
+		C61F770FDD5E0F266D592BEC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = biz.pescoinc.MercuryTests;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C79BDFCC43F06DB8C00C07D3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = biz.pescoinc.MercuryTests;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		4E5838CC5F72E5210C877A12 /* Build configuration list for PBXNativeTarget "MercuryTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C79BDFCC43F06DB8C00C07D3 /* Debug */,
+				C61F770FDD5E0F266D592BEC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		722BC670234ED650AAA60C22 /* Build configuration list for PBXProject "Mercury" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -414,6 +525,14 @@
 			productName = ChatCore;
 		};
 		270DCD916107ED2451EA4BB3 /* MercuryKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MercuryKit;
+		};
+		39C57500F981C503D4C31DD8 /* ChatCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChatCore;
+		};
+		6A2149E41114F3E415ACCC47 /* MercuryKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MercuryKit;
 		};
