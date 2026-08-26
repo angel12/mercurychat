@@ -453,7 +453,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = biz.pescoinc.MercuryTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.angelsolutionsnm.merv.MercuryTests;
 				SDKROOT = macosx;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
@@ -473,7 +473,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = biz.pescoinc.MercuryTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.angelsolutionsnm.merv.MercuryTests;
 				SDKROOT = macosx;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;

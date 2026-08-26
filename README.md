@@ -7,7 +7,11 @@ Built against desktop contract **6** (`DESKTOP_BACKEND_CONTRACT` in `tui_gateway
 ## Architecture
 
 ```
-Mercury.xcodeproj              — one multiplatform app target (iPhone/iPad/Mac/Vision)
+Mercury.xcodeproj              — two targets: the multiplatform app (iPhone/iPad/Mac/Vision)
+                                 and MercuryTests, a headless macOS unit-test bundle
+MercuryTests/                  — app-layer tests (AppModel glue); Xcode target only, not part
+                                 of `swift test` — run with:
+                                 xcodebuild test -scheme MercuryTests -destination 'platform=macOS'
 Packages/MercuryCore/
   Sources/MercuryKit/          — protocol layer (Foundation + Security + os + CryptoKit only)
     ServerEndpoint             — URL parsing/building; ?token= extraction from pasted dashboard URLs
@@ -25,6 +29,9 @@ Packages/MercuryCore/
   Sources/ChatCore/            — platform-free transcript reducer
     TranscriptStore            — @MainActor @Observable; events + hydration → ordered items
     TranscriptItem             — user / assistant (markdown+reasoning) / tool row / notice
+  Tests/MercuryKitTests/       — protocol-layer tests, incl. real-socket coverage against
+                                 hand-rolled loopback HTTP/WebSocket servers (TestServers.swift)
+  Tests/ChatCoreTests/         — transcript reducer + hydration tests
 ```
 
 The protocol layer is lifted nearly verbatim from HermesVoice's `HermesKit` (a working Swift 6 client of the same protocol) and extended with transcript hydration, the fuller desktop event set, session-management RPCs, and native-PKCE OAuth.
@@ -49,10 +56,11 @@ The protocol layer is lifted nearly verbatim from HermesVoice's `HermesKit` (a w
 
 ## Manual verification checklist
 
-All verified live against `hermes serve` 0.20.0 in token mode on 2026-08-11 unless noted.
+Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-08-11 unless noted. The client has since adopted the `hermes serve` 0.20.5 surface (desktop contract 6); those changes are covered by the automated suites and have not been re-verified live.
 
 ### Milestone 1 — MercuryKit port
-- [x] `swift test` green (57 tests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, transcript reducer + hydration).
+- [x] `swift test` green (129 tests — 83 MercuryKitTests + 46 ChatCoreTests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, real-socket networking against loopback HTTP/WebSocket test servers, transcript reducer + hydration).
+- [x] App-layer suite (`MercuryTests` Xcode target, AppModel glue) green — not run by `swift test`; run it with `xcodebuild test -scheme MercuryTests -destination 'platform=macOS'`.
 
 ### Milestone 2 — connect + browse
 - [x] Token-mode connect (pasted dashboard URL auto-lifts `?token=`), auto-reconnect on relaunch from Keychain.
