@@ -270,7 +270,10 @@ public actor HermesAuthenticator {
         switch http.statusCode {
         case 200..<300:
             break
-        case 401, 403:
+        case 401:
+            // Only 401 signals a lapsed token. A 403 is the Host/Origin
+            // guard or a permission gate — no refresh can fix it, so it
+            // surfaces as a plain HTTP error with the server's detail.
             throw HermesError.unauthorized
         default:
             let detail = (try? JSONDecoder().decode(JSONValue.self, from: data))?["detail"]?

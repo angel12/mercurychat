@@ -96,6 +96,52 @@ struct HermesAuthenticatorTests {
         ])
     }
 
+    @Test func forbiddenTicketMintSurfacesWithoutRefreshing() async throws {
+        // A 403 is the Host/Origin guard or a permission gate, never a lapsed
+        // access token — rotating tokens cannot fix it, so no refresh may be
+        // attempted and the server's detail must survive to the caller.
+        let server = try await ScriptedHTTPServer.start { _ in
+            ScriptedHTTPResponse(403, #"{"detail": "origin not allowed"}"#)
+        }
+        defer { server.stop() }
+        let authenticator = HermesAuthenticator(
+            endpoint: try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint,
+            credentials: .password(Self.passwordSession()))
+
+        do {
+            _ = try await authenticator.webSocketAuthQuery()
+            Issue.record("expected httpError(403)")
+        } catch HermesError.httpError(let status, let detail) {
+            #expect(status == 403)
+            #expect(detail == "origin not allowed")
+        }
+        // The one ticket request, and no /auth/native/refresh round trip.
+        #expect(server.requests.map(\.path) == ["/api/auth/ws-ticket"])
+    }
+
+    @Test func restForbiddenSurfacesWithoutRefreshing() async throws {
+        // Same guard semantics on the REST surface: HermesRESTClient's own
+        // status mapping must not treat 403 as "token lapsed".
+        let server = try await ScriptedHTTPServer.start { _ in
+            ScriptedHTTPResponse(403, #"{"detail": "origin not allowed"}"#)
+        }
+        defer { server.stop() }
+        let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
+        let rest = HermesRESTClient(
+            endpoint: endpoint,
+            authenticator: HermesAuthenticator(
+                endpoint: endpoint, credentials: .password(Self.passwordSession())))
+
+        do {
+            try await rest.validateToken()
+            Issue.record("expected httpError(403)")
+        } catch HermesError.httpError(let status, let detail) {
+            #expect(status == 403)
+            #expect(detail == "origin not allowed")
+        }
+        #expect(server.requests.map(\.path) == ["/api/profiles/active"])
+    }
+
     @Test func deadRefreshTokenSignalsSessionExpired() async throws {
         let server = try await ScriptedHTTPServer.start { request in
             // Every provider rejects both the access and refresh tokens.

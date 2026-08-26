@@ -157,6 +157,26 @@ struct GatewayClientTests {
         }
     }
 
+    @Test func rejectedUpgrade403MapsToGuardRefusal() async throws {
+        // A 403 on the HTTP upgrade is the Host/Origin guard, not bad
+        // credentials — the reason must carry the "(4403)" marker the
+        // supervisor's guard-stop matches on, never the "(4401)" one that
+        // would prompt a pointless re-login.
+        let server = try await ScriptedHTTPServer.start { _ in
+            ScriptedHTTPResponse(403)
+        }
+        defer { server.stop() }
+        let client = try Self.client(port: server.port)
+
+        do {
+            try await client.connect(timeout: 5)
+            Issue.record("expected the upgrade to be refused")
+        } catch HermesError.connectionClosed(let reason) {
+            #expect(reason?.contains("(4403)") == true)
+            #expect(reason?.contains("(4401)") != true)
+        }
+    }
+
     @Test func closeFinishesEventStreamsAndFailsPendingRequests() async throws {
         // A request in flight when the connection dies must throw, not hang.
         let server = try await LocalGatewayServer.start()
