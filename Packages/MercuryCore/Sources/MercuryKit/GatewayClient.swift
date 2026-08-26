@@ -46,6 +46,14 @@ public actor GatewayClient: GatewayDialing {
     /// against.
     public static let builtAgainstDesktopContract = 6
 
+    /// Inbound WS frame bound. The biggest legitimate single frames are
+    /// session.resume snapshots carrying full inflight turn text and inline
+    /// `<persisted-output>` tool results — single-digit MB at the extreme;
+    /// bulk history arrives over REST, not this socket. 8MB fits all of that
+    /// with headroom while keeping a hostile or buggy server from pinning
+    /// tens of MB of client memory per frame.
+    public static let maximumInboundMessageSize = 8 * 1024 * 1024
+
     public init(endpoint: ServerEndpoint, authenticator: HermesAuthenticator) {
         self.endpoint = endpoint
         self.authenticator = authenticator
@@ -90,8 +98,7 @@ public actor GatewayClient: GatewayDialing {
         let url = endpoint.webSocketURL("/api/ws", query: query)
 
         let task = urlSession.webSocketTask(with: url)
-        // Tolerate large inbound frames (session.info / transcripts).
-        task.maximumMessageSize = 64 * 1024 * 1024
+        task.maximumMessageSize = Self.maximumInboundMessageSize
         self.task = task
         task.resume()
 
@@ -239,6 +246,15 @@ public actor GatewayClient: GatewayDialing {
                 } else if closeCode.rawValue == 4403 || upgradeStatus == 403 {
                     reason =
                         "refused (4403) — Host/Origin guard; dial the server by exactly the host it bound to"
+                } else if closeCode == .messageTooBig
+                    || (error as NSError).domain == NSPOSIXErrorDomain
+                        && (error as NSError).code == Int(EMSGSIZE)
+                {
+                    // An over-bound frame fails the receive with EMSGSIZE
+                    // before any close frame arrives; name the bound so the
+                    // failure is diagnosable server-side.
+                    let megabytes = Self.maximumInboundMessageSize / (1024 * 1024)
+                    reason = "frame exceeded the \(megabytes)MB inbound message bound"
                 } else if closeCode == .invalid {
                     reason = error.localizedDescription
                 } else {

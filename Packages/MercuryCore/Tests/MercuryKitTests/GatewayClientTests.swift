@@ -177,6 +177,49 @@ struct GatewayClientTests {
         }
     }
 
+    @Test func oversizedFrameClosesTheConnectionInsteadOfDecoding() async throws {
+        // A frame over the inbound bound must never reach the JSON decoder:
+        // the receive fails, the connection closes with a comprehensible
+        // reason, and subscribers see the finished-stream disconnect signal.
+        let server = try await LocalGatewayServer.start()
+        defer { server.stop() }
+        let client = try Self.client(port: server.port)
+        try await client.connect()
+
+        var events = await client.events().makeAsyncIterator()
+        let padding = String(
+            repeating: "x", count: GatewayClient.maximumInboundMessageSize + 1)
+        server.sendEvent(type: "message.delta", payload: #"{"text": "\#(padding)"}"#)
+
+        #expect(await events.next() == nil)
+        let closed = await eventually {
+            if case .closed(let reason) = await client.state {
+                return reason?.contains("exceeded") == true
+            }
+            return false
+        }
+        #expect(closed)
+    }
+
+    @Test func largeFrameUnderTheBoundStillDecodes() async throws {
+        // Realistic big frames (session.resume snapshots, inline
+        // persisted-output tool results) must still fit — the bound is for
+        // hostile frames, not real traffic.
+        let server = try await LocalGatewayServer.start()
+        defer { server.stop() }
+        let client = try Self.client(port: server.port)
+        try await client.connect()
+
+        var events = await client.events().makeAsyncIterator()
+        let padding = String(repeating: "x", count: 2 * 1024 * 1024)
+        server.sendEvent(type: "message.delta", payload: #"{"text": "\#(padding)"}"#)
+
+        let event = await events.next()
+        #expect(event?.type == "message.delta")
+        #expect(event?.payload["text"]?.stringValue?.count == 2 * 1024 * 1024)
+        await client.close()
+    }
+
     @Test func closeFinishesEventStreamsAndFailsPendingRequests() async throws {
         // A request in flight when the connection dies must throw, not hang.
         let server = try await LocalGatewayServer.start()
