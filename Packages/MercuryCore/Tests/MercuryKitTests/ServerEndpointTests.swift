@@ -79,6 +79,15 @@ struct ServerEndpointTests {
                 == "wss://h.example.com/api/audio/speak-stream")
     }
 
+    @Test func restURLPreservesPercentEncodedSegments() throws {
+        // Paths arrive already percent-encoded (encodePathComponent is the
+        // only source of `%`); restURL must not re-encode the `%` into
+        // `%25` and turn `%2F` into a double-encoded `%252F`.
+        let endpoint = try ServerEndpoint.parse("http://127.0.0.1:9000").endpoint
+        let url = endpoint.restURL("/api/sessions/a%2Fb/messages")
+        #expect(url.absoluteString == "http://127.0.0.1:9000/api/sessions/a%2Fb/messages")
+    }
+
     @Test func keyIsStableIdentity() throws {
         let a = try ServerEndpoint.parse("http://LocalHost:80/?token=x").endpoint
         let b = try ServerEndpoint.parse("localhost:80").endpoint

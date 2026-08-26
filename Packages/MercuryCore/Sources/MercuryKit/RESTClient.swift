@@ -112,9 +112,8 @@ public struct HermesRESTClient: Sendable {
         if offset > 0 { query.append(URLQueryItem(name: "offset", value: String(offset))) }
         if let order { query.append(URLQueryItem(name: "order", value: order)) }
         query.append(contentsOf: profileQuery(profile))
-        let encodedID = storedID.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed) ?? storedID
-        let json = try await get("/api/sessions/\(encodedID)/messages", query: query)
+        let json = try await get(
+            "/api/sessions/\(encodePathComponent(storedID))/messages", query: query)
         return TranscriptPage(json: json)
     }
 
@@ -145,9 +144,17 @@ public struct HermesRESTClient: Sendable {
             query: profileQuery(profile))
     }
 
+    /// Percent-encode a single path segment against the RFC 3986 unreserved
+    /// set (ASCII only — `.urlPathAllowed` leaves `/ ; = : @ & + ,` raw, so a
+    /// `/` in an id would splice extra path segments into the route). This is
+    /// the only permitted source of `%` in a path handed to
+    /// `ServerEndpoint.restURL`, whose `percentEncodedPath` takes it as-is.
     private func encodePathComponent(_ raw: String) -> String {
-        raw.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? raw
+        raw.addingPercentEncoding(withAllowedCharacters: Self.unreservedCharacters) ?? raw
     }
+
+    private static let unreservedCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
     // MARK: Audio
 
