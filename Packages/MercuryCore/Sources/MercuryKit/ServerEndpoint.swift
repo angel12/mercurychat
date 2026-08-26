@@ -113,19 +113,24 @@ public struct ServerEndpoint: Sendable, Equatable, Codable, Identifiable {
 
     // MARK: URL builders
 
+    /// `path` must already be percent-encoded (interpolated ids go through
+    /// `encodePathComponent`, everything else is literal ASCII): the plain
+    /// `path` setter would re-encode the `%` of an embedded `%2F` into a
+    /// double-encoded `%252F`.
     public func restURL(_ path: String, query: [URLQueryItem] = []) -> URL {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-        components.path = path
+        components.percentEncodedPath = path
         components.queryItems = query.isEmpty ? nil : query
         return components.url!
     }
 
     /// `ws(s)://host:port/<path>?<query>` — for `/api/ws` and
-    /// `/api/audio/speak-stream`.
+    /// `/api/audio/speak-stream`. `path` must already be percent-encoded,
+    /// as for `restURL`.
     public func webSocketURL(_ path: String, query: [URLQueryItem]) -> URL {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         components.scheme = isSecure ? "wss" : "ws"
-        components.path = path
+        components.percentEncodedPath = path
         components.queryItems = query.isEmpty ? nil : query
         return components.url!
     }
