@@ -59,7 +59,7 @@ The protocol layer is lifted nearly verbatim from HermesVoice's `HermesKit` (a w
 Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-08-11 unless noted. The client has since adopted the `hermes serve` 0.20.5 surface (desktop contract 6); those changes are covered by the automated suites and have not been re-verified live.
 
 ### Milestone 1 — MercuryKit port
-- [x] `swift test` green (139 tests — 93 MercuryKitTests + 46 ChatCoreTests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, real-socket networking against loopback HTTP/WebSocket test servers, transcript reducer + hydration).
+- [x] `swift test` green (141 tests — 95 MercuryKitTests + 46 ChatCoreTests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, real-socket networking against loopback HTTP/WebSocket test servers, transcript reducer + hydration).
 - [x] App-layer suite (`MercuryTests` Xcode target, AppModel glue) green — not run by `swift test`; run it with `xcodebuild test -scheme MercuryTests -destination 'platform=macOS'`.
 
 ### Milestone 2 — connect + browse
