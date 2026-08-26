@@ -312,8 +312,19 @@ public struct PKCEChallenge: Sendable, Equatable {
 
     private static func randomURLSafe(bytes count: Int) -> String {
         var bytes = [UInt8](repeating: 0, count: count)
-        _ = SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
+        if SecRandomCopyBytes(kSecRandomDefault, count, &bytes) != errSecSuccess {
+            // Never proceed with the pre-zeroed buffer: a constant verifier/
+            // state would silently pass every downstream check. Fall back to
+            // arc4random-backed SystemRandomNumberGenerator rather than crash
+            // mid-sign-in.
+            bytes = fallbackRandomBytes(count: count)
+        }
         return base64URL(Data(bytes))
+    }
+
+    static func fallbackRandomBytes(count: Int) -> [UInt8] {
+        var generator = SystemRandomNumberGenerator()
+        return (0..<count).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
     }
 
     private static func base64URL(_ data: Data) -> String {
