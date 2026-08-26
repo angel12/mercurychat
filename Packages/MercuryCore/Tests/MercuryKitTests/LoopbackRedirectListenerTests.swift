@@ -51,6 +51,51 @@ struct LoopbackRedirectListenerTests {
         #expect(caught.state == "csrf42")
     }
 
+    @Test func strayProbeWithoutQueryKeepsWaiting() async throws {
+        let listener = LoopbackRedirectListener()
+        let redirectURI = try await listener.start()
+
+        async let redirect = listener.waitForRedirect(timeout: 10)
+        try await Task.sleep(for: .milliseconds(100))
+
+        // A `/callback` hit with neither `code` nor `error` is a stray local
+        // probe, not the browser redirect: it must get a 400 — and must not
+        // kill the pending flow (failing the waiter would shut the port).
+        let probe = URL(string: redirectURI)!
+        let (_, probeResponse) = try await URLSession.shared.data(from: probe)
+        #expect((probeResponse as? HTTPURLResponse)?.statusCode == 400)
+
+        // A legitimate redirect afterwards still completes the sign-in.
+        let good = URL(string: "\(redirectURI)?code=abc123&state=csrf42")!
+        let (_, goodResponse) = try await URLSession.shared.data(from: good)
+        #expect((goodResponse as? HTTPURLResponse)?.statusCode == 200)
+
+        let caught = try await redirect
+        #expect(caught.code == "abc123")
+        #expect(caught.state == "csrf42")
+    }
+
+    @Test func errorRedirectBodyDoesNotReflectQueryValue() async throws {
+        let listener = LoopbackRedirectListener()
+        let redirectURI = try await listener.start()
+
+        let redirectTask = Task { try await listener.waitForRedirect(timeout: 10) }
+        try await Task.sleep(for: .milliseconds(100))
+
+        // `error` is attacker-controlled; its percent-decoded value must
+        // never reach the HTML body as markup (reflected XSS at the
+        // loopback origin).
+        let url = URL(string: "\(redirectURI)?error=%3Cimg%20src%3Dx%3E")!
+        let (body, response) = try await URLSession.shared.data(from: url)
+        #expect((response as? HTTPURLResponse)?.statusCode == 400)
+        let html = String(data: body, encoding: .utf8) ?? ""
+        #expect(!html.contains("<img"))
+
+        await #expect(throws: LoopbackRedirectListener.ListenerError.self) {
+            _ = try await redirectTask.value
+        }
+    }
+
     @Test func taskCancellationShutsDownListenerImmediately() async throws {
         let listener = LoopbackRedirectListener()
         let redirectURI = try await listener.start()
