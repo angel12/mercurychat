@@ -699,17 +699,16 @@ final class AppModel {
         await refreshProjects()
     }
 
-    /// Cheap probe for `desktop_contract` drift: create + close a throwaway
-    /// lazy session (no DB row until first prompt) and compare.
+    /// Cheap probe for `desktop_contract` drift. The throwaway lazy session
+    /// it needs lives in `probeDesktopContract()`, which guarantees the close
+    /// (and retries it once) so a cancelled or failed probe can't leave a
+    /// ghost session in the sidebar (issue #49).
     private func checkContractVersion() async {
         guard let connection, contractNotice == nil else { return }
-        guard let handle = try? await connection.createSession() else { return }
-        if let contract = handle.desktopContract,
-            contract != GatewayClient.builtAgainstDesktopContract
-        {
+        guard let contract = try? await connection.probeDesktopContract() else { return }
+        if contract != GatewayClient.builtAgainstDesktopContract {
             contractNotice =
                 "This server speaks desktop contract v\(contract); Mercury was built against v\(GatewayClient.builtAgainstDesktopContract). Most things should still work, but expect rough edges."
         }
-        await connection.closeSession(sessionID: handle.runtimeID)
     }
 }

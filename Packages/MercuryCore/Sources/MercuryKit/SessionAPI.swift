@@ -134,6 +134,35 @@ extension HermesConnection {
         }
     }
 
+    /// Probe the backend's `desktop_contract`. The gateway advertises it only
+    /// in session-info shapes (`gateway.ready` carries no such field), so the
+    /// cheapest read is a throwaway lazy session — no DB row until first
+    /// prompt — created and closed immediately.
+    ///
+    /// The close is guaranteed (issue #49): it runs in an unstructured task so
+    /// caller cancellation between create and close can't strand a live
+    /// runtime session — a ghost in `session.list` and every client's sidebar
+    /// — and an unconfirmed/failed close is retried once. `closeSession`
+    /// already logs every outcome for leak investigations.
+    ///
+    /// Returns nil when the backend predates the field. Throws only when the
+    /// create itself fails (then there is nothing to clean up).
+    public func probeDesktopContract() async throws -> Int? {
+        let handle = try await createSession()
+        let sessionID = handle.runtimeID
+        let close = Task {
+            var outcome = await self.closeSession(sessionID: sessionID)
+            if outcome != .closed {
+                outcome = await self.closeSession(sessionID: sessionID)
+            }
+            return outcome
+        }
+        // Await it (an unstructured task ignores the caller's cancellation)
+        // so the probe never resolves while its cleanup is still in flight.
+        _ = await close.value
+        return handle.desktopContract
+    }
+
     // MARK: Projects
 
     /// `projects.tree` — the authoritative sidebar grouping (explicit
