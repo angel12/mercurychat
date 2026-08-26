@@ -67,9 +67,13 @@ final class AppModel {
 
     /// Create (and register) the controller for a route. The view owns the
     /// begin() call; registration here is what routes gateway events.
-    func openChat(profile: String?) -> ChatController {
+    /// nil when the connection is already gone — the caller is a `.task`
+    /// body, which runs on a later MainActor hop (even when already
+    /// cancelled), so a disconnect can land first (#48).
+    func openChat(profile: String?) -> ChatController? {
+        guard let connection else { return nil }
         let controller = ChatController(
-            connection: connection!, profile: profile ?? selectedProfile)
+            connection: connection, profile: profile ?? selectedProfile)
         activeChat = controller
         return controller
     }
@@ -428,6 +432,7 @@ final class AppModel {
         }
         phase = .stopped
         route = nil
+        activeChat = nil
         profiles = []
         projectTree = nil
         recentSessions = []
