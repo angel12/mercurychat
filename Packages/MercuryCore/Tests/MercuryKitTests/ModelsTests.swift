@@ -209,6 +209,19 @@ struct PKCETests {
         #expect(challenge.challenge == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
     }
 
+    @Test func fallbackRandomBytesAreSizedAndDistinct() {
+        // The SecRandomCopyBytes failure path can't be forced without
+        // injecting the RNG, but the fallback generator itself is real
+        // production code — pin its length and non-constancy.
+        let a = PKCEChallenge.fallbackRandomBytes(count: 32)
+        let b = PKCEChallenge.fallbackRandomBytes(count: 32)
+        #expect(a.count == 32)
+        #expect(b.count == 32)
+        #expect(a != b)
+        #expect(a != [UInt8](repeating: 0, count: 32))
+        #expect(PKCEChallenge.fallbackRandomBytes(count: 0).isEmpty)
+    }
+
     @Test func buildsAuthorizeURL() {
         let endpoint = ServerEndpoint(baseURL: URL(string: "https://hermes.example.com")!)
         let challenge = PKCEChallenge(verifier: "v", state: "csrf123")
