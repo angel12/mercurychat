@@ -83,8 +83,14 @@ final class AppModel {
         }
     }
 
-    private let tokenStore = KeychainTokenStore()
+    private let tokenStore: KeychainTokenStore
     private var updatePump: Task<Void, Never>?
+
+    /// Tests inject an isolated keychain service so fixtures never touch
+    /// the real `com.mercury.tokens` items.
+    init(tokenStore: KeychainTokenStore = KeychainTokenStore()) {
+        self.tokenStore = tokenStore
+    }
 
     /// Monotonic guard for the connect flow: `connect()` suspends across the
     /// status/validation probes and the WS dial, so an overlapping connect

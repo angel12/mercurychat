@@ -47,14 +47,26 @@ struct AppModelCredentialPersistenceTests {
         defer { server.stop() }
 
         let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
-        let store = KeychainTokenStore()
+        // Isolated keychain service — fixtures never touch the real
+        // `com.mercury.tokens` items.
+        let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
+        defer { store.deleteToken(for: endpoint) }
+        // persistValidatedServer writes UserDefaults: snapshot and restore
+        // whatever this domain held rather than blindly removing the keys.
+        let priorDefaults = ["lastServer", "savedServers"].map {
+            ($0, UserDefaults.standard.object(forKey: $0))
+        }
         defer {
-            store.deleteToken(for: endpoint)
-            UserDefaults.standard.removeObject(forKey: "lastServer")
-            UserDefaults.standard.removeObject(forKey: "savedServers")
+            for (key, value) in priorDefaults {
+                if let value {
+                    UserDefaults.standard.set(value, forKey: key)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
+            }
         }
 
-        let model = AppModel()
+        let model = AppModel(tokenStore: store)
         defer { model.disconnect() }
         await model.connect(
             endpoint: endpoint,
