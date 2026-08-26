@@ -73,7 +73,25 @@ final class ChatController: Identifiable {
 
     // MARK: Lifecycle
 
+    /// Set when AppModel discards this controller (disconnect, closeChat).
+    /// The sole begin() caller is a `.task` body that runs on a later
+    /// MainActor hop, so the discard can land first (#48's surviving race) —
+    /// a begin() after that must not dial RPCs on a stopped (or stopping)
+    /// connection: it would surface a spurious error at best, and at worst
+    /// win the race against the async `connection.stop()` and open a
+    /// server-side runtime session nothing ever tears down.
+    private(set) var isInvalidated = false
+
+    /// One-way: the controller never comes back — ChatView builds a fresh
+    /// one per session. Bumping the generation also bars a begin() already
+    /// suspended mid-RPC from publishing its results.
+    func invalidate() {
+        isInvalidated = true
+        beginGeneration += 1
+    }
+
     func begin(_ mode: Mode) async {
+        guard !isInvalidated else { return }
         beginGeneration += 1
         let generation = beginGeneration
         // A resume supersedes any text buffered or held from the previous

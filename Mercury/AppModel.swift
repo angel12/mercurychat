@@ -80,6 +80,7 @@ final class AppModel {
 
     func closeChat(_ controller: ChatController) {
         guard activeChat === controller else { return }
+        controller.invalidate()
         activeChat = nil
         Task {
             await controller.teardown()
@@ -432,6 +433,10 @@ final class AppModel {
         }
         phase = .stopped
         route = nil
+        // Invalidate, don't just drop: ChatView's `.task` may still be on
+        // its way to begin(), which must become a no-op rather than dial
+        // RPCs against the stopped connection (#48's surviving race).
+        activeChat?.invalidate()
         activeChat = nil
         profiles = []
         projectTree = nil
