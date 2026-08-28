@@ -1,8 +1,9 @@
 # Reference clone of the backend — not part of Mercury
 hermes-agent/
 
-# Local skill/docs scratch — not part of Mercury
-docs/
+# Local skill/docs scratch — not part of Mercury.
+# docs/ itself is tracked: it serves the GitHub Pages privacy-policy site.
+docs/superpowers/
 
 # Xcode / SPM
 build/

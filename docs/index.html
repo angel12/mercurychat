@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Mercury Chat</title>
+<meta name="description" content="Privacy policy for Mercury Chat, a native client for Hermes Agent. Mercury Chat collects no personal data and has no backend of its own.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --bg:        #ffffff;
+    --surface:   #f6f7f8;
+    --text:      #1a1c1e;
+    --muted:     #5c6268;
+    --faint:     #6b7278;
+    --rule:      #e3e6e9;
+    --rule-firm: #cfd4d9;
+    --accent:    #2f5d8a;
+    --tile-ring: rgba(0, 0, 0, .10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:        #16181a;
+      --surface:   #1e2124;
+      --text:      #e6e8ea;
+      --muted:     #a2a9b0;
+      --faint:     #7b838b;
+      --rule:      #2b2f33;
+      --rule-firm: #3a4045;
+      --accent:    #7fb3e0;
+      --tile-ring: rgba(255, 255, 255, .14);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    padding: 0 1.5rem 6rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 44rem; margin: 0 auto; }
+
+  /* ---- Header ---- */
+
+  header {
+    padding: 4.5rem 0 2rem;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 2.5rem;
+  }
+  .badge {
+    display: flex;
+    align-items: center;
+    gap: .9rem;
+    margin-bottom: 2rem;
+  }
+  .badge img {
+    width: 56px;
+    height: 56px;
+    border-radius: 13px;
+    box-shadow: 0 0 0 1px var(--tile-ring), 0 1px 3px rgba(0,0,0,.12);
+    flex: none;
+  }
+  .badge b {
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+  }
+  .badge span {
+    display: block;
+    font-size: .85rem;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  h1 {
+    font-size: 2.1rem;
+    line-height: 1.2;
+    font-weight: 650;
+    letter-spacing: -.025em;
+    margin: 0 0 .6rem;
+  }
+  .updated {
+    margin: 0;
+    font-size: .875rem;
+    color: var(--faint);
+  }
+
+  /* ---- Type ---- */
+
+  h2 {
+    font-size: 1.3rem;
+    font-weight: 620;
+    letter-spacing: -.015em;
+    line-height: 1.3;
+    margin: 3rem 0 .9rem;
+    padding-top: 1.6rem;
+    border-top: 1px solid var(--rule);
+  }
+  h2:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+
+  h3 {
+    font-size: 1.02rem;
+    font-weight: 620;
+    margin: 2rem 0 .5rem;
+  }
+
+  p { margin: 0 0 1.1rem; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:hover { text-decoration-thickness: 2px; }
+
+  strong { font-weight: 620; }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .875em;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .1em .35em;
+    word-break: break-word;
+  }
+
+  ul { margin: 0 0 1.1rem; padding-left: 1.3rem; }
+  li { margin-bottom: .45rem; }
+  li::marker { color: var(--faint); }
+
+  /* ---- Summary card ---- */
+
+  .summary {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 1.4rem 1.5rem .4rem;
+    margin: 0 0 1rem;
+  }
+  .summary ul { padding-left: 1.15rem; }
+  .summary li { margin-bottom: .6rem; }
+
+  /* ---- Table ---- */
+
+  .table-scroll {
+    overflow-x: auto;
+    margin: 0 0 1.4rem;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 34rem;
+    font-size: .93rem;
+  }
+  th, td {
+    text-align: left;
+    padding: .7rem .9rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-weight: 620;
+    font-size: .8rem;
+    text-transform: uppercase;
+    letter-spacing: .045em;
+    color: var(--muted);
+    background: var(--surface);
+    border-bottom-color: var(--rule-firm);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+
+
+  .contact-mail {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+
+  /* ---- Footer ---- */
+
+  footer {
+    margin-top: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+    font-size: .85rem;
+    color: var(--faint);
+  }
+  footer p { margin: 0 0 .4rem; }
+
+  /* ---- Small screens ---- */
+
+  @media (max-width: 480px) {
+    body { font-size: 16px; padding: 0 1.15rem 4rem; }
+    header { padding-top: 2.75rem; }
+    h1 { font-size: 1.75rem; }
+    h2 { font-size: 1.18rem; }
+    .badge img { width: 48px; height: 48px; border-radius: 11px; }
+  }
+
+  /* ---- Print ---- */
+
+  @media print {
+    body { font-size: 11pt; padding: 0; color: #000; background: #fff; }
+    .badge img { box-shadow: none; border: 1px solid #ccc; }
+    h2 { page-break-after: avoid; }
+    .table-scroll, .summary { break-inside: avoid; }
+    a { color: #000; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="badge">
+    <img src="icon.png" alt="">
+    <div>
+      <b>Mercury Chat</b>
+      <span>A native client for Hermes Agent</span>
+    </div>
+  </div>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: August 28, 2026</p>
+</header>
+
+<main>
+
+<p>Mercury Chat is a client app for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.
+It connects to a Hermes Agent server that <strong>you</strong> run and control. Mercury Chat has no backend
+of its own: there is no Mercury Chat account, no Mercury Chat server, and no service operated by the developer
+that your data passes through.</p>
+
+<p>This policy explains what Mercury Chat stores, what it sends, and where it sends it.</p>
+
+<h2>The short version</h2>
+
+<div class="summary">
+<ul>
+  <li>Mercury Chat collects <strong>no</strong> personal data and transmits <strong>no</strong> data to the developer.</li>
+  <li>Mercury Chat contains <strong>no</strong> analytics, advertising, tracking, or crash-reporting services, and no third-party SDKs of any kind.</li>
+  <li>Everything you type in Mercury Chat goes to the Hermes Agent server you chose to connect to, and nowhere else.</li>
+  <li>Credentials are stored in the device Keychain; server addresses are stored in app preferences. Both stay on your device.</li>
+</ul>
+</div>
+
+<h2>Information stored on your device</h2>
+
+<p>Mercury Chat stores the following locally. None of it is transmitted to the developer or to any third party.</p>
+
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr><th>What</th><th>Where</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Addresses of servers you have connected to</td>
+      <td>App preferences (<code>UserDefaults</code>)</td>
+      <td>So the connect screen can list them and reconnect on launch</td>
+    </tr>
+    <tr>
+      <td>The most recently used server</td>
+      <td>App preferences</td>
+      <td>To reconnect automatically when you reopen the app</td>
+    </tr>
+    <tr>
+      <td>Servers you explicitly allowed over plaintext HTTP</td>
+      <td>App preferences</td>
+      <td>So Mercury Chat does not re-prompt for a warning you already accepted</td>
+    </tr>
+    <tr>
+      <td>Access tokens, passwords, and OAuth credentials for those servers</td>
+      <td>Device Keychain</td>
+      <td>To authenticate to your server without asking every time</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>Keychain items are written with <code>kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly</code>: they
+are available only after the device has been unlocked once, and they are <strong>not</strong>
+synchronized to iCloud Keychain or to your other devices.</p>
+
+<p>Conversation transcripts are held in memory while the app is running and are re-fetched from your
+server when you resume a session. Mercury Chat does not maintain its own separate on-device archive of your
+conversations.</p>
+
+<p>Removing a saved server from the connect screen deletes its stored credentials from the Keychain and
+its address from app preferences. Deleting the app removes all locally stored data.</p>
+
+<h2>Information sent to your Hermes Agent server</h2>
+
+<p>When you use Mercury Chat, the following is sent over the network <strong>only</strong> to the server
+address you entered:</p>
+
+<ul>
+  <li>The prompts and messages you type.</li>
+  <li>Authentication credentials (a token, a username and password, or an OAuth authorization result).</li>
+  <li>Session, profile, and project selections, and control actions such as interrupting, renaming, branching, or deleting a session.</li>
+  <li>Responses to prompts your server raises, including tool-approval decisions and any values you supply to administrator-password or secret requests.</li>
+</ul>
+
+<p>That server is operated by you or by whoever you obtained it from. <strong>Mercury Chat does not control
+what happens to data once it reaches your server.</strong> Hermes Agent may in turn send your
+conversation content to model providers or other services according to how you have configured it.
+Those services' handling of your data is governed by their own terms and privacy policies, not by
+this one.</p>
+
+<p>Mercury Chat does not contact any host other than the server address you supply and, during OAuth
+sign-in, the authorization endpoint that your server advertises.</p>
+
+<h2>Network and transport</h2>
+
+<p>Mercury Chat requests <strong>Local Network</strong> access on iOS and visionOS so it can reach a Hermes
+Agent server running on your Mac or elsewhere on your LAN. It uses this permission for no other
+purpose — it does not scan, enumerate, or catalog devices on your network.</p>
+
+<p>Mercury Chat uses HTTPS wherever the address you supply is HTTPS. If you enter a plaintext
+<code>http://</code> address for a host that is not a loopback address, Mercury Chat warns you that your
+credentials and message content would cross the network unencrypted and requires an explicit override
+before connecting. Whether your connection is encrypted is determined by the address you choose.</p>
+
+<p>On macOS, signing in with OAuth briefly opens a listener on a loopback address
+(<code>127.0.0.1</code>) to receive the authorization redirect, as described in RFC 8252. It accepts
+only that redirect and closes immediately afterward.</p>
+
+<h2>What Mercury Chat does not do</h2>
+
+<ul>
+  <li>No analytics or usage telemetry of any kind.</li>
+  <li>No advertising, advertising identifiers, or tracking across apps or websites.</li>
+  <li>No third-party crash-reporting or attribution SDKs.</li>
+  <li>No sale or sharing of personal information — no personal information is collected to sell or share.</li>
+  <li>No user accounts, registration, or profiles with the developer.</li>
+</ul>
+
+<p>Mercury Chat does not collect data as defined by Apple's App Tracking Transparency framework and does
+not present a tracking prompt.</p>
+
+<h2>Children</h2>
+
+<p>Mercury Chat is a developer tool and is not directed to children under 13 (or the equivalent minimum age
+in your jurisdiction). The developer does not knowingly collect personal information from children —
+or, in fact, from anyone.</p>
+
+<h2>Your rights</h2>
+
+<p>Because the developer receives, stores, and processes none of your data, there is nothing held by
+the developer to access, correct, export, or delete. Data held by your Hermes Agent server is under
+your control on that server. Locally stored data can be removed by forgetting the server in the app or
+by deleting the app.</p>
+
+<h2>Changes to this policy</h2>
+
+<p>If this policy changes, the updated version will be posted at this address with a revised
+"Last updated" date. Material changes will be noted in the app's release notes.</p>
+
+<h2>Contact</h2>
+
+<p>Questions about this policy can be sent to:</p>
+
+<p class="contact-mail"><a href="mailto:spencermcguire@gmail.com">spencermcguire@gmail.com</a></p>
+
+</main>
+
+<footer>
+  <p>Mercury Chat is open-source software released under the MIT License.</p>
+  <p>This page is served as static HTML. It sets no cookies, loads no external resources, and runs no scripts.</p>
+</footer>
+
+</div>
+</body>
+</html>
