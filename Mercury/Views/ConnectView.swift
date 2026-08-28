@@ -52,9 +52,12 @@ struct ConnectView: View {
 
     private var header: some View {
         VStack(spacing: 8) {
-            Image(systemName: "bolt.horizontal.circle.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
+            Image("MercuryIcon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 80, height: 80)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
             Text("Mercury")
                 .font(.largeTitle.bold())
             Text("Connect to a Hermes Agent server")
