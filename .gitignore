@@ -1,6 +1,9 @@
 # Reference clone of the backend — not part of Mercury
 hermes-agent/
 
+# Local skill/docs scratch — not part of Mercury
+docs/
+
 # Xcode / SPM
 build/
 DerivedData/
