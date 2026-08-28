@@ -1,0 +1,27 @@
+name: MercuryCore Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  swift-test:
+    name: swift test (Packages/MercuryCore)
+    # Requires a Gitea act_runner registered in host mode on a Mac with the
+    # "macos" label. The test suite uses Network.framework and the Keychain,
+    # so it cannot build or run on Linux runners. Host mode has no Node.js,
+    # so this workflow clones with git instead of actions/checkout.
+    runs-on: macos
+    steps:
+      - name: Check out repository
+        run: |
+          git init
+          git remote add origin "${{ gitea.server_url }}/${{ gitea.repository }}.git"
+          git fetch --depth 1 origin "${{ gitea.ref }}"
+          git checkout --force FETCH_HEAD
+      - name: Swift version
+        run: swift --version
+      - name: Run MercuryCore tests
+        run: swift test --package-path Packages/MercuryCore
