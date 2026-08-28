@@ -1,6 +1,8 @@
-# Mercury
+# Mercury Chat
 
-A native SwiftUI client for [Hermes Agent](https://github.com/NousResearch/hermes-agent) on iOS 17+, macOS 14+, and visionOS 2+. Mercury speaks the same protocol as the official Hermes Desktop app: the `hermes serve` backend's JSON-RPC 2.0 WebSocket gateway at `/api/ws` plus its `/api/*` REST surface.
+A native SwiftUI client for [Hermes Agent](https://github.com/NousResearch/hermes-agent) on iOS 17+, macOS 14+, and visionOS 2+. Mercury Chat speaks the same protocol as the official Hermes Desktop app: the `hermes serve` backend's JSON-RPC 2.0 WebSocket gateway at `/api/ws` plus its `/api/*` REST surface.
+
+"Mercury Chat" is the App Store / user-facing name (bundle ID `com.spencermcguire.mercurychat`); the repo, Xcode targets, and `MercuryCore` package keep the short internal name "Mercury".
 
 Built against desktop contract **6** (`DESKTOP_BACKEND_CONTRACT` in `tui_gateway/server.py`).
 

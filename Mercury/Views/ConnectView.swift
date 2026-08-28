@@ -58,7 +58,7 @@ struct ConnectView: View {
                 .frame(width: 80, height: 80)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-            Text("Mercury")
+            Text("Mercury Chat")
                 .font(.largeTitle.bold())
             Text("Connect to a Hermes Agent server")
                 .foregroundStyle(.secondary)

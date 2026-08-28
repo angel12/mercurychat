@@ -23,7 +23,7 @@ struct ConnectedView: View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
-                .navigationTitle(model.endpoint?.displayName ?? "Mercury")
+                .navigationTitle(model.endpoint?.displayName ?? "Mercury Chat")
                 #if os(macOS)
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300)
                 #endif
