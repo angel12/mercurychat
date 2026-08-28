@@ -1,10 +1,14 @@
 # Mercury Chat
 
+[![MercuryCore Tests](http://10.0.1.72:3000/spencer/mercury/actions/workflows/mercurycore-tests.yml/badge.svg)](http://10.0.1.72:3000/spencer/mercury/actions?workflow=mercurycore-tests.yml)
+
 A native SwiftUI client for [Hermes Agent](https://github.com/NousResearch/hermes-agent) on iOS 17+, macOS 14+, and visionOS 2+. Mercury Chat speaks the same protocol as the official Hermes Desktop app: the `hermes serve` backend's JSON-RPC 2.0 WebSocket gateway at `/api/ws` plus its `/api/*` REST surface.
 
 "Mercury Chat" is the App Store / user-facing name (bundle ID `com.spencermcguire.mercurychat`); the repo, Xcode targets, and `MercuryCore` package keep the short internal name "Mercury".
 
 Built against desktop contract **6** (`DESKTOP_BACKEND_CONTRACT` in `tui_gateway/server.py`).
+
+Mercury Chat has no backend of its own — see [PRIVACY.md](PRIVACY.md) for what the app stores and where it sends it.
 
 ## Architecture
 
@@ -38,6 +42,10 @@ Packages/MercuryCore/
 
 The protocol layer is lifted nearly verbatim from HermesVoice's `HermesKit` (a working Swift 6 client of the same protocol) and extended with transcript hydration, the fuller desktop event set, session-management RPCs, and native-PKCE OAuth.
 
+## CI
+
+Gitea Actions runs the MercuryCore suite (`swift test --package-path Packages/MercuryCore`) on every PR targeting `main` and every push to `main` (`.gitea/workflows/mercurycore-tests.yml`). The job needs a self-hosted **macOS** host-mode runner (label `macos`) — the tests exercise Network.framework and the Keychain, so they cannot build on Linux runners. The app-layer `MercuryTests` bundle (`xcodebuild test`) is not in CI yet.
+
 ## Two-ID session model
 
 `session_id` is the **runtime** id (8 hex chars, recycled on backend restart) used for `prompt.submit`/`session.interrupt` and event filtering. `stored_session_id` (aka `session_key`) is the **durable** DB id used for `session.resume` and REST hydration. After every reconnect, re-resume by stored id; re-anchor the stored id from the resume result's `resumed`/`session_key`.
@@ -61,7 +69,7 @@ The protocol layer is lifted nearly verbatim from HermesVoice's `HermesKit` (a w
 Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-08-11 unless noted. The client has since adopted the `hermes serve` 0.20.5 surface (desktop contract 6); those changes are covered by the automated suites and have not been re-verified live.
 
 ### Milestone 1 — MercuryKit port
-- [x] `swift test` green (148 tests — 102 MercuryKitTests + 46 ChatCoreTests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, real-socket networking against loopback HTTP/WebSocket test servers, transcript reducer + hydration).
+- [x] `swift test` green — now enforced by CI on every PR (148 tests — 102 MercuryKitTests + 46 ChatCoreTests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, real-socket networking against loopback HTTP/WebSocket test servers, transcript reducer + hydration).
 - [x] App-layer suite (`MercuryTests` Xcode target, AppModel glue) green — not run by `swift test`; run it with `xcodebuild test -scheme MercuryTests -destination 'platform=macOS'`.
 
 ### Milestone 2 — connect + browse
