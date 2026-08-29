@@ -221,31 +221,37 @@ final class ComposerAttachments {
             // A plain TEXT ⌘V is not a batch: returning `.ignored` from here
             // hands the paste to the field editor, so clearing the error line
             // on the way out would wipe a visible attachment failure that the
-            // user never acted on. Only image content (bytes, or an image
-            // file that turned out to be unreadable) starts a batch.
-            guard !contents.images.isEmpty || !contents.unreadableNames.isEmpty else {
-                return false
-            }
+            // user never acted on. Only image content starts a batch.
+            guard !contents.isEmpty else { return false }
             beginBatch()
-            if !contents.images.isEmpty {
-                // Reserved up front, like every other batch; one task awaiting
-                // them in order keeps a multi-image paste staged in pasteboard
-                // order and leaves no gap between items.
-                let granted = reserveSlots(contents.images.count)
+            // Pasted FILES take the same off-main, size-capped read as a drop
+            // (#2): the reader classifies on the MainActor and hands the disk
+            // hit to `addReserved(contentsOf:)`, which stats against the
+            // 60 MB source cap inside the security scope before reading a
+            // byte. Reading here instead froze the composer for the length of
+            // a large paste and skipped the cap entirely.
+            //
+            // Slots are reserved up front, like every other batch; one task
+            // awaiting them in order keeps a multi-image paste staged in
+            // pasteboard order and leaves no gap between items. Unreadable
+            // files now surface their "Couldn't read …" error from that same
+            // path rather than being detected by a speculative read here.
+            if !contents.imageURLs.isEmpty {
+                let granted = reserveSlots(contents.imageURLs.count)
                 if granted > 0 {
+                    let urls = Array(contents.imageURLs.prefix(granted))
                     Task { @MainActor in
-                        for image in contents.images.prefix(granted) {
-                            await addReserved(data: image.data, name: image.name)
-                        }
+                        for url in urls { await addReserved(contentsOf: url) }
                     }
                 }
+                // Still "handled" even at cap or on a read failure: the
+                // pasteboard held an image file, so falling through to a text
+                // paste would insert its path.
                 return true
             }
-            if let name = contents.unreadableNames.first {
-                error = "Couldn't read \(name)."
+            if let data = contents.rawImage, reserveSlots(1) == 1 {
+                Task { @MainActor in await addReserved(data: data, name: nil) }
             }
-            // Still "handled": the pasteboard held an image file, so falling
-            // through to a text paste would insert its path.
             return true
         }
     #endif

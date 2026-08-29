@@ -3,21 +3,28 @@
     import Foundation
     import UniformTypeIdentifiers
 
-    /// Pure pasteboard → image payload extraction, split out of the ⌘V key
+    /// Pure pasteboard → image payload CLASSIFICATION, split out of the ⌘V key
     /// handler (in ChatView.swift) so the ordering rules stay readable and
     /// testable without pulling SwiftUI into the test target.
+    ///
+    /// Deliberately does no disk I/O. `NSPasteboard` must be read on the main
+    /// thread and `ComposerAttachments.pasteImages` is MainActor-isolated, so
+    /// reading a pasted file HERE put an unbounded, uncapped whole-file read
+    /// on the MainActor — freezing the composer for the length of a large
+    /// paste and skipping the 60 MB source check that every other input path
+    /// gets. Classification is cheap and stays; the read is handed to
+    /// `ComposerAttachments.addReserved(contentsOf:)` like the drop path's.
     enum ImagePasteboardReader {
         struct Contents: Equatable {
-            struct Image: Equatable {
-                var data: Data
-                /// nil ⇒ let the preparer pick a default filename.
-                var name: String?
-            }
-            var images: [Image] = []
-            /// Image files that were on the pasteboard but could not be read
-            /// (the sandbox grant that drag-and-drop carries does not always
-            /// come along with ⌘C/⌘V).
-            var unreadableNames: [String] = []
+            /// Image FILES on the pasteboard (Finder ⌘C). Filenames survive,
+            /// and the bytes are read off the MainActor, under the cap.
+            var imageURLs: [URL] = []
+            /// Screenshot / "copy image": raw bytes with no backing file.
+            /// Already resident in the pasteboard, so there is nothing to
+            /// move off the MainActor. Mutually exclusive with `imageURLs`.
+            var rawImage: Data?
+
+            var isEmpty: Bool { imageURLs.isEmpty && rawImage == nil }
         }
 
         static func read(_ pasteboard: NSPasteboard) -> Contents {
@@ -30,13 +37,7 @@
                     options: [
                         .urlReadingContentsConformToTypes: [UTType.image.identifier]
                     ]) as? [URL] ?? []
-            for url in imageURLs {
-                if let data = readSecurityScoped(url) {
-                    contents.images.append(.init(data: data, name: url.lastPathComponent))
-                } else {
-                    contents.unreadableNames.append(url.lastPathComponent)
-                }
-            }
+            contents.imageURLs = imageURLs
 
             // Any file URL at all, unfiltered — used below to tell "copied a
             // non-image file" apart from "copied a screenshot / image bytes
@@ -53,20 +54,9 @@
             if imageURLs.isEmpty, anyFileURLs.isEmpty,
                 let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff)
             {
-                contents.images.append(.init(data: data, name: nil))
+                contents.rawImage = data
             }
             return contents
-        }
-
-        /// Reads a file URL under its security scope — sandboxed builds only
-        /// get read access for the duration of that scope. Kept local (rather
-        /// than shared with `ComposerAttachments.readSecurityScoped`, which
-        /// does the same thing) so this file stays self-contained and can be
-        /// compiled into MercuryTests on its own.
-        private static func readSecurityScoped(_ url: URL) -> Data? {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            return try? Data(contentsOf: url)
         }
     }
 #endif
