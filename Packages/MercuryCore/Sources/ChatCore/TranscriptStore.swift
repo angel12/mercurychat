@@ -96,9 +96,21 @@ public final class TranscriptStore {
         // attachment count — image-only sends have empty text, and matching
         // on text alone would collide every one of them — and sealed
         // assistant bubbles by text).
+        //
+        // User keys are a MULTISET, not a set: captionless one-image sends
+        // all share the key "u:#1", so a plain set would let ONE hydrated row
+        // swallow EVERY matching live echo — including a still-`.sending`
+        // second send, which would then vanish with no bubble and no retry
+        // affordance if its upload later failed. Counting instead makes the
+        // reconciliation one-to-one: N hydrated rows consume at most N
+        // matching echoes (oldest-first, since the filter runs in order) and
+        // any extra live echo survives.
+        var hydratedUserKeys: [String: Int] = [:]
         let hydratedTexts = Set(hydrated.compactMap { item -> String? in
             switch item {
-            case .user(let m): return "u:" + m.text + "#\(m.attachments.count)"
+            case .user(let m):
+                hydratedUserKeys["u:" + m.text + "#\(m.attachments.count)", default: 0] += 1
+                return nil
             case .assistant(let m): return "a:" + m.text
             default: return nil
             }
@@ -127,7 +139,10 @@ public final class TranscriptStore {
         let survivors = liveSuffix.filter { item in
             switch item {
             case .user(let m):
-                return !hydratedTexts.contains("u:" + m.text + "#\(m.attachments.count)")
+                let key = "u:" + m.text + "#\(m.attachments.count)"
+                guard let remaining = hydratedUserKeys[key], remaining > 0 else { return true }
+                hydratedUserKeys[key] = remaining - 1
+                return false
             case .assistant(let m) where m.isStreaming:
                 if let final = latestHydratedReply, final.hasPrefix(m.text) {
                     return false

@@ -1044,6 +1044,27 @@ struct TranscriptHydrationTests {
         }
         #expect(filenames == ["a.png", "b.png"])
     }
+
+    @Test func hydrationConsumesOnlyAsManyEchoesAsPersistedRows() {
+        let store = TranscriptStore()
+        let attachment = MessageAttachment(
+            id: "att-1", kind: .image, filename: "a.png", previewData: Data([0x01]))
+        // Two captionless one-image sends: the first persisted, the second
+        // still in flight when the reconnect hydration lands.
+        store.appendUserMessage("", attachments: [attachment], state: .sent)
+        store.appendUserMessage("", attachments: [attachment], state: .sending)
+        let row = TranscriptMessage(
+            json: json(#"{"role": "user", "id": 20, "content": "@image:/tmp/a.png"}"#))!
+        store.hydrate([row])
+        let userRows = store.items.compactMap { item -> UserMessage? in
+            if case .user(let m) = item { return m }
+            return nil
+        }
+        // One hydrated row consumes ONE echo; the in-flight send survives
+        // with its retry affordance intact.
+        #expect(userRows.count == 2)
+        #expect(userRows.contains { $0.sendState == .sending })
+    }
 }
 
 @MainActor
