@@ -535,133 +535,9 @@ private struct ChatContentView: View {
 
 // MARK: - Composer
 
-/// Staged attachments plus every way they get added. Lifted out of
-/// `ComposerView` into a shared object because the drop target now spans the
-/// whole chat surface (#3): `ChatContentView` owns the instance, the composer
-/// renders and sends it.
-@MainActor
-@Observable
-final class ComposerAttachments {
-    var items: [PendingAttachment] = []
-    var error: String?
-
-    /// One cap for every input path (picker, paste, drop, file importer). The
-    /// photo picker's `maxSelectionCount` is derived from it and the current
-    /// tray count, so the two can't drift.
-    static let maxAttachments = 5
-
-    /// Ceiling on bytes pulled off disk before preparation. Anything larger
-    /// can't survive `ImageAttachmentPreparer`'s 20 MB encoded cap anyway, so
-    /// reject it from the file's metadata rather than reading it into memory.
-    static let maxSourceFileBytes = 60 * 1024 * 1024
-
-    func clear() {
-        items = []
-        error = nil
-    }
-
-    /// Cap check plus its error line. Called at BOTH ends of a preparation:
-    /// once to skip needless work, and again at append time because two
-    /// preparations running concurrently can both clear a stale check.
-    private func hasRoom() -> Bool {
-        guard items.count < Self.maxAttachments else {
-            error = "Up to \(Self.maxAttachments) images per message."
-            return false
-        }
-        return true
-    }
-
-    /// `ImageAttachmentPreparer.prepare` is two ImageIO decode/resize/encode
-    /// passes — far too much to run on the MainActor, where it stalls the
-    /// composer for the whole of a large image (#2). The cap check and the
-    /// error line stay here; only the pure work leaves.
-    func add(data: Data, name: String?) async {
-        guard hasRoom() else { return }
-        do {
-            let prepared = try await Task.detached {
-                try ImageAttachmentPreparer.prepare(data: data, suggestedName: name)
-            }.value
-            guard hasRoom() else { return }
-            items.append(prepared)
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    /// Reads a picked/dropped file URL under its security scope — sandboxed
-    /// builds only get read access for the duration of that scope.
-    func addContents(of url: URL) async {
-        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-            size > Self.maxSourceFileBytes
-        {
-            error = "Image is too large to send (60 MB max)."
-            return
-        }
-        guard hasRoom() else { return }
-        // Whole-file read off the MainActor too: a big image on a slow volume
-        // blocks just as long as the encode did.
-        guard let data = await Task.detached(operation: { Self.readSecurityScoped(url) }).value
-        else {
-            error = "Couldn't read \(url.lastPathComponent)."
-            return
-        }
-        await add(data: data, name: url.lastPathComponent)
-    }
-
-    /// Pure file read — `nonisolated` so callers off the main actor can use it.
-    nonisolated static func readSecurityScoped(_ url: URL) -> Data? {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        return try? Data(contentsOf: url)
-    }
-
-    /// Shared by drop and `onPasteCommand`: prefer the file URL representation
-    /// so the filename survives, and fall back to raw image bytes.
-    func loadProviders(_ providers: [NSItemProvider]) {
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in await self.addContents(of: url) }
-                }
-            } else {
-                _ = provider.loadDataRepresentation(for: .image) { data, _ in
-                    guard let data else { return }
-                    Task { @MainActor in await self.add(data: data, name: nil) }
-                }
-            }
-        }
-    }
-
-    #if os(macOS)
-        /// ⌘V handler (#4). Returns true only when at least one attachment was
-        /// staged, so a plain text paste is never swallowed.
-        @discardableResult
-        func pasteImages(from pasteboard: NSPasteboard = .general) -> Bool {
-            let contents = ImagePasteboardReader.read(pasteboard)
-            // Preparation is async now; one task awaiting them in order keeps
-            // a multi-image paste staged in pasteboard order.
-            if !contents.images.isEmpty {
-                Task { @MainActor in
-                    for image in contents.images {
-                        await add(data: image.data, name: image.name)
-                    }
-                }
-            }
-            if contents.images.isEmpty, let name = contents.unreadableNames.first {
-                error = "Couldn't read \(name)."
-                // Still "handled": the pasteboard held an image file, so
-                // falling through to a text paste would insert its path.
-                return true
-            }
-            return !contents.images.isEmpty
-        }
-    #endif
-}
-
-// ImagePasteboardReader lives in Mercury/ImagePasteboardReader.swift (kept
-// out of ChatView.swift so MercuryTests can compile it without SwiftUI).
+// ComposerAttachments lives in Mercury/ComposerAttachments.swift and
+// ImagePasteboardReader in Mercury/ImagePasteboardReader.swift (both kept out
+// of ChatView.swift so MercuryTests can compile them without SwiftUI).
 
 private struct ComposerView: View {
     @Bindable var controller: ChatController
@@ -675,9 +551,13 @@ private struct ComposerView: View {
         @State private var showingPhotoPicker = false
     #endif
 
+    /// Preparation is asynchronous (#2), so Send has to WAIT for it: sending
+    /// mid-preparation submitted the caption alone and left the image in the
+    /// tray for the next message. The button showing disabled for the
+    /// fraction of a second an encode takes is the intended behaviour.
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !attachments.items.isEmpty
+        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachments.items.isEmpty) && !attachments.isBusyPreparing
     }
 
     var body: some View {
@@ -767,6 +647,9 @@ private struct ComposerView: View {
             allowsMultipleSelection: true
         ) { result in
             guard case .success(let urls) = result else { return }
+            // One importer result = one batch: clear the previous error line
+            // once here, never per successful item.
+            attachments.beginBatch()
             // Sequential await: reads and encodes run off the MainActor but
             // the tray still fills in the order the user picked.
             Task { for url in urls { await attachments.addContents(of: url) } }
@@ -776,17 +659,18 @@ private struct ComposerView: View {
             // PhotosPicker runs out of process, so no usage description needed.
             .photosPicker(
                 isPresented: $showingPhotoPicker, selection: $photoSelection,
-                // Only as many as the tray can still hold, so the picker
-                // can't hand back items that `add` will silently reject.
-                // Never 0 — that means "unlimited" to PhotosPicker; the menu
-                // item is disabled at cap instead.
-                maxSelectionCount: max(
-                    1, ComposerAttachments.maxAttachments - attachments.items.count),
+                // Only as many as the tray can still hold — in-flight
+                // preparations included — so the picker can't hand back items
+                // that `add` will silently reject. Never 0: that means
+                // "unlimited" to PhotosPicker; the menu item is disabled at
+                // cap instead.
+                maxSelectionCount: max(1, attachments.availableSlots),
                 matching: .images
             )
             .onChange(of: photoSelection) { _, items in
                 guard !items.isEmpty else { return }
                 photoSelection = []
+                attachments.beginBatch()
                 Task {
                     for item in items {
                         // A picked item can still fail to load (an iCloud
@@ -819,14 +703,16 @@ private struct ComposerView: View {
                 } label: {
                     Label("Photo Library", systemImage: "photo.on.rectangle")
                 }
-                // The picker needs a selection budget of at least 1; at cap
-                // there is none, so don't offer it. (The other paths funnel
-                // through `add`'s cap check and surface its error line.)
-                .disabled(attachments.items.count >= ComposerAttachments.maxAttachments)
+                // The picker needs a selection budget of at least 1; at cap —
+                // in-flight preparations counted — there is none, so don't
+                // offer it. (The other paths funnel through `add`'s cap check
+                // and surface its error line.)
+                .disabled(attachments.availableSlots <= 0)
                 Button {
                     let images = (UIPasteboard.general.images ?? []).compactMap {
                         $0.jpegData(compressionQuality: 0.9)
                     }
+                    attachments.beginBatch()
                     Task {
                         for data in images { await attachments.add(data: data, name: nil) }
                     }
@@ -850,8 +736,10 @@ private struct ComposerView: View {
     private func send() {
         let message = text
         let outgoing = attachments.items
-        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !outgoing.isEmpty
+        // Same gate as `canSend` — ⌘⏎ and ⏎ reach `send()` directly.
+        guard !attachments.isBusyPreparing,
+            !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !outgoing.isEmpty
         else { return }
         text = ""
         attachments.clear()
