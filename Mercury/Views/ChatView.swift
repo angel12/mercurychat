@@ -92,12 +92,31 @@ private struct ChatContentView: View {
     /// writes (bottom distance changes on every scrolled point) invalidated
     /// the whole transcript body 120×/s, which showed up as app-wide lag.
     @State private var scroll = TranscriptScrollState()
+    /// Staged attachments live one level ABOVE the composer so the whole chat
+    /// surface — transcript included — can be a drop target (#3). The composer
+    /// still owns every other interaction with them.
+    @State private var attachments = ComposerAttachments()
+    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
             transcript
             promptCards
-            ComposerView(controller: controller, text: $composerText)
+            ComposerView(
+                controller: controller, text: $composerText, attachments: attachments)
+        }
+        .overlay { dropTarget }
+        .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
+        // The drop destination sits on the WHOLE chat surface, not just the
+        // composer strip: dropping an image anywhere in the window attaches it.
+        // Finder/Files deliver file URLs (filename preserved, read under
+        // security scope), other apps deliver raw image Data — `onDrop` takes
+        // both content types at once. One destination, not two: stacked
+        // `.dropDestination` modifiers on the same view register a single
+        // delegate, so the second would shadow the first.
+        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
+            attachments.loadProviders(providers)
+            return !providers.isEmpty
         }
         .navigationTitle(controller.store.title ?? "Session")
         #if !os(macOS)
@@ -427,6 +446,41 @@ private struct ChatContentView: View {
         }
     }
 
+    /// Hover affordance for an in-flight image drag.
+    ///
+    /// It earns its keep twice. Besides saying where to let go, it is
+    /// HIT-TESTABLE and covers the message field, so once a drag has entered
+    /// any non-field pixel of the window the field editor never sees the drop
+    /// — without it, AppKit's built-in NSTextField file-URL handling wins
+    /// inside the field's bounds and inserts the file PATH as plain text.
+    ///
+    /// RESIDUAL (macOS, accepted): a drag that enters the window *directly*
+    /// over the message field drops into the field editor before this overlay
+    /// can appear, and still inserts the path as text. AppKit's dragging
+    /// destination on the field editor is not reachable from SwiftUI; closing
+    /// that hole needs an NSViewRepresentable text view.
+    @ViewBuilder
+    private var dropTarget: some View {
+        if isDropTargeted {
+            ZStack {
+                Rectangle()
+                    .fill(.background.opacity(0.7))
+                Label("Drop images to attach", systemImage: "photo.badge.plus")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(
+                        .tint, style: StrokeStyle(lineWidth: 2, dash: [8, 6])
+                    )
+                    .padding(8)
+            )
+            .transition(.opacity)
+            .accessibilityLabel("Drop images to attach")
+        }
+    }
+
     @ToolbarContentBuilder
     private var headerChips: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
@@ -481,12 +535,147 @@ private struct ChatContentView: View {
 
 // MARK: - Composer
 
+/// Staged attachments plus every way they get added. Lifted out of
+/// `ComposerView` into a shared object because the drop target now spans the
+/// whole chat surface (#3): `ChatContentView` owns the instance, the composer
+/// renders and sends it.
+@MainActor
+@Observable
+final class ComposerAttachments {
+    var items: [PendingAttachment] = []
+    var error: String?
+
+    /// One cap for every input path (picker, paste, drop, file importer),
+    /// matching PhotosPicker's maxSelectionCount.
+    static let maxAttachments = 5
+
+    func clear() {
+        items = []
+        error = nil
+    }
+
+    func add(data: Data, name: String?) {
+        guard items.count < Self.maxAttachments else {
+            error = "Up to \(Self.maxAttachments) images per message."
+            return
+        }
+        do {
+            items.append(try ImageAttachmentPreparer.prepare(data: data, suggestedName: name))
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Reads a picked/dropped file URL under its security scope — sandboxed
+    /// builds only get read access for the duration of that scope.
+    func addContents(of url: URL) {
+        guard let data = Self.readSecurityScoped(url) else {
+            error = "Couldn't read \(url.lastPathComponent)."
+            return
+        }
+        add(data: data, name: url.lastPathComponent)
+    }
+
+    /// Pure file read — `nonisolated` so the pasteboard reader can use it too.
+    nonisolated static func readSecurityScoped(_ url: URL) -> Data? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        return try? Data(contentsOf: url)
+    }
+
+    /// Shared by drop and `onPasteCommand`: prefer the file URL representation
+    /// so the filename survives, and fall back to raw image bytes.
+    func loadProviders(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in self.addContents(of: url) }
+                }
+            } else {
+                _ = provider.loadDataRepresentation(for: .image) { data, _ in
+                    guard let data else { return }
+                    Task { @MainActor in self.add(data: data, name: nil) }
+                }
+            }
+        }
+    }
+
+    #if os(macOS)
+        /// ⌘V handler (#4). Returns true only when at least one attachment was
+        /// staged, so a plain text paste is never swallowed.
+        @discardableResult
+        func pasteImages(from pasteboard: NSPasteboard = .general) -> Bool {
+            let contents = ImagePasteboardReader.read(pasteboard)
+            for image in contents.images { add(data: image.data, name: image.name) }
+            if contents.images.isEmpty, let name = contents.unreadableNames.first {
+                error = "Couldn't read \(name)."
+                // Still "handled": the pasteboard held an image file, so
+                // falling through to a text paste would insert its path.
+                return true
+            }
+            return !contents.images.isEmpty
+        }
+    #endif
+}
+
+#if os(macOS)
+    /// Pure pasteboard → image payload extraction, split out of the ⌘V key
+    /// handler so the ordering rules stay readable.
+    enum ImagePasteboardReader {
+        struct Contents: Equatable {
+            struct Image: Equatable {
+                var data: Data
+                /// nil ⇒ let the preparer pick a default filename.
+                var name: String?
+            }
+            var images: [Image] = []
+            /// Image files that were on the pasteboard but could not be read
+            /// (the sandbox grant that drag-and-drop carries does not always
+            /// come along with ⌘C/⌘V).
+            var unreadableNames: [String] = []
+        }
+
+        static func read(_ pasteboard: NSPasteboard) -> Contents {
+            var contents = Contents()
+
+            // 1. Finder ⌘C: image-conforming file URLs. Filenames survive.
+            let urls =
+                pasteboard.readObjects(
+                    forClasses: [NSURL.self],
+                    options: [
+                        .urlReadingContentsConformToTypes: [UTType.image.identifier]
+                    ]) as? [URL] ?? []
+            for url in urls {
+                if let data = ComposerAttachments.readSecurityScoped(url) {
+                    contents.images.append(.init(data: data, name: url.lastPathComponent))
+                } else {
+                    contents.unreadableNames.append(url.lastPathComponent)
+                }
+            }
+
+            // 2. Screenshot / "copy image" case: raw bytes, no filename. Only
+            //    consulted when the pasteboard carried NO image file URL at
+            //    all — Finder puts the file's ICON on the pasteboard next to
+            //    the URL, and attaching a 64 px icon in place of the photo the
+            //    user copied is worse than reporting that we couldn't read it.
+            if urls.isEmpty,
+                let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff)
+            {
+                contents.images.append(.init(data: data, name: nil))
+            }
+            return contents
+        }
+    }
+#endif
+
 private struct ComposerView: View {
     @Bindable var controller: ChatController
     @Binding var text: String
+    /// Owned by `ChatContentView` so window-wide drops can reach it (#3).
+    @Bindable var attachments: ComposerAttachments
     @FocusState private var focused: Bool
-    @State private var attachments: [PendingAttachment] = []
-    @State private var attachmentError: String?
     @State private var showingFileImporter = false
     #if os(iOS) || os(visionOS)
         @State private var photoSelection: [PhotosPickerItem] = []
@@ -495,19 +684,19 @@ private struct ComposerView: View {
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !attachments.isEmpty
+            || !attachments.items.isEmpty
     }
 
     var body: some View {
         VStack(spacing: 6) {
-            if let attachmentError {
+            if let attachmentError = attachments.error {
                 Text(attachmentError)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !attachments.isEmpty {
-                AttachmentTray(attachments: $attachments)
+            if !attachments.items.isEmpty {
+                AttachmentTray(attachments: $attachments.items)
             }
             HStack(alignment: .bottom, spacing: 8) {
                 attachMenu
@@ -525,6 +714,22 @@ private struct ComposerView: View {
                         if press.modifiers.contains(.shift) { return .ignored }
                         send()
                         return .handled
+                    }
+                    // ⌘V has to be caught HERE, on the field (#4). Focus lives
+                    // in the text field, whose AppKit field editor consumes the
+                    // paste — image content is a silent no-op there and the
+                    // container's `.onPasteCommand` never fires at all.
+                    // Filtered to "v" on purpose: an unfiltered `onKeyPress`
+                    // sits in front of every keystroke, including IME marked
+                    // text.
+                    .onKeyPress(keys: ["v"], phases: .down) { press in
+                        guard press.modifiers.contains(.command),
+                            !press.modifiers.contains(.option),
+                            !press.modifiers.contains(.control)
+                        else { return .ignored }
+                        // `.ignored` when the pasteboard held no image, so a
+                        // normal TEXT paste proceeds untouched.
+                        return attachments.pasteImages() ? .handled : .ignored
                     }
                 #endif
 
@@ -552,26 +757,24 @@ private struct ComposerView: View {
         .padding(10)
         .background(.bar)
         #if os(macOS)
+            // Secondary path only: this fires for Edit ▸ Paste when focus is
+            // NOT in the message field (e.g. on the send button). The common
+            // case — focus in the field — is handled by the ⌘V `onKeyPress`
+            // above, which this never sees.
             .onPasteCommand(of: [.image]) { providers in
-                loadProviders(providers)
+                attachments.loadProviders(providers)
             }
         #endif
-        // One drop destination, not two: stacked `.dropDestination` modifiers
-        // on the same view register a single delegate, so the second would
-        // shadow the first. `onDrop` takes both content types at once —
-        // Finder/Files deliver file URLs (filename preserved, read under
-        // security scope), other apps deliver raw image Data.
-        .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
-            loadProviders(providers)
-            return !providers.isEmpty
-        }
+        // Drops are handled window-wide by ChatContentView, not here — the
+        // composer is a thin strip and dropping onto the transcript is what
+        // people actually do.
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: [.image],
             allowsMultipleSelection: true
         ) { result in
             guard case .success(let urls) = result else { return }
-            for url in urls { addContents(of: url) }
+            for url in urls { attachments.addContents(of: url) }
         }
         #if os(iOS) || os(visionOS)
             // Presented from the composer, not from inside the attach menu —
@@ -586,7 +789,7 @@ private struct ComposerView: View {
                 Task {
                     for item in items {
                         if let data = try? await item.loadTransferable(type: Data.self) {
-                            add(data: data, name: nil)
+                            attachments.add(data: data, name: nil)
                         }
                     }
                 }
@@ -608,7 +811,7 @@ private struct ComposerView: View {
                 Button {
                     for image in UIPasteboard.general.images ?? [] {
                         if let data = image.jpegData(compressionQuality: 0.9) {
-                            add(data: data, name: nil)
+                            attachments.add(data: data, name: nil)
                         }
                     }
                 } label: {
@@ -628,63 +831,14 @@ private struct ComposerView: View {
         .help("Attach an image")
     }
 
-    /// One cap for every input path (picker, paste, drop, file importer),
-    /// matching PhotosPicker's maxSelectionCount.
-    private static let maxAttachments = 5
-
-    private func add(data: Data, name: String?) {
-        guard attachments.count < Self.maxAttachments else {
-            attachmentError = "Up to \(Self.maxAttachments) images per message."
-            return
-        }
-        do {
-            attachments.append(
-                try ImageAttachmentPreparer.prepare(data: data, suggestedName: name))
-            attachmentError = nil
-        } catch {
-            attachmentError = error.localizedDescription
-        }
-    }
-
-    /// Reads a picked/dropped file URL under its security scope — sandboxed
-    /// builds only get read access for the duration of that scope.
-    private func addContents(of url: URL) {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else {
-            attachmentError = "Couldn't read \(url.lastPathComponent)."
-            return
-        }
-        add(data: data, name: url.lastPathComponent)
-    }
-
-    /// Shared by drop and (on macOS) ⌘V: prefer the file URL representation
-    /// so the filename survives, and fall back to raw image bytes.
-    private func loadProviders(_ providers: [NSItemProvider]) {
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in addContents(of: url) }
-                }
-            } else {
-                _ = provider.loadDataRepresentation(for: .image) { data, _ in
-                    guard let data else { return }
-                    Task { @MainActor in add(data: data, name: nil) }
-                }
-            }
-        }
-    }
-
     private func send() {
         let message = text
-        let outgoing = attachments
+        let outgoing = attachments.items
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !outgoing.isEmpty
         else { return }
         text = ""
-        attachments = []
-        attachmentError = nil
+        attachments.clear()
         Task {
             // The keyboard can commit pending marked/autocorrect text OVER a
             // synchronous clear, resurrecting the sent message in the field
