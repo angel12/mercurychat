@@ -1,7 +1,9 @@
 import ChatCore
 import MercuryKit
+import PhotosUI
 import QuartzCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The heart of the app: one session's streaming transcript + composer.
 struct ChatView: View {
@@ -483,54 +485,198 @@ private struct ComposerView: View {
     @Bindable var controller: ChatController
     @Binding var text: String
     @FocusState private var focused: Bool
+    @State private var attachments: [PendingAttachment] = []
+    @State private var attachmentError: String?
+    @State private var showingFileImporter = false
+    #if os(iOS) || os(visionOS)
+        @State private var photoSelection: [PhotosPickerItem] = []
+    #endif
+
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachments.isEmpty
+    }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField(
-                controller.store.running ? "Queue a message…" : "Message",
-                text: $text, axis: .vertical
-            )
-            .textFieldStyle(.roundedBorder)
-            .lineLimit(1...6)
-            .focused($focused)
-            .onSubmit(send)
-            #if os(macOS)
-                .onKeyPress(.return, phases: .down) { press in
-                    // ⌘⏎ / plain ⏎ sends; ⇧⏎ inserts a newline.
-                    if press.modifiers.contains(.shift) { return .ignored }
-                    send()
-                    return .handled
-                }
-            #endif
+        VStack(spacing: 6) {
+            if let attachmentError {
+                Text(attachmentError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !attachments.isEmpty {
+                AttachmentTray(attachments: $attachments)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                attachMenu
+                TextField(
+                    controller.store.running ? "Queue a message…" : "Message",
+                    text: $text, axis: .vertical
+                )
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...6)
+                .focused($focused)
+                .onSubmit(send)
+                #if os(macOS)
+                    .onKeyPress(.return, phases: .down) { press in
+                        // ⌘⏎ / plain ⏎ sends; ⇧⏎ inserts a newline.
+                        if press.modifiers.contains(.shift) { return .ignored }
+                        send()
+                        return .handled
+                    }
+                #endif
 
-            if controller.store.running {
-                Button {
-                    Task { await controller.interrupt() }
-                } label: {
-                    Image(systemName: "stop.circle.fill")
+                if controller.store.running {
+                    Button {
+                        Task { await controller.interrupt() }
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut(".", modifiers: .command)
+                    .help("Stop the current turn (⌘.)")
+                }
+
+                Button(action: send) {
+                    Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
                 }
                 .buttonStyle(.borderless)
-                .keyboardShortcut(".", modifiers: .command)
-                .help("Stop the current turn (⌘.)")
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!canSend)
             }
-
-            Button(action: send) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(10)
         .background(.bar)
+        #if os(macOS)
+            .onPasteCommand(of: [.image]) { providers in
+                loadProviders(providers)
+            }
+        #endif
+        // One drop destination, not two: stacked `.dropDestination` modifiers
+        // on the same view register a single delegate, so the second would
+        // shadow the first. `onDrop` takes both content types at once —
+        // Finder/Files deliver file URLs (filename preserved, read under
+        // security scope), other apps deliver raw image Data.
+        .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
+            loadProviders(providers)
+            return !providers.isEmpty
+        }
+        .fileImporter(
+            isPresented: $showingFileImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            for url in urls { addContents(of: url) }
+        }
+        #if os(iOS) || os(visionOS)
+            .onChange(of: photoSelection) { _, items in
+                guard !items.isEmpty else { return }
+                photoSelection = []
+                Task {
+                    for item in items {
+                        if let data = try? await item.loadTransferable(type: Data.self) {
+                            add(data: data, name: nil)
+                        }
+                    }
+                }
+            }
+        #endif
+    }
+
+    @ViewBuilder private var attachMenu: some View {
+        Menu {
+            #if os(iOS) || os(visionOS)
+                // PhotosPicker runs out of process — no usage description needed.
+                PhotosPicker(
+                    selection: $photoSelection, maxSelectionCount: 5,
+                    matching: .images
+                ) {
+                    Label("Photo Library", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    for image in UIPasteboard.general.images ?? [] {
+                        if let data = image.jpegData(compressionQuality: 0.9) {
+                            add(data: data, name: nil)
+                        }
+                    }
+                } label: {
+                    Label("Paste Image", systemImage: "doc.on.clipboard")
+                }
+            #endif
+            Button {
+                showingFileImporter = true
+            } label: {
+                Label("Choose File…", systemImage: "folder")
+            }
+        } label: {
+            Image(systemName: "plus.circle")
+                .font(.title2)
+        }
+        .buttonStyle(.borderless)
+        .help("Attach an image")
+    }
+
+    /// One cap for every input path (picker, paste, drop, file importer),
+    /// matching PhotosPicker's maxSelectionCount.
+    private static let maxAttachments = 5
+
+    private func add(data: Data, name: String?) {
+        guard attachments.count < Self.maxAttachments else {
+            attachmentError = "Up to \(Self.maxAttachments) images per message."
+            return
+        }
+        do {
+            attachments.append(
+                try ImageAttachmentPreparer.prepare(data: data, suggestedName: name))
+            attachmentError = nil
+        } catch {
+            attachmentError = error.localizedDescription
+        }
+    }
+
+    /// Reads a picked/dropped file URL under its security scope — sandboxed
+    /// builds only get read access for the duration of that scope.
+    private func addContents(of url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            attachmentError = "Couldn't read \(url.lastPathComponent)."
+            return
+        }
+        add(data: data, name: url.lastPathComponent)
+    }
+
+    /// Shared by drop and (on macOS) ⌘V: prefer the file URL representation
+    /// so the filename survives, and fall back to raw image bytes.
+    private func loadProviders(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in addContents(of: url) }
+                }
+            } else {
+                _ = provider.loadDataRepresentation(for: .image) { data, _ in
+                    guard let data else { return }
+                    Task { @MainActor in add(data: data, name: nil) }
+                }
+            }
+        }
     }
 
     private func send() {
         let message = text
-        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let outgoing = attachments
+        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !outgoing.isEmpty
+        else { return }
         text = ""
+        attachments = []
+        attachmentError = nil
         Task {
             // The keyboard can commit pending marked/autocorrect text OVER a
             // synchronous clear, resurrecting the sent message in the field
@@ -539,8 +685,64 @@ private struct ComposerView: View {
             // message is never wiped.
             await Task.yield()
             if text == message { text = "" }
-            await controller.submit(message)
+            await controller.submit(message, attachments: outgoing)
         }
+    }
+}
+
+/// Horizontal strip of staged attachments with per-item remove.
+private struct AttachmentTray: View {
+    @Binding var attachments: [PendingAttachment]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { attachment in
+                    ZStack(alignment: .topTrailing) {
+                        AttachmentThumbnail(data: attachment.thumbnail ?? attachment.data)
+                            .frame(width: 64, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(.quaternary))
+                        Button {
+                            attachments.removeAll { $0.id == attachment.id }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, .black.opacity(0.6))
+                        }
+                        .buttonStyle(.borderless)
+                        .padding(2)
+                        .accessibilityLabel("Remove \(attachment.filename)")
+                    }
+                }
+            }
+        }
+        .frame(height: 68)
+    }
+}
+
+/// Renders encoded image bytes; falls back to an icon when undecodable.
+struct AttachmentThumbnail: View {
+    let data: Data
+
+    var body: some View {
+        #if os(macOS)
+            if let image = NSImage(data: data) {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else { fallback }
+        #else
+            if let image = UIImage(data: data) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else { fallback }
+        #endif
+    }
+
+    private var fallback: some View {
+        Image(systemName: "photo")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.quaternary)
     }
 }
 
