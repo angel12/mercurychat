@@ -48,7 +48,11 @@ public enum AttachmentMarkers {
 
     /// Persistence only ever APPENDS refs, so strip exactly the trailing
     /// run of ref lines — a ref-shaped line mid-message is the user's own
-    /// text. Refs are restored to top-to-bottom attach order.
+    /// text. Refs are restored to top-to-bottom attach order. Known,
+    /// unfixable-client-side edge: if the user's own final caption line is
+    /// itself ref-shaped AND images were attached, this trailing-run strip
+    /// consumes the user's line too — the parser has no way to know where
+    /// the server-appended run actually begins.
     private static func stripTrailingRefs(
         from text: String
     ) -> (text: String, attachments: [MessageAttachment]) {

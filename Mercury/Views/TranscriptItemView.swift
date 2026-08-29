@@ -38,26 +38,29 @@ private struct UserBubble: View {
             Spacer(minLength: 48)
             VStack(alignment: .trailing, spacing: 4) {
                 if !message.attachments.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(message.attachments) { attachment in
-                            if let previewData = attachment.previewData {
-                                AttachmentThumbnail(data: previewData)
-                                    .frame(width: 120, height: 120)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .strokeBorder(.quaternary))
-                            } else {
-                                // Hydrated rows carry no bytes — a compact chip.
-                                Label(attachment.filename, systemImage: "photo")
-                                    .font(.caption)
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 5)
-                                    .background(.quaternary, in: Capsule())
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(message.attachments) { attachment in
+                                if let previewData = attachment.previewData {
+                                    AttachmentThumbnail(data: previewData)
+                                        .frame(width: 120, height: 120)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .strokeBorder(.quaternary))
+                                } else {
+                                    // Hydrated rows carry no bytes — a compact chip.
+                                    Label(attachment.filename, systemImage: "photo")
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 5)
+                                        .background(.quaternary, in: Capsule())
+                                }
                             }
                         }
                     }
+                    .frame(height: 124)
                 }
                 if !message.text.isEmpty {
                     Text(message.text)
