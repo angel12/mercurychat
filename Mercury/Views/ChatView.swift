@@ -588,22 +588,22 @@ private struct ComposerView: View {
                         send()
                         return .handled
                     }
-                    // ⌘V has to be caught HERE, on the field (#4). Focus lives
-                    // in the text field, whose AppKit field editor consumes the
-                    // paste — image content is a silent no-op there and the
-                    // container's `.onPasteCommand` never fires at all.
-                    // Filtered to "v" on purpose: an unfiltered `onKeyPress`
-                    // sits in front of every keystroke, including IME marked
-                    // text.
-                    .onKeyPress(keys: ["v"], phases: .down) { press in
-                        guard press.modifiers.contains(.command),
-                            !press.modifiers.contains(.option),
-                            !press.modifiers.contains(.control)
-                        else { return .ignored }
-                        // `.ignored` when the pasteboard held no image, so a
-                        // normal TEXT paste proceeds untouched.
-                        return attachments.pasteImages() ? .handled : .ignored
-                    }
+                    // ⌘V is a MENU key equivalent (#4): AppKit offers it to
+                    // Edit ▸ Paste in `NSApp.sendEvent` before the key event
+                    // ever reaches the responder chain, so `.onKeyPress` is
+                    // too late. A Finder ⌘C carries the filename as
+                    // `public.utf8-plain-text`, which makes the field editor
+                    // a valid `paste:` target — the menu fires, the filename
+                    // is inserted, and the reader never runs. (A screenshot
+                    // carries no text, the menu item validates disabled, and
+                    // `.onKeyPress` used to see the event — which is why only
+                    // the FILE case broke.) `performKeyEquivalent` on a view
+                    // in the key window's hierarchy runs BEFORE the menu, so
+                    // the catcher gets first refusal; it declines whenever
+                    // the pasteboard held no image and the normal text paste
+                    // proceeds untouched.
+                    .background(
+                        PasteKeyCatcher(isActive: focused) { attachments.pasteImages() })
                 #endif
 
                 if controller.store.running {
@@ -632,8 +632,8 @@ private struct ComposerView: View {
         #if os(macOS)
             // Secondary path only: this fires for Edit ▸ Paste when focus is
             // NOT in the message field (e.g. on the send button). The common
-            // case — focus in the field — is handled by the ⌘V `onKeyPress`
-            // above, which this never sees.
+            // case — focus in the field — is handled by `PasteKeyCatcher`
+            // above, which consumes the key equivalent before the menu.
             .onPasteCommand(of: [.image]) { providers in
                 attachments.loadProviders(providers)
             }
@@ -780,6 +780,54 @@ private struct ComposerView: View {
         }
     }
 }
+
+#if os(macOS)
+    /// Gives the composer first refusal on ⌘V, ahead of Edit ▸ Paste.
+    ///
+    /// `NSWindow` offers a key equivalent to its content view hierarchy
+    /// before the main menu sees it, so an otherwise invisible view in the
+    /// composer's background is the only place a SwiftUI `TextField` can beat
+    /// its own field editor to the paste. Scoped to the window (unlike an
+    /// `NSEvent` local monitor, which is app-wide) and gated on focus, so a
+    /// ⌘V anywhere else in Mercury is untouched. Out of the IME marked-text
+    /// path the old `onKeyPress` comment worried about: only a
+    /// command-modified key equivalent ever reaches it.
+    private struct PasteKeyCatcher: NSViewRepresentable {
+        /// Only while the message field holds focus — otherwise the paste
+        /// belongs to whatever else is first responder, and Edit ▸ Paste
+        /// still reaches the composer's `.onPasteCommand`.
+        var isActive: Bool
+        /// True when the paste was consumed as an attachment.
+        var handlePaste: @MainActor () -> Bool
+
+        final class View: NSView {
+            var isActive = false
+            var handlePaste: (@MainActor () -> Bool)?
+
+            override func performKeyEquivalent(with event: NSEvent) -> Bool {
+                guard isActive,
+                    event.modifierFlags.contains(.command),
+                    !event.modifierFlags.contains(.option),
+                    !event.modifierFlags.contains(.control),
+                    event.charactersIgnoringModifiers == "v"
+                else { return false }
+                return handlePaste?() ?? false
+            }
+        }
+
+        func makeNSView(context: Context) -> View {
+            let view = View()
+            view.isActive = isActive
+            view.handlePaste = handlePaste
+            return view
+        }
+
+        func updateNSView(_ view: View, context: Context) {
+            view.isActive = isActive
+            view.handlePaste = handlePaste
+        }
+    }
+#endif
 
 /// Horizontal strip of staged attachments with per-item remove.
 private struct AttachmentTray: View {
