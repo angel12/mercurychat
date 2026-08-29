@@ -984,6 +984,25 @@ struct TranscriptHydrationTests {
         #expect(userRows.count == 2)
     }
 
+    @Test func hydrationKeepsAnEchoWhoseAttachmentCountDiffers() {
+        let store = TranscriptStore()
+        // A live echo carrying an image the server hasn't persisted yet…
+        store.appendUserMessage(
+            "look",
+            attachments: [
+                MessageAttachment(
+                    id: "att-1", kind: .image, filename: "shot.png",
+                    previewData: Data([0x01]))
+            ],
+            state: .sending)
+        // …and an EARLIER persisted text-only row with the same caption. The
+        // attachment count is what tells them apart ("u:look#0" vs
+        // "u:look#1"); a text-only key would drop the echo and its image.
+        store.hydrate(rows(#"[{"role": "user", "id": 10, "content": "look"}]"#))
+        let userRows = store.items.filter { if case .user = $0 { true } else { false } }
+        #expect(userRows.count == 2)
+    }
+
     @Test func hydrationRendersTwoImageOnlyRows() {
         // Two DIFFERENT image-only messages share the dedupe key ("u:#1") —
         // that key only filters the live suffix, so both hydrated rows must
