@@ -213,8 +213,10 @@ final class ComposerAttachments {
     }
 
     #if os(macOS)
-        /// ⌘V handler (#4). Returns true only when at least one attachment was
-        /// staged, so a plain text paste is never swallowed.
+        /// ⌘V handler (#4). Returns true when the pasteboard held image
+        /// content — even at cap or on a read failure, since falling through
+        /// to a text paste would insert the file's path — and false for a
+        /// plain text paste, which is never swallowed.
         @discardableResult
         func pasteImages(from pasteboard: NSPasteboard = .general) -> Bool {
             let contents = ImagePasteboardReader.read(pasteboard)
