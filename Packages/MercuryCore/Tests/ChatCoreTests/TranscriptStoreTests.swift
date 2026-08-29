@@ -336,6 +336,20 @@ struct TranscriptStoreTests {
         #expect(done.summary == "found 3 endpoints")
         #expect(done.durationSeconds == 8.5)
     }
+
+    @Test func echoCarriesAttachments() {
+        let store = TranscriptStore()
+        let attachment = MessageAttachment(
+            id: "att-1", kind: .image, filename: "photo.jpg",
+            previewData: Data([0xFF, 0xD8]))
+        store.appendUserMessage("look at this", attachments: [attachment], state: .sending)
+        guard case .user(let message) = store.items.last else {
+            Issue.record("expected user echo")
+            return
+        }
+        #expect(message.attachments == [attachment])
+        #expect(message.sendState == .sending)
+    }
 }
 
 @MainActor
@@ -939,6 +953,162 @@ struct TranscriptHydrationTests {
             rows(
                 #"[{"id": 1, "role": "assistant", "content": "x", "display_kind": "hidden"}]"#))
         #expect(store.items.isEmpty)
+    }
+
+    @Test func hydrationTurnsImageRefRowsIntoAttachmentChips() {
+        let store = TranscriptStore()
+        let row = TranscriptMessage(
+            json: json(
+                #"{"role": "user", "id": 7, "content": "what is this?\n@image:/tmp/photo.jpg"}"#
+            ))!
+        store.hydrate([row])
+        guard case .user(let message) = store.items.first else {
+            Issue.record("expected hydrated user row")
+            return
+        }
+        #expect(message.text == "what is this?")
+        #expect(message.attachments.map(\.filename) == ["photo.jpg"])
+    }
+
+    @Test func hydrationStripsFlattenedNativeVisionProjection() {
+        // The REST projection flattens a native-vision row's parts list into
+        // one string: caption, `@image:` refs, then a literal [screenshot]
+        // placeholder per image part. None of it may reach the bubble.
+        let store = TranscriptStore()
+        let row = TranscriptMessage(
+            json: json(
+                #"{"role": "user", "id": 7, "content": "what is this?\n@image:/tmp/upload_1.jpg\n[screenshot]"}"#
+            ))!
+        store.hydrate([row])
+        guard case .user(let message) = store.items.first else {
+            Issue.record("expected hydrated user row")
+            return
+        }
+        #expect(message.text == "what is this?")
+        #expect(message.attachments.map(\.filename) == ["upload_1.jpg"])
+    }
+
+    @Test func hydrationKeepsADifferentImageOnlyEcho() {
+        let store = TranscriptStore()
+        // A persisted image-only message…
+        let row = TranscriptMessage(
+            json: json(
+                #"{"role": "user", "id": 8, "content": "@image:/tmp/a.png"}"#
+            ))!
+        // …and a live text echo must not be mistaken for it.
+        store.appendUserMessage("hello", state: .sending)
+        store.hydrate([row])
+        let userRows = store.items.filter { if case .user = $0 { true } else { false } }
+        #expect(userRows.count == 2)
+    }
+
+    @Test func hydrationKeepsAnEchoWhoseAttachmentCountDiffers() {
+        let store = TranscriptStore()
+        // A live echo carrying an image the server hasn't persisted yet…
+        store.appendUserMessage(
+            "look",
+            attachments: [
+                MessageAttachment(
+                    id: "att-1", kind: .image, filename: "shot.png",
+                    previewData: Data([0x01]))
+            ],
+            state: .sending)
+        // …and an EARLIER persisted text-only row with the same caption. The
+        // attachment count is what tells them apart ("u:look#0" vs
+        // "u:look#1"); a text-only key would drop the echo and its image.
+        store.hydrate(rows(#"[{"role": "user", "id": 10, "content": "look"}]"#))
+        let userRows = store.items.filter { if case .user = $0 { true } else { false } }
+        #expect(userRows.count == 2)
+    }
+
+    @Test func hydrationRendersTwoImageOnlyRows() {
+        // Two DIFFERENT image-only messages share the dedupe key ("u:#1") —
+        // that key only filters the live suffix, so both hydrated rows must
+        // still render. (Known residual: a live UNPERSISTED image-only echo
+        // is dropped when any hydrated image-only row with the same
+        // attachment count exists — a narrow mid-send-reconnect race we
+        // accept; losing the echo beats duplicating a persisted row, and
+        // filenames can't disambiguate because native-vision rows hydrate
+        // as "Image".)
+        let store = TranscriptStore()
+        let rows = [
+            TranscriptMessage(
+                json: json(#"{"role": "user", "id": 8, "content": "@image:/tmp/a.png"}"#))!,
+            TranscriptMessage(
+                json: json(#"{"role": "user", "id": 9, "content": "@image:/tmp/b.png"}"#))!,
+        ]
+        store.hydrate(rows)
+        let filenames = store.items.compactMap { item -> String? in
+            if case .user(let m) = item { return m.attachments.first?.filename }
+            return nil
+        }
+        #expect(filenames == ["a.png", "b.png"])
+    }
+
+    @Test func hydrationConsumesOnlyAsManyEchoesAsPersistedRows() {
+        let store = TranscriptStore()
+        let attachment = MessageAttachment(
+            id: "att-1", kind: .image, filename: "a.png", previewData: Data([0x01]))
+        // Two captionless one-image sends: the first persisted, the second
+        // still in flight when the reconnect hydration lands.
+        store.appendUserMessage("", attachments: [attachment], state: .sent)
+        store.appendUserMessage("", attachments: [attachment], state: .sending)
+        let row = TranscriptMessage(
+            json: json(#"{"role": "user", "id": 20, "content": "@image:/tmp/a.png"}"#))!
+        store.hydrate([row])
+        let userRows = store.items.compactMap { item -> UserMessage? in
+            if case .user(let m) = item { return m }
+            return nil
+        }
+        // One hydrated row consumes ONE echo; the in-flight send survives
+        // with its retry affordance intact.
+        #expect(userRows.count == 2)
+        #expect(userRows.contains { $0.sendState == .sending })
+    }
+
+    @Test func hydrationConsumesSentEchoBeforeFailedOne() {
+        let store = TranscriptStore()
+        let attachment = MessageAttachment(
+            id: "att-1", kind: .image, filename: "a.png", previewData: Data([0x01]))
+        // First identical send FAILED, second succeeded and persisted.
+        store.appendUserMessage("", attachments: [attachment], state: .failed)
+        store.appendUserMessage("", attachments: [attachment], state: .sent)
+        let row = TranscriptMessage(
+            json: json(#"{"role": "user", "id": 30, "content": "@image:/tmp/a.png"}"#))!
+        store.hydrate([row])
+        let userRows = store.items.compactMap { item -> UserMessage? in
+            if case .user(let m) = item { return m }
+            return nil
+        }
+        // The persisted row replaces the SENT echo; the failed echo keeps
+        // its retry control.
+        #expect(userRows.count == 2)
+        #expect(userRows.contains { $0.sendState == .failed })
+    }
+
+    @Test func hydrationConsumesSendingEchoBeforeFailedOne() {
+        let store = TranscriptStore()
+        let attachment = MessageAttachment(
+            id: "att-1", kind: .image, filename: "a.png", previewData: Data([0x01]))
+        // An OLD failed send the user has not retried away, then an identical
+        // resend still in flight. The server persisted the resend before its
+        // submit RPC returned, so the single hydrated row belongs to the
+        // `.sending` echo — not to the older failure sitting above it.
+        store.appendUserMessage("", attachments: [attachment], state: .failed)
+        store.appendUserMessage("", attachments: [attachment], state: .sending)
+        let row = TranscriptMessage(
+            json: json(#"{"role": "user", "id": 40, "content": "@image:/tmp/a.png"}"#))!
+        store.hydrate([row])
+        let userRows = store.items.compactMap { item -> UserMessage? in
+            if case .user(let m) = item { return m }
+            return nil
+        }
+        // Oldest-first within one `.sending`/`.failed` class would consume the
+        // FAILED echo here, dropping its retry control and leaving the live
+        // echo to settle into a duplicate of the row it already matches.
+        #expect(userRows.count == 2)
+        #expect(userRows.contains { $0.sendState == .failed })
+        #expect(!userRows.contains { $0.sendState == .sending })
     }
 }
 

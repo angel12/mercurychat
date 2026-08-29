@@ -66,6 +66,17 @@ final class ChatController: Identifiable {
     private var replayBuffer: [GatewayEvent] = []
     private var isReplaying = false
 
+    /// Attachments for echoes still in flight or failed, keyed by echo id, so
+    /// a retry re-uploads the same bytes. The failure path always detaches
+    /// staged images server-side, so re-attaching on retry never doubles up.
+    private var pendingUploads: [String: [PendingAttachment]] = [:]
+
+    /// Serializes sends. `dispatch` suspends across attach RPCs, and the
+    /// server drains ALL staged images into whichever prompt.submit lands
+    /// first — an interleaved second send (even text-only) would steal the
+    /// first send's attachments. Each dispatch awaits the previous one.
+    private var sendQueue: Task<Void, Never>?
+
     init(connection: HermesConnection, profile: String?) {
         self.connection = connection
         self.profile = profile
@@ -545,15 +556,22 @@ final class ChatController: Identifiable {
 
     // MARK: Actions
 
-    func submit(_ text: String) async {
+    func submit(_ text: String, attachments: [PendingAttachment] = []) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let echoID = store.appendUserMessage(trimmed, state: .sending)
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        let echoed = attachments.map {
+            MessageAttachment(
+                id: $0.id, kind: $0.kind, filename: $0.filename,
+                previewData: $0.thumbnail ?? $0.data)
+        }
+        let echoID = store.appendUserMessage(trimmed, attachments: echoed, state: .sending)
+        if !attachments.isEmpty { pendingUploads[echoID] = attachments }
         await dispatch(text: trimmed, echoID: echoID)
     }
 
     /// Re-send a failed echo, keeping its identity (the retry updates the
-    /// same bubble rather than appending a twin).
+    /// same bubble rather than appending a twin). Its attachments stay in
+    /// `pendingUploads` until a send succeeds, so the retry re-stages them.
     func retrySend(messageID: String) async {
         guard case .user(let message)? = store.items.first(where: { $0.id == messageID }),
             message.sendState == .failed
@@ -563,17 +581,58 @@ final class ChatController: Identifiable {
     }
 
     private func dispatch(text: String, echoID: String) async {
+        let previous = sendQueue
+        let task = Task { [previous] in
+            await previous?.value
+            await self.performDispatch(text: text, echoID: echoID)
+        }
+        sendQueue = task
+        await task.value
+    }
+
+    private func performDispatch(text: String, echoID: String) async {
         guard let runtimeID else {
             store.setUserMessageState(id: echoID, .failed)
             return
         }
+        let attachments = pendingUploads[echoID] ?? []
         do {
             // Submitting while busy doesn't error: the server queues,
             // redirects, or steers per its busy-input policy and says which
             // in the result — surface that, or "/steer worked but nothing
-            // acknowledged it" (#6).
-            let status = try await connection.submitPrompt(
-                sessionID: runtimeID, text: text)
+            // acknowledged it" (#6). Attachments are staged first and consumed
+            // by the submit; any failure detaches them (an orphaned staged
+            // image is silently swallowed by the NEXT prompt).
+            let status = try await AttachmentUpload.dispatch(
+                text: text,
+                attachments: attachments,
+                // @Sendable: the sequencer is nonisolated, so these closures
+                // leave the MainActor — they touch nothing but the connection
+                // actor and the values captured here.
+                attach: { @Sendable [connection] attachment in
+                    try await connection.attachImageBytes(
+                        sessionID: runtimeID,
+                        base64: attachment.data.base64EncodedString(),
+                        filename: attachment.filename
+                    ).path
+                },
+                // Cleanup must outlive cancellation: a cancelled send still
+                // has to unstage what it staged, and an inherited-cancellation
+                // detach would no-op and leak the image into the next prompt.
+                // The shield is an unstructured `Task` (NOT detached): it
+                // doesn't inherit the caller's cancellation, so a cancelled
+                // send still completes the detach. Detached isn't needed for
+                // that and would only leave the actor context. Awaiting its
+                // value keeps the sequencer's ordering.
+                detach: { @Sendable [connection] path in
+                    await Task {
+                        try? await connection.detachImage(sessionID: runtimeID, path: path)
+                    }.value
+                },
+                submit: { @Sendable [connection] text in
+                    try await connection.submitPrompt(sessionID: runtimeID, text: text)
+                })
+            pendingUploads.removeValue(forKey: echoID)
             // The DB row exists after the first prompt; a created session
             // learns its stored id via session.info events.
             store.setUserMessageState(id: echoID, status == "queued" ? .queued : .sent)

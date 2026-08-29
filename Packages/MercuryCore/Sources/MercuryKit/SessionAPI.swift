@@ -13,6 +13,19 @@ public enum SessionCloseOutcome: Sendable, Equatable {
     case failed(String)
 }
 
+/// Result of `image.attach_bytes`: where the gateway staged the image.
+public struct ImageAttachment: Sendable, Equatable {
+    /// Gateway-side staging path — the `image.detach` key.
+    public var path: String
+    /// How many images are now staged on the session.
+    public var count: Int?
+
+    public init(path: String, count: Int? = nil) {
+        self.path = path
+        self.count = count
+    }
+}
+
 /// Typed wrappers over the gateway RPC methods the app uses.
 extension HermesConnection {
     /// Column count reported to the backend; matches the desktop client.
@@ -100,6 +113,38 @@ extension HermesConnection {
         // Desktop uses a 30-minute timeout here.
         let result = try await request("prompt.submit", params: .object(params), timeout: 1800)
         return result["status"]?.stringValue
+    }
+
+    // MARK: Attachments
+
+    /// `image.attach_bytes` — stage an image into session state; the NEXT
+    /// `prompt.submit` consumes everything staged. `path` is the gateway-side
+    /// staging path and the `image.detach` key. Base64 payloads can be tens of
+    /// MB, hence the long timeout. Never log the payload.
+    public func attachImageBytes(
+        sessionID: String, base64: String, filename: String? = nil
+    ) async throws -> ImageAttachment {
+        var params: [String: JSONValue] = [
+            "session_id": .string(sessionID),
+            "content_base64": .string(base64),
+        ]
+        if let filename, !filename.isEmpty { params["filename"] = .string(filename) }
+        let result = try await request(
+            "image.attach_bytes", params: .object(params), timeout: 300)
+        guard result["attached"]?.truthy == true,
+            let path = result["path"]?.stringValue
+        else {
+            throw HermesError.malformedResponse("image.attach_bytes did not confirm attachment")
+        }
+        return ImageAttachment(path: path, count: result["count"]?.intValue)
+    }
+
+    /// `image.detach` — unstage one attached image. Called on failed sends so
+    /// an orphaned staged image isn't silently consumed by the next prompt.
+    public func detachImage(sessionID: String, path: String) async throws {
+        _ = try await request(
+            "image.detach",
+            params: ["session_id": .string(sessionID), "path": .string(path)])
     }
 
     /// Cancel the in-flight turn (used on barge-in while still generating).

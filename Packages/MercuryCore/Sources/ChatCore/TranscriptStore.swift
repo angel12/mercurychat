@@ -92,11 +92,26 @@ public final class TranscriptStore {
         }
 
         // Drop live items whose rows are now persisted (best-effort: live
-        // items have no row id, so match user messages by text and sealed
+        // items have no row id, so match user messages by text plus
+        // attachment count — image-only sends have empty text, and matching
+        // on text alone would collide every one of them — and sealed
         // assistant bubbles by text).
+        //
+        // User keys are a MULTISET, not a set: captionless one-image sends
+        // all share the key "u:#1", so a plain set would let ONE hydrated row
+        // swallow EVERY matching live echo — including a still-`.sending`
+        // second send, which would then vanish with no bubble and no retry
+        // affordance if its upload later failed. Counting instead makes the
+        // reconciliation one-to-one: N hydrated rows consume at most N
+        // matching echoes (oldest-first, since the filter runs in order) and
+        // any extra live echo survives — see `droppedUserIndices` below for
+        // WHICH echo a row consumes.
+        var hydratedUserKeys: [String: Int] = [:]
         let hydratedTexts = Set(hydrated.compactMap { item -> String? in
             switch item {
-            case .user(let m): return "u:" + m.text
+            case .user(let m):
+                hydratedUserKeys["u:" + m.text + "#\(m.attachments.count)", default: 0] += 1
+                return nil
             case .assistant(let m): return "a:" + m.text
             default: return nil
             }
@@ -122,10 +137,47 @@ public final class TranscriptStore {
                 if case .tool(let t) = item { return t.toolID }
                 return nil
             })
-        let survivors = liveSuffix.filter { item in
+        // Which echo a persisted row consumes is decided by SEND STATE, not
+        // arrival order. Consuming oldest-first killed the retry control of a
+        // FAILED send whenever an identical resend succeeded: the single
+        // hydrated row swallowed the `.failed` echo and the `.sent` one
+        // survived as a duplicate of the row itself.
+        //
+        // Each state gets its OWN pass, weakest claim last, because pairing
+        // `.sending` with `.failed` reintroduced the same bug one rung down:
+        // an old un-retried failure sitting above a live resend consumed the
+        // row that the resend had already persisted, so the failure lost its
+        // retry control and the live echo settled into a duplicate. Ranking
+        // is an exhaustive switch so a new case has to declare its claim
+        // rather than defaulting into someone else's class.
+        func hydrationClaimRank(_ state: UserMessage.SendState) -> Int {
+            switch state {
+            // Settled: a persisted row is what these BECAME.
+            case .sent, .queued: return 0
+            // In flight: the server may already have persisted it.
+            case .sending: return 1
+            // Never reached the server, so it claims a row only if nothing
+            // else can — and keeps its retry affordance when it doesn't.
+            case .failed: return 2
+            }
+        }
+        var droppedUserIndices: Set<Int> = []
+        // Within one rank, consumption stays oldest-first.
+        for rank in 0...2 {
+            for (index, item) in liveSuffix.enumerated() {
+                guard case .user(let m) = item, hydrationClaimRank(m.sendState) == rank
+                else { continue }
+                let key = "u:" + m.text + "#\(m.attachments.count)"
+                guard let remaining = hydratedUserKeys[key], remaining > 0 else { continue }
+                hydratedUserKeys[key] = remaining - 1
+                droppedUserIndices.insert(index)
+            }
+        }
+
+        let survivors = liveSuffix.enumerated().filter { index, item in
             switch item {
-            case .user(let m):
-                return !hydratedTexts.contains("u:" + m.text)
+            case .user:
+                return !droppedUserIndices.contains(index)
             case .assistant(let m) where m.isStreaming:
                 if let final = latestHydratedReply, final.hasPrefix(m.text) {
                     return false
@@ -148,7 +200,7 @@ public final class TranscriptStore {
             case .notice:
                 return true
             }
-        }
+        }.map(\.element)
 
         items = hydrated + survivors
         hydratedCount = hydrated.count
@@ -174,10 +226,12 @@ public final class TranscriptStore {
         if message.displayKind == "hidden" { return nil }
         switch message.role {
         case "user":
-            guard !message.text.isEmpty else { return nil }
+            let parsed = AttachmentMarkers.parse(
+                text: message.text, rawContent: message.raw["content"])
+            guard !parsed.text.isEmpty || !parsed.attachments.isEmpty else { return nil }
             return .user(
                 UserMessage(
-                    id: message.id, text: message.text,
+                    id: message.id, text: parsed.text, attachments: parsed.attachments,
                     rowID: message.rowID, timestamp: message.timestamp))
         case "assistant":
             guard !message.text.isEmpty || !(message.reasoning ?? "").isEmpty else {
@@ -417,11 +471,15 @@ public final class TranscriptStore {
 
     @discardableResult
     public func appendUserMessage(
-        _ text: String, state: UserMessage.SendState = .sent
+        _ text: String, attachments: [MessageAttachment] = [],
+        state: UserMessage.SendState = .sent
     ) -> String {
         let id = nextLiveID("user")
         items.append(
-            .user(UserMessage(id: id, text: text, sendState: state, timestamp: Date())))
+            .user(
+                UserMessage(
+                    id: id, text: text, attachments: attachments, sendState: state,
+                    timestamp: Date())))
         lastError = nil
         userEchoCounter += 1
         return id

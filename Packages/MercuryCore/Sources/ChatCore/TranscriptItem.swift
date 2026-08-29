@@ -35,17 +35,23 @@ public struct UserMessage: Sendable, Equatable, Identifiable {
 
     public var id: String
     public var text: String
+    /// Files sent with this message. Hydrated rows carry byte-less chips
+    /// recovered from the persisted `@image:` refs — the backend doesn't
+    /// round-trip attachment bytes.
+    public var attachments: [MessageAttachment]
     public var sendState: SendState
     /// Durable backend `messages.id` once persisted (hydration dedupe key).
     public var rowID: Int?
     public var timestamp: Date?
 
     public init(
-        id: String, text: String, sendState: SendState = .sent,
+        id: String, text: String, attachments: [MessageAttachment] = [],
+        sendState: SendState = .sent,
         rowID: Int? = nil, timestamp: Date? = nil
     ) {
         self.id = id
         self.text = text
+        self.attachments = attachments
         self.sendState = sendState
         self.rowID = rowID
         self.timestamp = timestamp

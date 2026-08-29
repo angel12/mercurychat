@@ -18,6 +18,9 @@ targets:
     sources:
       - path: Mercury/AppModel.swift
       - path: Mercury/ChatController.swift
+      - path: Mercury/ComposerAttachments.swift
+      - path: Mercury/ImageAttachmentPreparer.swift
+      - path: Mercury/ImagePasteboardReader.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryCore
@@ -88,3 +91,6 @@ targets:
         # com.apple.security.* keys are macOS App Sandbox entitlements —
         # iOS/visionOS ignore them, so the file is safely shared.)
         com.apple.security.network.server: true
+        # Sandboxed fileImporter on macOS returns security-scoped URLs
+        # only with this; iOS/visionOS ignore it.
+        com.apple.security.files.user-selected.read-only: true

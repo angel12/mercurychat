@@ -1,7 +1,9 @@
 import ChatCore
 import MercuryKit
+import PhotosUI
 import QuartzCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The heart of the app: one session's streaming transcript + composer.
 struct ChatView: View {
@@ -90,12 +92,31 @@ private struct ChatContentView: View {
     /// writes (bottom distance changes on every scrolled point) invalidated
     /// the whole transcript body 120×/s, which showed up as app-wide lag.
     @State private var scroll = TranscriptScrollState()
+    /// Staged attachments live one level ABOVE the composer so the whole chat
+    /// surface — transcript included — can be a drop target (#3). The composer
+    /// still owns every other interaction with them.
+    @State private var attachments = ComposerAttachments()
+    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
             transcript
             promptCards
-            ComposerView(controller: controller, text: $composerText)
+            ComposerView(
+                controller: controller, text: $composerText, attachments: attachments)
+        }
+        .overlay { dropTarget }
+        .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
+        // The drop destination sits on the WHOLE chat surface, not just the
+        // composer strip: dropping an image anywhere in the window attaches it.
+        // Finder/Files deliver file URLs (filename preserved, read under
+        // security scope), other apps deliver raw image Data — `onDrop` takes
+        // both content types at once. One destination, not two: stacked
+        // `.dropDestination` modifiers on the same view register a single
+        // delegate, so the second would shadow the first.
+        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
+            attachments.loadProviders(providers)
+            return !providers.isEmpty
         }
         .navigationTitle(controller.store.title ?? "Session")
         #if !os(macOS)
@@ -425,6 +446,41 @@ private struct ChatContentView: View {
         }
     }
 
+    /// Hover affordance for an in-flight image drag.
+    ///
+    /// It earns its keep twice. Besides saying where to let go, it is
+    /// HIT-TESTABLE and covers the message field, so once a drag has entered
+    /// any non-field pixel of the window the field editor never sees the drop
+    /// — without it, AppKit's built-in NSTextField file-URL handling wins
+    /// inside the field's bounds and inserts the file PATH as plain text.
+    ///
+    /// RESIDUAL (macOS, accepted): a drag that enters the window *directly*
+    /// over the message field drops into the field editor before this overlay
+    /// can appear, and still inserts the path as text. AppKit's dragging
+    /// destination on the field editor is not reachable from SwiftUI; closing
+    /// that hole needs an NSViewRepresentable text view.
+    @ViewBuilder
+    private var dropTarget: some View {
+        if isDropTargeted {
+            ZStack {
+                Rectangle()
+                    .fill(.background.opacity(0.7))
+                Label("Drop images to attach", systemImage: "photo.badge.plus")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(
+                        .tint, style: StrokeStyle(lineWidth: 2, dash: [8, 6])
+                    )
+                    .padding(8)
+            )
+            .transition(.opacity)
+            .accessibilityLabel("Drop images to attach")
+        }
+    }
+
     @ToolbarContentBuilder
     private var headerChips: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
@@ -479,58 +535,239 @@ private struct ChatContentView: View {
 
 // MARK: - Composer
 
+// ComposerAttachments lives in Mercury/ComposerAttachments.swift and
+// ImagePasteboardReader in Mercury/ImagePasteboardReader.swift (both kept out
+// of ChatView.swift so MercuryTests can compile them without SwiftUI).
+
 private struct ComposerView: View {
     @Bindable var controller: ChatController
     @Binding var text: String
+    /// Owned by `ChatContentView` so window-wide drops can reach it (#3).
+    @Bindable var attachments: ComposerAttachments
     @FocusState private var focused: Bool
+    @State private var showingFileImporter = false
+    #if os(iOS) || os(visionOS)
+        @State private var photoSelection: [PhotosPickerItem] = []
+        @State private var showingPhotoPicker = false
+    #endif
+
+    /// Preparation is asynchronous (#2), so Send has to WAIT for it: sending
+    /// mid-preparation submitted the caption alone and left the image in the
+    /// tray for the next message. The button showing disabled for the
+    /// fraction of a second an encode takes is the intended behaviour.
+    private var canSend: Bool {
+        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachments.items.isEmpty) && !attachments.isBusyPreparing
+    }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField(
-                controller.store.running ? "Queue a message…" : "Message",
-                text: $text, axis: .vertical
-            )
-            .textFieldStyle(.roundedBorder)
-            .lineLimit(1...6)
-            .focused($focused)
-            .onSubmit(send)
-            #if os(macOS)
-                .onKeyPress(.return, phases: .down) { press in
-                    // ⌘⏎ / plain ⏎ sends; ⇧⏎ inserts a newline.
-                    if press.modifiers.contains(.shift) { return .ignored }
-                    send()
-                    return .handled
-                }
-            #endif
+        VStack(spacing: 6) {
+            if let attachmentError = attachments.error {
+                Text(attachmentError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !attachments.items.isEmpty {
+                AttachmentTray(attachments: $attachments.items)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                attachMenu
+                TextField(
+                    controller.store.running ? "Queue a message…" : "Message",
+                    text: $text, axis: .vertical
+                )
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...6)
+                .focused($focused)
+                .onSubmit(send)
+                #if os(macOS)
+                    .onKeyPress(.return, phases: .down) { press in
+                        // ⌘⏎ / plain ⏎ sends; ⇧⏎ inserts a newline.
+                        if press.modifiers.contains(.shift) { return .ignored }
+                        send()
+                        return .handled
+                    }
+                    // ⌘V is a MENU key equivalent (#4): AppKit offers it to
+                    // Edit ▸ Paste in `NSApp.sendEvent` before the key event
+                    // ever reaches the responder chain, so `.onKeyPress` is
+                    // too late. A Finder ⌘C carries the filename as
+                    // `public.utf8-plain-text`, which makes the field editor
+                    // a valid `paste:` target — the menu fires, the filename
+                    // is inserted, and the reader never runs. (A screenshot
+                    // carries no text, the menu item validates disabled, and
+                    // `.onKeyPress` used to see the event — which is why only
+                    // the FILE case broke.) `performKeyEquivalent` on a view
+                    // in the key window's hierarchy runs BEFORE the menu, so
+                    // the catcher gets first refusal; it declines whenever
+                    // the pasteboard held no image and the normal text paste
+                    // proceeds untouched.
+                    .background(
+                        PasteKeyCatcher(isActive: focused) { attachments.pasteImages() })
+                #endif
 
-            if controller.store.running {
-                Button {
-                    Task { await controller.interrupt() }
-                } label: {
-                    Image(systemName: "stop.circle.fill")
+                if controller.store.running {
+                    Button {
+                        Task { await controller.interrupt() }
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut(".", modifiers: .command)
+                    .help("Stop the current turn (⌘.)")
+                }
+
+                Button(action: send) {
+                    Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
                 }
                 .buttonStyle(.borderless)
-                .keyboardShortcut(".", modifiers: .command)
-                .help("Stop the current turn (⌘.)")
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!canSend)
             }
-
-            Button(action: send) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(10)
         .background(.bar)
+        #if os(macOS)
+            // Secondary path only: this fires for Edit ▸ Paste when focus is
+            // NOT in the message field (e.g. on the send button). The common
+            // case — focus in the field — is handled by `PasteKeyCatcher`
+            // above, which consumes the key equivalent before the menu.
+            .onPasteCommand(of: [.image]) { providers in
+                attachments.loadProviders(providers)
+            }
+        #endif
+        // Drops are handled window-wide by ChatContentView, not here — the
+        // composer is a thin strip and dropping onto the transcript is what
+        // people actually do.
+        .fileImporter(
+            isPresented: $showingFileImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result, !urls.isEmpty else { return }
+            // One importer result = one batch: clear the previous error line
+            // once here, never per successful item, and reserve the whole
+            // batch before the first read starts.
+            attachments.beginBatch()
+            let granted = attachments.reserveSlots(urls.count)
+            guard granted > 0 else { return }
+            // Sequential await: reads and encodes run off the MainActor but
+            // the tray still fills in the order the user picked.
+            Task {
+                for url in urls.prefix(granted) {
+                    await attachments.addReserved(contentsOf: url)
+                }
+            }
+        }
+        #if os(iOS) || os(visionOS)
+            // Presented from the composer, not from inside the attach menu —
+            // PhotosPicker runs out of process, so no usage description needed.
+            .photosPicker(
+                isPresented: $showingPhotoPicker, selection: $photoSelection,
+                // Only as many as the tray can still hold — in-flight
+                // preparations included — so the picker can't hand back items
+                // that `add` will silently reject. Never 0: that means
+                // "unlimited" to PhotosPicker; the menu item is disabled at
+                // cap instead.
+                maxSelectionCount: max(1, attachments.availableSlots),
+                matching: .images
+            )
+            .onChange(of: photoSelection) { _, items in
+                guard !items.isEmpty else { return }
+                photoSelection = []
+                attachments.beginBatch()
+                // Reserved BEFORE the first `loadTransferable`: fetching an
+                // iCloud photo takes seconds, and leaving that window
+                // unaccounted for re-opens the send race — the caption would
+                // go out alone and the photo land in the next message.
+                let granted = attachments.reserveSlots(items.count)
+                guard granted > 0 else { return }
+                Task {
+                    for item in items.prefix(granted) {
+                        // The reservation is this item's until `addReserved`
+                        // takes ownership of it; every other way out of the
+                        // iteration — nil transferable, a throw, cancellation
+                        // — releases it here.
+                        var handedOff = false
+                        defer { if !handedOff { attachments.endPreparation() } }
+                        // A picked item can still fail to load (an iCloud
+                        // photo that never downloaded, a corrupt asset) —
+                        // silence there looks like the picker did nothing.
+                        do {
+                            guard let data = try await item.loadTransferable(type: Data.self)
+                            else {
+                                attachments.error = "Couldn't load photo."
+                                continue
+                            }
+                            handedOff = true
+                            await attachments.addReserved(data: data, name: nil)
+                        } catch {
+                            attachments.error = "Couldn't load photo."
+                        }
+                    }
+                }
+            }
+        #endif
+    }
+
+    @ViewBuilder private var attachMenu: some View {
+        Menu {
+            #if os(iOS) || os(visionOS)
+                // A `PhotosPicker` placed inside a `Menu` never presents: its
+                // presentation anchor dies with the menu dismissal. Flip a flag
+                // and let the composer's `.photosPicker` modifier present it.
+                Button {
+                    showingPhotoPicker = true
+                } label: {
+                    Label("Photo Library", systemImage: "photo.on.rectangle")
+                }
+                // The picker needs a selection budget of at least 1; at cap —
+                // in-flight preparations counted — there is none, so don't
+                // offer it. (The other paths funnel through `add`'s cap check
+                // and surface its error line.)
+                .disabled(attachments.availableSlots <= 0)
+                Button {
+                    let images = (UIPasteboard.general.images ?? []).compactMap {
+                        $0.jpegData(compressionQuality: 0.9)
+                    }
+                    guard !images.isEmpty else { return }
+                    attachments.beginBatch()
+                    let granted = attachments.reserveSlots(images.count)
+                    guard granted > 0 else { return }
+                    Task {
+                        for data in images.prefix(granted) {
+                            await attachments.addReserved(data: data, name: nil)
+                        }
+                    }
+                } label: {
+                    Label("Paste Image", systemImage: "doc.on.clipboard")
+                }
+            #endif
+            Button {
+                showingFileImporter = true
+            } label: {
+                Label("Choose File…", systemImage: "folder")
+            }
+        } label: {
+            Image(systemName: "plus.circle")
+                .font(.title2)
+        }
+        .buttonStyle(.borderless)
+        .help("Attach an image")
     }
 
     private func send() {
         let message = text
-        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let outgoing = attachments.items
+        // Same gate as `canSend` — ⌘⏎ and ⏎ reach `send()` directly.
+        guard !attachments.isBusyPreparing,
+            !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !outgoing.isEmpty
+        else { return }
         text = ""
+        attachments.clear()
         Task {
             // The keyboard can commit pending marked/autocorrect text OVER a
             // synchronous clear, resurrecting the sent message in the field
@@ -539,8 +776,112 @@ private struct ComposerView: View {
             // message is never wiped.
             await Task.yield()
             if text == message { text = "" }
-            await controller.submit(message)
+            await controller.submit(message, attachments: outgoing)
         }
+    }
+}
+
+#if os(macOS)
+    /// Gives the composer first refusal on ⌘V, ahead of Edit ▸ Paste.
+    ///
+    /// `NSWindow` offers a key equivalent to its content view hierarchy
+    /// before the main menu sees it, so an otherwise invisible view in the
+    /// composer's background is the only place a SwiftUI `TextField` can beat
+    /// its own field editor to the paste. Scoped to the window (unlike an
+    /// `NSEvent` local monitor, which is app-wide) and gated on focus, so a
+    /// ⌘V anywhere else in Mercury is untouched. Out of the IME marked-text
+    /// path the old `onKeyPress` comment worried about: only a
+    /// command-modified key equivalent ever reaches it.
+    private struct PasteKeyCatcher: NSViewRepresentable {
+        /// Only while the message field holds focus — otherwise the paste
+        /// belongs to whatever else is first responder, and Edit ▸ Paste
+        /// still reaches the composer's `.onPasteCommand`.
+        var isActive: Bool
+        /// True when the paste was consumed as an attachment.
+        var handlePaste: @MainActor () -> Bool
+
+        final class View: NSView {
+            var isActive = false
+            var handlePaste: (@MainActor () -> Bool)?
+
+            override func performKeyEquivalent(with event: NSEvent) -> Bool {
+                guard isActive,
+                    event.modifierFlags.contains(.command),
+                    !event.modifierFlags.contains(.option),
+                    !event.modifierFlags.contains(.control),
+                    event.charactersIgnoringModifiers == "v"
+                else { return false }
+                return handlePaste?() ?? false
+            }
+        }
+
+        func makeNSView(context: Context) -> View {
+            let view = View()
+            view.isActive = isActive
+            view.handlePaste = handlePaste
+            return view
+        }
+
+        func updateNSView(_ view: View, context: Context) {
+            view.isActive = isActive
+            view.handlePaste = handlePaste
+        }
+    }
+#endif
+
+/// Horizontal strip of staged attachments with per-item remove.
+private struct AttachmentTray: View {
+    @Binding var attachments: [PendingAttachment]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { attachment in
+                    ZStack(alignment: .topTrailing) {
+                        AttachmentThumbnail(data: attachment.thumbnail ?? attachment.data)
+                            .frame(width: 64, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(.quaternary))
+                        Button {
+                            attachments.removeAll { $0.id == attachment.id }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, .black.opacity(0.6))
+                        }
+                        .buttonStyle(.borderless)
+                        .padding(2)
+                        .accessibilityLabel("Remove \(attachment.filename)")
+                    }
+                }
+            }
+        }
+        .frame(height: 68)
+    }
+}
+
+/// Renders encoded image bytes; falls back to an icon when undecodable.
+struct AttachmentThumbnail: View {
+    let data: Data
+
+    var body: some View {
+        #if os(macOS)
+            if let image = NSImage(data: data) {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else { fallback }
+        #else
+            if let image = UIImage(data: data) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else { fallback }
+        #endif
+    }
+
+    private var fallback: some View {
+        Image(systemName: "photo")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.quaternary)
     }
 }
 
