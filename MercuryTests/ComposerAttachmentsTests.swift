@@ -19,8 +19,8 @@ struct ComposerAttachmentsTests {
         #expect(composer.availableSlots == ComposerAttachments.maxAttachments)
         #expect(!composer.isBusyPreparing)
 
-        composer.beginPreparation()
-        composer.beginPreparation()
+        composer.reserveSlots(1)
+        composer.reserveSlots(1)
         // The picker's budget and the Send gate both read these: with two
         // encodes in flight the tray has two fewer slots to offer, and the
         // composer is busy even though nothing is staged yet.
@@ -36,8 +36,8 @@ struct ComposerAttachmentsTests {
 
     @Test func preparationsBalanceBackToIdle() {
         let composer = ComposerAttachments()
-        composer.beginPreparation()
-        composer.beginPreparation()
+        composer.reserveSlots(1)
+        composer.reserveSlots(1)
         composer.endPreparation()
         #expect(composer.isBusyPreparing)
         composer.endPreparation()
@@ -51,12 +51,57 @@ struct ComposerAttachmentsTests {
 
     @Test func failedPreparationReleasesTheSendGate() async {
         let composer = ComposerAttachments()
+        #expect(composer.reserveSlots(1) == 1)
         // Not an image: `prepare` throws, and the error path must still run
         // the counter back down or Send stays disabled forever.
-        await composer.add(data: Data([0x00, 0x01, 0x02]), name: nil)
+        await composer.addReserved(data: Data([0x00, 0x01, 0x02]), name: nil)
         #expect(composer.preparing == 0)
         #expect(!composer.isBusyPreparing)
         #expect(composer.items.isEmpty)
+        #expect(composer.error != nil)
+    }
+
+    // MARK: Reservation at acquisition start
+
+    @Test func reservingABatchShrinksTheBudgetImmediately() {
+        let composer = ComposerAttachments()
+        // The picker/drop/paste paths reserve the WHOLE batch before the
+        // first byte is acquired: `loadTransferable` on an iCloud photo can
+        // take seconds, and an unreserved acquisition window is exactly the
+        // send race the counter exists to close.
+        #expect(composer.reserveSlots(3) == 3)
+        #expect(composer.preparing == 3)
+        #expect(composer.isBusyPreparing)
+        #expect(composer.availableSlots == ComposerAttachments.maxAttachments - 3)
+        #expect(composer.items.isEmpty)
+    }
+
+    @Test func releasedReservationRestoresItsSlot() {
+        let composer = ComposerAttachments()
+        #expect(composer.reserveSlots(2) == 2)
+        // One item's load failed (nil transferable, a throw, cancellation):
+        // its slot goes back so the batch's other item isn't squeezed out.
+        composer.endPreparation()
+        #expect(composer.preparing == 1)
+        #expect(composer.availableSlots == ComposerAttachments.maxAttachments - 1)
+        composer.endPreparation()
+        #expect(composer.preparing == 0)
+        #expect(!composer.isBusyPreparing)
+        #expect(composer.availableSlots == ComposerAttachments.maxAttachments)
+    }
+
+    @Test func overCapBatchReservesOnlyWhatIsAvailable() {
+        let composer = ComposerAttachments()
+        for index in 0..<3 { composer.append(staged("img-\(index).png")) }
+        // Four dropped at once with three staged: only two slots exist.
+        #expect(composer.reserveSlots(4) == 2)
+        #expect(composer.preparing == 2)
+        #expect(composer.availableSlots == 0)
+        #expect(composer.error != nil)
+        // And nothing is granted once there is no room at all.
+        composer.error = nil
+        #expect(composer.reserveSlots(2) == 0)
+        #expect(composer.preparing == 2)
         #expect(composer.error != nil)
     }
 
@@ -65,7 +110,7 @@ struct ComposerAttachmentsTests {
     @Test func capRefusesTheSixthAppendWithoutLeakingPreparing() {
         let composer = ComposerAttachments()
         for index in 0..<ComposerAttachments.maxAttachments {
-            #expect(composer.beginPreparation())
+            #expect(composer.reserveSlots(1) == 1)
             #expect(composer.append(staged("img-\(index).png")))
             composer.endPreparation()
         }
@@ -73,7 +118,7 @@ struct ComposerAttachmentsTests {
         #expect(composer.availableSlots == 0)
 
         // At cap the reservation is refused outright…
-        #expect(composer.beginPreparation() == false)
+        #expect(composer.reserveSlots(1) == 0)
         #expect(composer.preparing == 0)
         #expect(composer.error != nil)
 

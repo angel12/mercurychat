@@ -646,13 +646,20 @@ private struct ComposerView: View {
             allowedContentTypes: [.image],
             allowsMultipleSelection: true
         ) { result in
-            guard case .success(let urls) = result else { return }
+            guard case .success(let urls) = result, !urls.isEmpty else { return }
             // One importer result = one batch: clear the previous error line
-            // once here, never per successful item.
+            // once here, never per successful item, and reserve the whole
+            // batch before the first read starts.
             attachments.beginBatch()
+            let granted = attachments.reserveSlots(urls.count)
+            guard granted > 0 else { return }
             // Sequential await: reads and encodes run off the MainActor but
             // the tray still fills in the order the user picked.
-            Task { for url in urls { await attachments.addContents(of: url) } }
+            Task {
+                for url in urls.prefix(granted) {
+                    await attachments.addReserved(contentsOf: url)
+                }
+            }
         }
         #if os(iOS) || os(visionOS)
             // Presented from the composer, not from inside the attach menu —
@@ -671,8 +678,20 @@ private struct ComposerView: View {
                 guard !items.isEmpty else { return }
                 photoSelection = []
                 attachments.beginBatch()
+                // Reserved BEFORE the first `loadTransferable`: fetching an
+                // iCloud photo takes seconds, and leaving that window
+                // unaccounted for re-opens the send race — the caption would
+                // go out alone and the photo land in the next message.
+                let granted = attachments.reserveSlots(items.count)
+                guard granted > 0 else { return }
                 Task {
-                    for item in items {
+                    for item in items.prefix(granted) {
+                        // The reservation is this item's until `addReserved`
+                        // takes ownership of it; every other way out of the
+                        // iteration — nil transferable, a throw, cancellation
+                        // — releases it here.
+                        var handedOff = false
+                        defer { if !handedOff { attachments.endPreparation() } }
                         // A picked item can still fail to load (an iCloud
                         // photo that never downloaded, a corrupt asset) —
                         // silence there looks like the picker did nothing.
@@ -682,7 +701,8 @@ private struct ComposerView: View {
                                 attachments.error = "Couldn't load photo."
                                 continue
                             }
-                            await attachments.add(data: data, name: nil)
+                            handedOff = true
+                            await attachments.addReserved(data: data, name: nil)
                         } catch {
                             attachments.error = "Couldn't load photo."
                         }
@@ -712,9 +732,14 @@ private struct ComposerView: View {
                     let images = (UIPasteboard.general.images ?? []).compactMap {
                         $0.jpegData(compressionQuality: 0.9)
                     }
+                    guard !images.isEmpty else { return }
                     attachments.beginBatch()
+                    let granted = attachments.reserveSlots(images.count)
+                    guard granted > 0 else { return }
                     Task {
-                        for data in images { await attachments.add(data: data, name: nil) }
+                        for data in images.prefix(granted) {
+                            await attachments.addReserved(data: data, name: nil)
+                        }
                     }
                 } label: {
                     Label("Paste Image", systemImage: "doc.on.clipboard")

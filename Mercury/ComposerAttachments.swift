@@ -61,17 +61,25 @@ final class ComposerAttachments {
         error = nil
     }
 
-    /// Reserve a slot for one preparation, or refuse with the cap error.
-    /// Check and reservation happen in one MainActor step so concurrent
-    /// preparations can't all clear the same stale check.
+    /// Reserve up to `count` slots for a batch that is about to ACQUIRE
+    /// bytes, returning how many were granted (the cap error is set when that
+    /// is fewer than asked). Callers reserve BEFORE the first `await` —
+    /// acquisition is itself slow (an iCloud photo's `loadTransferable` takes
+    /// seconds, an `NSItemProvider` completion is unbounded), and a
+    /// reservation taken only once the bytes land leaves exactly the window
+    /// the counter exists to close: Send passes, the caption goes out alone,
+    /// and the image lands in the next message's tray.
+    ///
+    /// Check and reservation happen in one MainActor step, so concurrent
+    /// batches can't all clear the same stale check.
     @discardableResult
-    func beginPreparation() -> Bool {
-        guard availableSlots > 0 else {
+    func reserveSlots(_ count: Int) -> Int {
+        let granted = min(max(0, count), availableSlots)
+        if granted < count {
             error = "Up to \(Self.maxAttachments) images per message."
-            return false
         }
-        preparing += 1
-        return true
+        preparing += granted
+        return granted
     }
 
     /// Release a reservation. Every exit path of a preparation runs this
@@ -94,12 +102,19 @@ final class ComposerAttachments {
         return true
     }
 
+    /// Stage bytes the caller has ALREADY reserved a slot for, consuming that
+    /// reservation on every exit path.
+    ///
     /// `ImageAttachmentPreparer.prepare` is two ImageIO decode/resize/encode
     /// passes — far too much to run on the MainActor, where it stalls the
     /// composer for the whole of a large image (#2). Only the pure work
     /// leaves; the cap, the counter and the error line stay here.
-    func add(data: Data, name: String?) async {
-        guard beginPreparation() else { return }
+    ///
+    /// There is deliberately NO self-reserving variant: every input path
+    /// knows its item count synchronously and must reserve before acquiring,
+    /// so a method that reserved on entry would only invite the acquisition
+    /// window back in.
+    func addReserved(data: Data, name: String?) async {
         defer { endPreparation() }
         await prepareAndAppend(data: data, name: name)
     }
@@ -107,8 +122,8 @@ final class ComposerAttachments {
     /// Reads a picked/dropped file URL under its security scope — sandboxed
     /// builds only get read access for the duration of that scope, and the
     /// size pre-check needs that access just as much as the read does.
-    func addContents(of url: URL) async {
-        guard beginPreparation() else { return }
+    /// Consumes a reservation the caller already holds.
+    func addReserved(contentsOf url: URL) async {
         defer { endPreparation() }
         // Whole-file read off the MainActor too: a big image on a slow volume
         // blocks just as long as the encode did.
@@ -166,18 +181,32 @@ final class ComposerAttachments {
     /// Shared by drop and `onPasteCommand`: prefer the file URL representation
     /// so the filename survives, and fall back to raw image bytes. One call =
     /// one batch.
+    ///
+    /// The whole batch is reserved here, synchronously, because a provider's
+    /// load completion is unbounded in time — reserving inside the completion
+    /// left the drop unaccounted for until its bytes arrived. Each completion
+    /// then either hands its reservation to `addReserved` (which consumes it)
+    /// or releases it; `NSItemProvider` guarantees the completion fires with
+    /// either a value or an error, so exactly one of the two always happens.
     func loadProviders(_ providers: [NSItemProvider]) {
+        guard !providers.isEmpty else { return }
         beginBatch()
-        for provider in providers {
+        let granted = reserveSlots(providers.count)
+        guard granted > 0 else { return }
+        for provider in providers.prefix(granted) {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in await self.addContents(of: url) }
+                    Task { @MainActor in
+                        guard let url else { return self.endPreparation() }
+                        await self.addReserved(contentsOf: url)
+                    }
                 }
             } else {
                 _ = provider.loadDataRepresentation(for: .image) { data, _ in
-                    guard let data else { return }
-                    Task { @MainActor in await self.add(data: data, name: nil) }
+                    Task { @MainActor in
+                        guard let data else { return self.endPreparation() }
+                        await self.addReserved(data: data, name: nil)
+                    }
                 }
             }
         }
@@ -189,23 +218,35 @@ final class ComposerAttachments {
         @discardableResult
         func pasteImages(from pasteboard: NSPasteboard = .general) -> Bool {
             let contents = ImagePasteboardReader.read(pasteboard)
+            // A plain TEXT ⌘V is not a batch: returning `.ignored` from here
+            // hands the paste to the field editor, so clearing the error line
+            // on the way out would wipe a visible attachment failure that the
+            // user never acted on. Only image content (bytes, or an image
+            // file that turned out to be unreadable) starts a batch.
+            guard !contents.images.isEmpty || !contents.unreadableNames.isEmpty else {
+                return false
+            }
             beginBatch()
-            // Preparation is async now; one task awaiting them in order keeps
-            // a multi-image paste staged in pasteboard order.
             if !contents.images.isEmpty {
-                Task { @MainActor in
-                    for image in contents.images {
-                        await add(data: image.data, name: image.name)
+                // Reserved up front, like every other batch; one task awaiting
+                // them in order keeps a multi-image paste staged in pasteboard
+                // order and leaves no gap between items.
+                let granted = reserveSlots(contents.images.count)
+                if granted > 0 {
+                    Task { @MainActor in
+                        for image in contents.images.prefix(granted) {
+                            await addReserved(data: image.data, name: image.name)
+                        }
                     }
                 }
-            }
-            if contents.images.isEmpty, let name = contents.unreadableNames.first {
-                error = "Couldn't read \(name)."
-                // Still "handled": the pasteboard held an image file, so
-                // falling through to a text paste would insert its path.
                 return true
             }
-            return !contents.images.isEmpty
+            if let name = contents.unreadableNames.first {
+                error = "Couldn't read \(name)."
+            }
+            // Still "handled": the pasteboard held an image file, so falling
+            // through to a text paste would insert its path.
+            return true
         }
     #endif
 }
