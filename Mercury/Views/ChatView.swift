@@ -545,22 +545,44 @@ final class ComposerAttachments {
     var items: [PendingAttachment] = []
     var error: String?
 
-    /// One cap for every input path (picker, paste, drop, file importer),
-    /// matching PhotosPicker's maxSelectionCount.
+    /// One cap for every input path (picker, paste, drop, file importer). The
+    /// photo picker's `maxSelectionCount` is derived from it and the current
+    /// tray count, so the two can't drift.
     static let maxAttachments = 5
+
+    /// Ceiling on bytes pulled off disk before preparation. Anything larger
+    /// can't survive `ImageAttachmentPreparer`'s 20 MB encoded cap anyway, so
+    /// reject it from the file's metadata rather than reading it into memory.
+    static let maxSourceFileBytes = 60 * 1024 * 1024
 
     func clear() {
         items = []
         error = nil
     }
 
-    func add(data: Data, name: String?) {
+    /// Cap check plus its error line. Called at BOTH ends of a preparation:
+    /// once to skip needless work, and again at append time because two
+    /// preparations running concurrently can both clear a stale check.
+    private func hasRoom() -> Bool {
         guard items.count < Self.maxAttachments else {
             error = "Up to \(Self.maxAttachments) images per message."
-            return
+            return false
         }
+        return true
+    }
+
+    /// `ImageAttachmentPreparer.prepare` is two ImageIO decode/resize/encode
+    /// passes — far too much to run on the MainActor, where it stalls the
+    /// composer for the whole of a large image (#2). The cap check and the
+    /// error line stay here; only the pure work leaves.
+    func add(data: Data, name: String?) async {
+        guard hasRoom() else { return }
         do {
-            items.append(try ImageAttachmentPreparer.prepare(data: data, suggestedName: name))
+            let prepared = try await Task.detached {
+                try ImageAttachmentPreparer.prepare(data: data, suggestedName: name)
+            }.value
+            guard hasRoom() else { return }
+            items.append(prepared)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -569,12 +591,22 @@ final class ComposerAttachments {
 
     /// Reads a picked/dropped file URL under its security scope — sandboxed
     /// builds only get read access for the duration of that scope.
-    func addContents(of url: URL) {
-        guard let data = Self.readSecurityScoped(url) else {
+    func addContents(of url: URL) async {
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+            size > Self.maxSourceFileBytes
+        {
+            error = "Image is too large to send (60 MB max)."
+            return
+        }
+        guard hasRoom() else { return }
+        // Whole-file read off the MainActor too: a big image on a slow volume
+        // blocks just as long as the encode did.
+        guard let data = await Task.detached(operation: { Self.readSecurityScoped(url) }).value
+        else {
             error = "Couldn't read \(url.lastPathComponent)."
             return
         }
-        add(data: data, name: url.lastPathComponent)
+        await add(data: data, name: url.lastPathComponent)
     }
 
     /// Pure file read — `nonisolated` so callers off the main actor can use it.
@@ -591,12 +623,12 @@ final class ComposerAttachments {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     guard let url else { return }
-                    Task { @MainActor in self.addContents(of: url) }
+                    Task { @MainActor in await self.addContents(of: url) }
                 }
             } else {
                 _ = provider.loadDataRepresentation(for: .image) { data, _ in
                     guard let data else { return }
-                    Task { @MainActor in self.add(data: data, name: nil) }
+                    Task { @MainActor in await self.add(data: data, name: nil) }
                 }
             }
         }
@@ -608,7 +640,15 @@ final class ComposerAttachments {
         @discardableResult
         func pasteImages(from pasteboard: NSPasteboard = .general) -> Bool {
             let contents = ImagePasteboardReader.read(pasteboard)
-            for image in contents.images { add(data: image.data, name: image.name) }
+            // Preparation is async now; one task awaiting them in order keeps
+            // a multi-image paste staged in pasteboard order.
+            if !contents.images.isEmpty {
+                Task { @MainActor in
+                    for image in contents.images {
+                        await add(data: image.data, name: image.name)
+                    }
+                }
+            }
             if contents.images.isEmpty, let name = contents.unreadableNames.first {
                 error = "Couldn't read \(name)."
                 // Still "handled": the pasteboard held an image file, so
@@ -727,22 +767,40 @@ private struct ComposerView: View {
             allowsMultipleSelection: true
         ) { result in
             guard case .success(let urls) = result else { return }
-            for url in urls { attachments.addContents(of: url) }
+            // Sequential await: reads and encodes run off the MainActor but
+            // the tray still fills in the order the user picked.
+            Task { for url in urls { await attachments.addContents(of: url) } }
         }
         #if os(iOS) || os(visionOS)
             // Presented from the composer, not from inside the attach menu —
             // PhotosPicker runs out of process, so no usage description needed.
             .photosPicker(
                 isPresented: $showingPhotoPicker, selection: $photoSelection,
-                maxSelectionCount: 5, matching: .images
+                // Only as many as the tray can still hold, so the picker
+                // can't hand back items that `add` will silently reject.
+                // Never 0 — that means "unlimited" to PhotosPicker; the menu
+                // item is disabled at cap instead.
+                maxSelectionCount: max(
+                    1, ComposerAttachments.maxAttachments - attachments.items.count),
+                matching: .images
             )
             .onChange(of: photoSelection) { _, items in
                 guard !items.isEmpty else { return }
                 photoSelection = []
                 Task {
                     for item in items {
-                        if let data = try? await item.loadTransferable(type: Data.self) {
-                            attachments.add(data: data, name: nil)
+                        // A picked item can still fail to load (an iCloud
+                        // photo that never downloaded, a corrupt asset) —
+                        // silence there looks like the picker did nothing.
+                        do {
+                            guard let data = try await item.loadTransferable(type: Data.self)
+                            else {
+                                attachments.error = "Couldn't load photo."
+                                continue
+                            }
+                            await attachments.add(data: data, name: nil)
+                        } catch {
+                            attachments.error = "Couldn't load photo."
                         }
                     }
                 }
@@ -761,11 +819,16 @@ private struct ComposerView: View {
                 } label: {
                     Label("Photo Library", systemImage: "photo.on.rectangle")
                 }
+                // The picker needs a selection budget of at least 1; at cap
+                // there is none, so don't offer it. (The other paths funnel
+                // through `add`'s cap check and surface its error line.)
+                .disabled(attachments.items.count >= ComposerAttachments.maxAttachments)
                 Button {
-                    for image in UIPasteboard.general.images ?? [] {
-                        if let data = image.jpegData(compressionQuality: 0.9) {
-                            attachments.add(data: data, name: nil)
-                        }
+                    let images = (UIPasteboard.general.images ?? []).compactMap {
+                        $0.jpegData(compressionQuality: 0.9)
+                    }
+                    Task {
+                        for data in images { await attachments.add(data: data, name: nil) }
                     }
                 } label: {
                     Label("Paste Image", systemImage: "doc.on.clipboard")

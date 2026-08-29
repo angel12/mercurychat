@@ -619,7 +619,11 @@ final class ChatController: Identifiable {
                 // Cleanup must outlive cancellation: a cancelled send still
                 // has to unstage what it staged, and an inherited-cancellation
                 // detach would no-op and leak the image into the next prompt.
-                // Awaiting the detached task keeps the sequencer's ordering.
+                // The shield is an unstructured `Task` (NOT detached): it
+                // doesn't inherit the caller's cancellation, so a cancelled
+                // send still completes the detach. Detached isn't needed for
+                // that and would only leave the actor context. Awaiting its
+                // value keeps the sequencer's ordering.
                 detach: { @Sendable [connection] path in
                     await Task {
                         try? await connection.detachImage(sessionID: runtimeID, path: path)

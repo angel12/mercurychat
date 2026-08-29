@@ -60,7 +60,12 @@ private struct UserBubble: View {
                             }
                         }
                     }
-                    .frame(height: 124)
+                    // Only thumbnails need a fixed height. A hydrated row is
+                    // all chips (no preview bytes) and sizes itself — pinning
+                    // 124 there leaves a tall empty band above the caption.
+                    .frame(
+                        height: message.attachments.contains { $0.previewData != nil }
+                            ? 124 : nil)
                 }
                 if !message.text.isEmpty {
                     Text(message.text)
