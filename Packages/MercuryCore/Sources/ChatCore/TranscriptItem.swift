@@ -35,8 +35,9 @@ public struct UserMessage: Sendable, Equatable, Identifiable {
 
     public var id: String
     public var text: String
-    /// Files sent with this message. Empty on hydrated rows — the backend
-    /// doesn't round-trip attachments.
+    /// Files sent with this message. Hydrated rows carry byte-less chips
+    /// recovered from the persisted `@image:` refs — the backend doesn't
+    /// round-trip attachment bytes.
     public var attachments: [MessageAttachment]
     public var sendState: SendState
     /// Durable backend `messages.id` once persisted (hydration dedupe key).

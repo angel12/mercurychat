@@ -954,6 +954,59 @@ struct TranscriptHydrationTests {
                 #"[{"id": 1, "role": "assistant", "content": "x", "display_kind": "hidden"}]"#))
         #expect(store.items.isEmpty)
     }
+
+    @Test func hydrationTurnsImageRefRowsIntoAttachmentChips() {
+        let store = TranscriptStore()
+        let row = TranscriptMessage(
+            json: json(
+                #"{"role": "user", "id": 7, "content": "what is this?\n@image:/tmp/photo.jpg"}"#
+            ))!
+        store.hydrate([row])
+        guard case .user(let message) = store.items.first else {
+            Issue.record("expected hydrated user row")
+            return
+        }
+        #expect(message.text == "what is this?")
+        #expect(message.attachments.map(\.filename) == ["photo.jpg"])
+    }
+
+    @Test func hydrationKeepsADifferentImageOnlyEcho() {
+        let store = TranscriptStore()
+        // A persisted image-only message…
+        let row = TranscriptMessage(
+            json: json(
+                #"{"role": "user", "id": 8, "content": "@image:/tmp/a.png"}"#
+            ))!
+        // …and a live text echo must not be mistaken for it.
+        store.appendUserMessage("hello", state: .sending)
+        store.hydrate([row])
+        let userRows = store.items.filter { if case .user = $0 { true } else { false } }
+        #expect(userRows.count == 2)
+    }
+
+    @Test func hydrationRendersTwoImageOnlyRows() {
+        // Two DIFFERENT image-only messages share the dedupe key ("u:#1") —
+        // that key only filters the live suffix, so both hydrated rows must
+        // still render. (Known residual: a live UNPERSISTED image-only echo
+        // is dropped when any hydrated image-only row with the same
+        // attachment count exists — a narrow mid-send-reconnect race we
+        // accept; losing the echo beats duplicating a persisted row, and
+        // filenames can't disambiguate because native-vision rows hydrate
+        // as "Image".)
+        let store = TranscriptStore()
+        let rows = [
+            TranscriptMessage(
+                json: json(#"{"role": "user", "id": 8, "content": "@image:/tmp/a.png"}"#))!,
+            TranscriptMessage(
+                json: json(#"{"role": "user", "id": 9, "content": "@image:/tmp/b.png"}"#))!,
+        ]
+        store.hydrate(rows)
+        let filenames = store.items.compactMap { item -> String? in
+            if case .user(let m) = item { return m.attachments.first?.filename }
+            return nil
+        }
+        #expect(filenames == ["a.png", "b.png"])
+    }
 }
 
 @MainActor

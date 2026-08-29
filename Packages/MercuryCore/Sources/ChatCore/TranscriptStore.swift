@@ -92,11 +92,13 @@ public final class TranscriptStore {
         }
 
         // Drop live items whose rows are now persisted (best-effort: live
-        // items have no row id, so match user messages by text and sealed
+        // items have no row id, so match user messages by text plus
+        // attachment count — image-only sends have empty text, and matching
+        // on text alone would collide every one of them — and sealed
         // assistant bubbles by text).
         let hydratedTexts = Set(hydrated.compactMap { item -> String? in
             switch item {
-            case .user(let m): return "u:" + m.text
+            case .user(let m): return "u:" + m.text + "#\(m.attachments.count)"
             case .assistant(let m): return "a:" + m.text
             default: return nil
             }
@@ -125,7 +127,7 @@ public final class TranscriptStore {
         let survivors = liveSuffix.filter { item in
             switch item {
             case .user(let m):
-                return !hydratedTexts.contains("u:" + m.text)
+                return !hydratedTexts.contains("u:" + m.text + "#\(m.attachments.count)")
             case .assistant(let m) where m.isStreaming:
                 if let final = latestHydratedReply, final.hasPrefix(m.text) {
                     return false
@@ -174,10 +176,12 @@ public final class TranscriptStore {
         if message.displayKind == "hidden" { return nil }
         switch message.role {
         case "user":
-            guard !message.text.isEmpty else { return nil }
+            let parsed = AttachmentMarkers.parse(
+                text: message.text, rawContent: message.raw["content"])
+            guard !parsed.text.isEmpty || !parsed.attachments.isEmpty else { return nil }
             return .user(
                 UserMessage(
-                    id: message.id, text: message.text,
+                    id: message.id, text: parsed.text, attachments: parsed.attachments,
                     rowID: message.rowID, timestamp: message.timestamp))
         case "assistant":
             guard !message.text.isEmpty || !(message.reasoning ?? "").isEmpty else {
