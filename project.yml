@@ -18,6 +18,7 @@ targets:
     sources:
       - path: Mercury/AppModel.swift
       - path: Mercury/ChatController.swift
+      - path: Mercury/ImageAttachmentPreparer.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryCore
