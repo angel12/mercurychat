@@ -577,7 +577,7 @@ final class ComposerAttachments {
         add(data: data, name: url.lastPathComponent)
     }
 
-    /// Pure file read — `nonisolated` so the pasteboard reader can use it too.
+    /// Pure file read — `nonisolated` so callers off the main actor can use it.
     nonisolated static func readSecurityScoped(_ url: URL) -> Data? {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -620,55 +620,8 @@ final class ComposerAttachments {
     #endif
 }
 
-#if os(macOS)
-    /// Pure pasteboard → image payload extraction, split out of the ⌘V key
-    /// handler so the ordering rules stay readable.
-    enum ImagePasteboardReader {
-        struct Contents: Equatable {
-            struct Image: Equatable {
-                var data: Data
-                /// nil ⇒ let the preparer pick a default filename.
-                var name: String?
-            }
-            var images: [Image] = []
-            /// Image files that were on the pasteboard but could not be read
-            /// (the sandbox grant that drag-and-drop carries does not always
-            /// come along with ⌘C/⌘V).
-            var unreadableNames: [String] = []
-        }
-
-        static func read(_ pasteboard: NSPasteboard) -> Contents {
-            var contents = Contents()
-
-            // 1. Finder ⌘C: image-conforming file URLs. Filenames survive.
-            let urls =
-                pasteboard.readObjects(
-                    forClasses: [NSURL.self],
-                    options: [
-                        .urlReadingContentsConformToTypes: [UTType.image.identifier]
-                    ]) as? [URL] ?? []
-            for url in urls {
-                if let data = ComposerAttachments.readSecurityScoped(url) {
-                    contents.images.append(.init(data: data, name: url.lastPathComponent))
-                } else {
-                    contents.unreadableNames.append(url.lastPathComponent)
-                }
-            }
-
-            // 2. Screenshot / "copy image" case: raw bytes, no filename. Only
-            //    consulted when the pasteboard carried NO image file URL at
-            //    all — Finder puts the file's ICON on the pasteboard next to
-            //    the URL, and attaching a 64 px icon in place of the photo the
-            //    user copied is worse than reporting that we couldn't read it.
-            if urls.isEmpty,
-                let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff)
-            {
-                contents.images.append(.init(data: data, name: nil))
-            }
-            return contents
-        }
-    }
-#endif
+// ImagePasteboardReader lives in Mercury/ImagePasteboardReader.swift (kept
+// out of ChatView.swift so MercuryTests can compile it without SwiftUI).
 
 private struct ComposerView: View {
     @Bindable var controller: ChatController
