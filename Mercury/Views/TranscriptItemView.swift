@@ -37,12 +37,36 @@ private struct UserBubble: View {
         HStack {
             Spacer(minLength: 48)
             VStack(alignment: .trailing, spacing: 4) {
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
-                    .opacity(message.sendState == .sending ? 0.55 : 1)
+                if !message.attachments.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(message.attachments) { attachment in
+                            if let previewData = attachment.previewData {
+                                AttachmentThumbnail(data: previewData)
+                                    .frame(width: 120, height: 120)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .strokeBorder(.quaternary))
+                            } else {
+                                // Hydrated rows carry no bytes — a compact chip.
+                                Label(attachment.filename, systemImage: "photo")
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(.quaternary, in: Capsule())
+                            }
+                        }
+                    }
+                }
+                if !message.text.isEmpty {
+                    Text(message.text)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
+                        .opacity(message.sendState == .sending ? 0.55 : 1)
+                }
                 switch message.sendState {
                 case .queued:
                     Label("Queued — runs after the current turn", systemImage: "clock")
