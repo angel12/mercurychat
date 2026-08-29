@@ -336,6 +336,20 @@ struct TranscriptStoreTests {
         #expect(done.summary == "found 3 endpoints")
         #expect(done.durationSeconds == 8.5)
     }
+
+    @Test func echoCarriesAttachments() {
+        let store = TranscriptStore()
+        let attachment = MessageAttachment(
+            id: "att-1", kind: .image, filename: "photo.jpg",
+            previewData: Data([0xFF, 0xD8]))
+        store.appendUserMessage("look at this", attachments: [attachment], state: .sending)
+        guard case .user(let message) = store.items.last else {
+            Issue.record("expected user echo")
+            return
+        }
+        #expect(message.attachments == [attachment])
+        #expect(message.sendState == .sending)
+    }
 }
 
 @MainActor

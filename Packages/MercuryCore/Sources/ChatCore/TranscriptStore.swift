@@ -417,11 +417,15 @@ public final class TranscriptStore {
 
     @discardableResult
     public func appendUserMessage(
-        _ text: String, state: UserMessage.SendState = .sent
+        _ text: String, attachments: [MessageAttachment] = [],
+        state: UserMessage.SendState = .sent
     ) -> String {
         let id = nextLiveID("user")
         items.append(
-            .user(UserMessage(id: id, text: text, sendState: state, timestamp: Date())))
+            .user(
+                UserMessage(
+                    id: id, text: text, attachments: attachments, sendState: state,
+                    timestamp: Date())))
         lastError = nil
         userEchoCounter += 1
         return id
