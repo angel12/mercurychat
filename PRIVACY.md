@@ -48,6 +48,9 @@ When you use Mercury Chat, the following is sent over the network **only** to th
 entered:
 
 - The prompts and messages you type.
+- Images you attach to a message (chosen from your photo library or files, pasted, or dragged
+  in). Mercury Chat resizes large images before sending; attached images are held in memory only
+  and are not archived on your device.
 - Authentication credentials (a token, a username and password, or an OAuth authorization result).
 - Session, profile, and project selections, and control actions such as interrupting, renaming,
   branching, or deleting a session.
