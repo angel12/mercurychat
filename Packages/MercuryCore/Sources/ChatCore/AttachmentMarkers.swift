@@ -53,15 +53,30 @@ public enum AttachmentMarkers {
     /// itself ref-shaped AND images were attached, this trailing-run strip
     /// consumes the user's line too — the parser has no way to know where
     /// the server-appended run actually begins.
+    ///
+    /// The trailing run also absorbs bare `[screenshot]` lines: the REST
+    /// projection of a native-vision row FLATTENS the structured parts list
+    /// into a single string (server-side `_content_display_text`), appending
+    /// one literal `[screenshot]` placeholder per image part after the
+    /// `@image:` refs. Those placeholders duplicate images the refs already
+    /// account for, so they are consumed WITHOUT producing attachments —
+    /// and a trailing `[screenshot]` line with no refs above it is the
+    /// user's own text, left untouched by the `paths.isEmpty` guard below.
     private static func stripTrailingRefs(
         from text: String
     ) -> (text: String, attachments: [MessageAttachment]) {
         let refLine = imageRefLine
         var lines = text.components(separatedBy: "\n")[...]
         var paths: [String] = []
-        while let last = lines.last, let match = last.wholeMatch(of: refLine) {
-            let value = match.bq ?? match.dq ?? match.sq ?? match.bare ?? ""
-            paths.append(String(value))
+        scan: while let last = lines.last {
+            if let match = last.wholeMatch(of: refLine) {
+                let value = match.bq ?? match.dq ?? match.sq ?? match.bare ?? ""
+                paths.append(String(value))
+            } else if last == "[screenshot]" {
+                // Flattened image part — already counted by its `@image:` ref.
+            } else {
+                break scan
+            }
             lines = lines.dropLast()
         }
         guard !paths.isEmpty else { return (text, []) }

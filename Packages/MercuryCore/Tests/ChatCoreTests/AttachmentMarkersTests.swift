@@ -63,6 +63,28 @@ struct AttachmentMarkersTests {
         #expect(parsed.attachments.first?.filename == "pic.png")
     }
 
+    @Test func stripsFlattenedNativeVisionProjection() {
+        // REST projection of a structured row: caption, ref line, then a
+        // literal [screenshot] line per image part.
+        let text = "what is this?\n@image:/tmp/upload_1.jpg\n[screenshot]"
+        let parsed = AttachmentMarkers.parse(text: text, rawContent: nil)
+        #expect(parsed.text == "what is this?")
+        #expect(parsed.attachments.map(\.filename) == ["upload_1.jpg"])
+    }
+
+    @Test func imageOnlyFlattenedProjectionParses() {
+        let parsed = AttachmentMarkers.parse(
+            text: "@image:/tmp/upload_2.jpg\n[screenshot]", rawContent: nil)
+        #expect(parsed.text.isEmpty)
+        #expect(parsed.attachments.count == 1)
+    }
+
+    @Test func bareScreenshotLineWithoutRefsIsUntouched() {
+        let parsed = AttachmentMarkers.parse(text: "done\n[screenshot]", rawContent: nil)
+        #expect(parsed.text == "done\n[screenshot]")
+        #expect(parsed.attachments.isEmpty)
+    }
+
     @Test func structuredContentWithoutRefsFallsBackToImageParts() {
         let content = json(
             #"[{"type": "text", "text": "check this"}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,xx"}}]"#

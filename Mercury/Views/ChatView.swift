@@ -490,6 +490,7 @@ private struct ComposerView: View {
     @State private var showingFileImporter = false
     #if os(iOS) || os(visionOS)
         @State private var photoSelection: [PhotosPickerItem] = []
+        @State private var showingPhotoPicker = false
     #endif
 
     private var canSend: Bool {
@@ -573,6 +574,12 @@ private struct ComposerView: View {
             for url in urls { addContents(of: url) }
         }
         #if os(iOS) || os(visionOS)
+            // Presented from the composer, not from inside the attach menu —
+            // PhotosPicker runs out of process, so no usage description needed.
+            .photosPicker(
+                isPresented: $showingPhotoPicker, selection: $photoSelection,
+                maxSelectionCount: 5, matching: .images
+            )
             .onChange(of: photoSelection) { _, items in
                 guard !items.isEmpty else { return }
                 photoSelection = []
@@ -590,11 +597,12 @@ private struct ComposerView: View {
     @ViewBuilder private var attachMenu: some View {
         Menu {
             #if os(iOS) || os(visionOS)
-                // PhotosPicker runs out of process — no usage description needed.
-                PhotosPicker(
-                    selection: $photoSelection, maxSelectionCount: 5,
-                    matching: .images
-                ) {
+                // A `PhotosPicker` placed inside a `Menu` never presents: its
+                // presentation anchor dies with the menu dismissal. Flip a flag
+                // and let the composer's `.photosPicker` modifier present it.
+                Button {
+                    showingPhotoPicker = true
+                } label: {
                     Label("Photo Library", systemImage: "photo.on.rectangle")
                 }
                 Button {

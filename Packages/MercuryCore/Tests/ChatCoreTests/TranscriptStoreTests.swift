@@ -970,6 +970,24 @@ struct TranscriptHydrationTests {
         #expect(message.attachments.map(\.filename) == ["photo.jpg"])
     }
 
+    @Test func hydrationStripsFlattenedNativeVisionProjection() {
+        // The REST projection flattens a native-vision row's parts list into
+        // one string: caption, `@image:` refs, then a literal [screenshot]
+        // placeholder per image part. None of it may reach the bubble.
+        let store = TranscriptStore()
+        let row = TranscriptMessage(
+            json: json(
+                #"{"role": "user", "id": 7, "content": "what is this?\n@image:/tmp/upload_1.jpg\n[screenshot]"}"#
+            ))!
+        store.hydrate([row])
+        guard case .user(let message) = store.items.first else {
+            Issue.record("expected hydrated user row")
+            return
+        }
+        #expect(message.text == "what is this?")
+        #expect(message.attachments.map(\.filename) == ["upload_1.jpg"])
+    }
+
     @Test func hydrationKeepsADifferentImageOnlyEcho() {
         let store = TranscriptStore()
         // A persisted image-only message…
