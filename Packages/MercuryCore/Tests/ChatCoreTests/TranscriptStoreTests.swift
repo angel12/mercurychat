@@ -1085,6 +1085,31 @@ struct TranscriptHydrationTests {
         #expect(userRows.count == 2)
         #expect(userRows.contains { $0.sendState == .failed })
     }
+
+    @Test func hydrationConsumesSendingEchoBeforeFailedOne() {
+        let store = TranscriptStore()
+        let attachment = MessageAttachment(
+            id: "att-1", kind: .image, filename: "a.png", previewData: Data([0x01]))
+        // An OLD failed send the user has not retried away, then an identical
+        // resend still in flight. The server persisted the resend before its
+        // submit RPC returned, so the single hydrated row belongs to the
+        // `.sending` echo — not to the older failure sitting above it.
+        store.appendUserMessage("", attachments: [attachment], state: .failed)
+        store.appendUserMessage("", attachments: [attachment], state: .sending)
+        let row = TranscriptMessage(
+            json: json(#"{"role": "user", "id": 40, "content": "@image:/tmp/a.png"}"#))!
+        store.hydrate([row])
+        let userRows = store.items.compactMap { item -> UserMessage? in
+            if case .user(let m) = item { return m }
+            return nil
+        }
+        // Oldest-first within one `.sending`/`.failed` class would consume the
+        // FAILED echo here, dropping its retry control and leaving the live
+        // echo to settle into a duplicate of the row it already matches.
+        #expect(userRows.count == 2)
+        #expect(userRows.contains { $0.sendState == .failed })
+        #expect(!userRows.contains { $0.sendState == .sending })
+    }
 }
 
 @MainActor

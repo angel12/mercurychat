@@ -141,22 +141,38 @@ public final class TranscriptStore {
         // arrival order. Consuming oldest-first killed the retry control of a
         // FAILED send whenever an identical resend succeeded: the single
         // hydrated row swallowed the `.failed` echo and the `.sent` one
-        // survived as a duplicate of the row itself. A persisted row is what
-        // a SETTLED echo (`.sent`/`.queued`) became, so those consume the
-        // available counts first; `.sending`/`.failed` echoes take only what
-        // is left over, and within each class consumption stays oldest-first.
+        // survived as a duplicate of the row itself.
+        //
+        // Each state gets its OWN pass, weakest claim last, because pairing
+        // `.sending` with `.failed` reintroduced the same bug one rung down:
+        // an old un-retried failure sitting above a live resend consumed the
+        // row that the resend had already persisted, so the failure lost its
+        // retry control and the live echo settled into a duplicate. Ranking
+        // is an exhaustive switch so a new case has to declare its claim
+        // rather than defaulting into someone else's class.
+        func hydrationClaimRank(_ state: UserMessage.SendState) -> Int {
+            switch state {
+            // Settled: a persisted row is what these BECAME.
+            case .sent, .queued: return 0
+            // In flight: the server may already have persisted it.
+            case .sending: return 1
+            // Never reached the server, so it claims a row only if nothing
+            // else can — and keeps its retry affordance when it doesn't.
+            case .failed: return 2
+            }
+        }
         var droppedUserIndices: Set<Int> = []
-        func consumeUserEchoes(matching accepts: (UserMessage.SendState) -> Bool) {
+        // Within one rank, consumption stays oldest-first.
+        for rank in 0...2 {
             for (index, item) in liveSuffix.enumerated() {
-                guard case .user(let m) = item, accepts(m.sendState) else { continue }
+                guard case .user(let m) = item, hydrationClaimRank(m.sendState) == rank
+                else { continue }
                 let key = "u:" + m.text + "#\(m.attachments.count)"
                 guard let remaining = hydratedUserKeys[key], remaining > 0 else { continue }
                 hydratedUserKeys[key] = remaining - 1
                 droppedUserIndices.insert(index)
             }
         }
-        consumeUserEchoes { $0 == .sent || $0 == .queued }
-        consumeUserEchoes { $0 == .sending || $0 == .failed }
 
         let survivors = liveSuffix.enumerated().filter { index, item in
             switch item {
