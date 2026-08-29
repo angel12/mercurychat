@@ -104,7 +104,8 @@ public final class TranscriptStore {
         // affordance if its upload later failed. Counting instead makes the
         // reconciliation one-to-one: N hydrated rows consume at most N
         // matching echoes (oldest-first, since the filter runs in order) and
-        // any extra live echo survives.
+        // any extra live echo survives — see `droppedUserIndices` below for
+        // WHICH echo a row consumes.
         var hydratedUserKeys: [String: Int] = [:]
         let hydratedTexts = Set(hydrated.compactMap { item -> String? in
             switch item {
@@ -136,13 +137,31 @@ public final class TranscriptStore {
                 if case .tool(let t) = item { return t.toolID }
                 return nil
             })
-        let survivors = liveSuffix.filter { item in
-            switch item {
-            case .user(let m):
+        // Which echo a persisted row consumes is decided by SEND STATE, not
+        // arrival order. Consuming oldest-first killed the retry control of a
+        // FAILED send whenever an identical resend succeeded: the single
+        // hydrated row swallowed the `.failed` echo and the `.sent` one
+        // survived as a duplicate of the row itself. A persisted row is what
+        // a SETTLED echo (`.sent`/`.queued`) became, so those consume the
+        // available counts first; `.sending`/`.failed` echoes take only what
+        // is left over, and within each class consumption stays oldest-first.
+        var droppedUserIndices: Set<Int> = []
+        func consumeUserEchoes(matching accepts: (UserMessage.SendState) -> Bool) {
+            for (index, item) in liveSuffix.enumerated() {
+                guard case .user(let m) = item, accepts(m.sendState) else { continue }
                 let key = "u:" + m.text + "#\(m.attachments.count)"
-                guard let remaining = hydratedUserKeys[key], remaining > 0 else { return true }
+                guard let remaining = hydratedUserKeys[key], remaining > 0 else { continue }
                 hydratedUserKeys[key] = remaining - 1
-                return false
+                droppedUserIndices.insert(index)
+            }
+        }
+        consumeUserEchoes { $0 == .sent || $0 == .queued }
+        consumeUserEchoes { $0 == .sending || $0 == .failed }
+
+        let survivors = liveSuffix.enumerated().filter { index, item in
+            switch item {
+            case .user:
+                return !droppedUserIndices.contains(index)
             case .assistant(let m) where m.isStreaming:
                 if let final = latestHydratedReply, final.hasPrefix(m.text) {
                     return false
@@ -165,7 +184,7 @@ public final class TranscriptStore {
             case .notice:
                 return true
             }
-        }
+        }.map(\.element)
 
         items = hydrated + survivors
         hydratedCount = hydrated.count

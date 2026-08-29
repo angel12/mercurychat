@@ -1065,6 +1065,26 @@ struct TranscriptHydrationTests {
         #expect(userRows.count == 2)
         #expect(userRows.contains { $0.sendState == .sending })
     }
+
+    @Test func hydrationConsumesSentEchoBeforeFailedOne() {
+        let store = TranscriptStore()
+        let attachment = MessageAttachment(
+            id: "att-1", kind: .image, filename: "a.png", previewData: Data([0x01]))
+        // First identical send FAILED, second succeeded and persisted.
+        store.appendUserMessage("", attachments: [attachment], state: .failed)
+        store.appendUserMessage("", attachments: [attachment], state: .sent)
+        let row = TranscriptMessage(
+            json: json(#"{"role": "user", "id": 30, "content": "@image:/tmp/a.png"}"#))!
+        store.hydrate([row])
+        let userRows = store.items.compactMap { item -> UserMessage? in
+            if case .user(let m) = item { return m }
+            return nil
+        }
+        // The persisted row replaces the SENT echo; the failed echo keeps
+        // its retry control.
+        #expect(userRows.count == 2)
+        #expect(userRows.contains { $0.sendState == .failed })
+    }
 }
 
 @MainActor

@@ -105,24 +105,25 @@ final class ComposerAttachments {
     }
 
     /// Reads a picked/dropped file URL under its security scope — sandboxed
-    /// builds only get read access for the duration of that scope.
+    /// builds only get read access for the duration of that scope, and the
+    /// size pre-check needs that access just as much as the read does.
     func addContents(of url: URL) async {
-        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-            size > Self.maxSourceFileBytes
-        {
-            error = "Image is too large to send (60 MB max)."
-            return
-        }
         guard beginPreparation() else { return }
         defer { endPreparation() }
         // Whole-file read off the MainActor too: a big image on a slow volume
         // blocks just as long as the encode did.
-        guard let data = await Task.detached(operation: { Self.readSecurityScoped(url) }).value
-        else {
+        let maxBytes = Self.maxSourceFileBytes
+        let outcome = await Task.detached {
+            Self.readSecurityScoped(url, maxBytes: maxBytes)
+        }.value
+        switch outcome {
+        case .success(let data):
+            await prepareAndAppend(data: data, name: url.lastPathComponent)
+        case .failure(.tooLarge):
+            error = "Image is too large to send (60 MB max)."
+        case .failure(.unreadable):
             error = "Couldn't read \(url.lastPathComponent)."
-            return
         }
-        await prepareAndAppend(data: data, name: url.lastPathComponent)
     }
 
     /// Encode + append for a preparation whose slot is already reserved.
@@ -137,11 +138,29 @@ final class ComposerAttachments {
         }
     }
 
-    /// Pure file read — `nonisolated` so callers off the main actor can use it.
-    nonisolated static func readSecurityScoped(_ url: URL) -> Data? {
+    enum FileReadFailure: Error, Equatable, Sendable {
+        case tooLarge
+        case unreadable
+    }
+
+    /// Pure file read — `nonisolated` so callers off the main actor can use
+    /// it. The size stat runs INSIDE the security scope, alongside the read:
+    /// outside it, `resourceValues` on a sandboxed picker/drop URL throws and
+    /// the 60 MB pre-check silently no-opped, letting the whole file be read
+    /// into memory only for `prepare` to reject it.
+    nonisolated static func readSecurityScoped(
+        _ url: URL, maxBytes: Int
+    ) -> Result<Data, FileReadFailure> {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        return try? Data(contentsOf: url)
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+            size > maxBytes
+        {
+            // Size-exceeded returns without reading a single byte.
+            return .failure(.tooLarge)
+        }
+        guard let data = try? Data(contentsOf: url) else { return .failure(.unreadable) }
+        return .success(data)
     }
 
     /// Shared by drop and `onPasteCommand`: prefer the file URL representation

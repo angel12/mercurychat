@@ -98,6 +98,31 @@ struct ComposerAttachmentsTests {
         #expect(composer.error == "Couldn't load photo.")
     }
 
+    // MARK: Security-scoped read
+
+    @Test func readRefusesFilesOverTheSourceCapWithoutReadingThem() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("composer-cap-\(UUID().uuidString).bin")
+        try Data(repeating: 0x7f, count: 4096).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // The stat happens inside the security scope, alongside the read.
+        #expect(ComposerAttachments.readSecurityScoped(url, maxBytes: 1024) == .failure(.tooLarge))
+        switch ComposerAttachments.readSecurityScoped(url, maxBytes: 8192) {
+        case .success(let data): #expect(data.count == 4096)
+        case .failure(let failure): Issue.record("expected bytes, got \(failure)")
+        }
+    }
+
+    @Test func readReportsUnreadableFilesSeparately() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("composer-missing-\(UUID().uuidString).png")
+        #expect(
+            ComposerAttachments.readSecurityScoped(
+                missing, maxBytes: ComposerAttachments.maxSourceFileBytes)
+                == .failure(.unreadable))
+    }
+
     @Test func newBatchClearsThePreviousError() {
         let composer = ComposerAttachments()
         composer.error = "Couldn't load photo."
