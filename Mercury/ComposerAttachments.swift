@@ -259,42 +259,47 @@ final class ComposerAttachments {
     }
 
     #if os(macOS)
-        /// ⌘V handler (#4). Returns true when the pasteboard held image
-        /// content — even at cap or on a read failure, since falling through
-        /// to a text paste would insert the file's path — and false for a
-        /// plain text paste, which is never swallowed.
+        /// ⌘V handler (#4). Returns true when the pasteboard held attachable
+        /// content — a file of ANY kind, or raw image bytes — even at cap or
+        /// on a read failure, since falling through to a text paste would
+        /// insert the file's path. False for a plain text paste (and for a
+        /// copied browser link), which is never swallowed.
         @discardableResult
-        func pasteImages(from pasteboard: NSPasteboard = .general) -> Bool {
+        func pasteAttachments(from pasteboard: NSPasteboard = .general) -> Bool {
             let contents = ImagePasteboardReader.read(pasteboard)
             // A plain TEXT ⌘V is not a batch: returning `.ignored` from here
             // hands the paste to the field editor, so clearing the error line
             // on the way out would wipe a visible attachment failure that the
-            // user never acted on. Only image content starts a batch.
+            // user never acted on. Only attachable content starts a batch.
             guard !contents.isEmpty else { return false }
             beginBatch()
             // Pasted FILES take the same off-main, size-capped read as a drop
             // (#2): the reader classifies on the MainActor and hands the disk
-            // hit to `addReserved(contentsOf:)`, which stats against the
-            // 60 MB source cap inside the security scope before reading a
-            // byte. Reading here instead froze the composer for the length of
-            // a large paste and skipped the cap entirely.
+            // hit to `addReserved(contentsOf:)`, which picks the kind's ceiling
+            // (the PDF cap for PDFs, the source cap otherwise) and stats
+            // against it inside the security scope before reading a byte.
+            // Reading here instead froze the composer for the length of a
+            // large paste and skipped the cap entirely.
             //
-            // Slots are reserved up front, like every other batch; one task
-            // awaiting them in order keeps a multi-image paste staged in
-            // pasteboard order and leaves no gap between items. Unreadable
-            // files now surface their "Couldn't read …" error from that same
-            // path rather than being detected by a speculative read here.
-            if !contents.imageURLs.isEmpty {
-                let granted = reserveSlots(contents.imageURLs.count)
+            // Images and other files are ONE batch against ONE reservation —
+            // the 5-attachment cap is shared across kinds, so reserving each
+            // list separately would hand out the same free slots twice. A
+            // single task awaits them in order, keeping a multi-file paste
+            // staged in pasteboard order (images first) with no gap between
+            // items. Unreadable files surface their "Couldn't read …" error
+            // from that same path rather than a speculative read here.
+            let urls = contents.imageURLs + contents.fileURLs
+            if !urls.isEmpty {
+                let granted = reserveSlots(urls.count)
                 if granted > 0 {
-                    let urls = Array(contents.imageURLs.prefix(granted))
+                    let reserved = Array(urls.prefix(granted))
                     Task { @MainActor in
-                        for url in urls { await addReserved(contentsOf: url) }
+                        for url in reserved { await addReserved(contentsOf: url) }
                     }
                 }
                 // Still "handled" even at cap or on a read failure: the
-                // pasteboard held an image file, so falling through to a text
-                // paste would insert its path.
+                // pasteboard held a file, so falling through to a text paste
+                // would insert its path.
                 return true
             }
             if let data = contents.rawImage, reserveSlots(1) == 1 {

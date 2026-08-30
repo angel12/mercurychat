@@ -600,10 +600,10 @@ private struct ComposerView: View {
                     // the FILE case broke.) `performKeyEquivalent` on a view
                     // in the key window's hierarchy runs BEFORE the menu, so
                     // the catcher gets first refusal; it declines whenever
-                    // the pasteboard held no image and the normal text paste
-                    // proceeds untouched.
+                    // the pasteboard held nothing attachable and the normal
+                    // text paste proceeds untouched.
                     .background(
-                        PasteKeyCatcher(isActive: focused) { attachments.pasteImages() })
+                        PasteKeyCatcher(isActive: focused) { attachments.pasteAttachments() })
                 #endif
 
                 if controller.store.running {
