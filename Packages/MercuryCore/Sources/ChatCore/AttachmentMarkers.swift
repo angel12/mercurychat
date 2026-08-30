@@ -55,7 +55,12 @@ import MercuryKit
 ///   truncation, so marker-shaped prose in a plain message survives intact.
 /// - A PDF echo (one `.pdf` attachment) hydrates as K image page chips, since
 ///   that is genuinely all the row records. `.pdf` never appears on a
-///   hydrated row.
+///   hydrated row. `TranscriptStore.hydrate` therefore claims a live PDF echo
+///   against a persisted row on TEXT alone (its count key can never match),
+///   which leaves one narrow residual: during a reconnect, a same-text
+///   hydrated row of a DIFFERENT kind can be the one that claims the PDF
+///   echo. The echo is then lost rather than duplicated — the direction we
+///   prefer, since the persisted row is what the send became.
 public enum AttachmentMarkers {
     /// One persisted directive line: `@image:` / `@file:` + a path, quoted
     /// with backticks / double / single quotes when it contains whitespace or

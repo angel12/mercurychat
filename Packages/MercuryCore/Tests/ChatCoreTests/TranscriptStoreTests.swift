@@ -1021,6 +1021,66 @@ struct TranscriptHydrationTests {
         #expect(userRows.count == 2)
     }
 
+    @Test func hydrationClaimsAPDFEchoAgainstItsPageChipRow() {
+        let store = TranscriptStore()
+        // A PDF echo carries ONE `.pdf` attachment…
+        store.appendUserMessage(
+            "summarize this",
+            attachments: [
+                MessageAttachment(id: "att-1", kind: .pdf, filename: "report.pdf")
+            ],
+            state: .sent)
+        // …but its persisted row records the RENDERED PAGES: three `@image:`
+        // refs. The count-keyed key ("…#1" vs "…#3") can never match, so
+        // without the PDF fallback pass the echo survives NEXT TO the
+        // hydrated row and the bubble is duplicated.
+        store.hydrate(
+            rows(
+                #"[{"role": "user", "id": 40, "content": "summarize this\n@image:/img/pdf_p1.png\n@image:/img/pdf_p2.png\n@image:/img/pdf_p3.png"}]"#
+            ))
+        let userRows = store.items.filter { if case .user = $0 { true } else { false } }
+        #expect(userRows.count == 1)
+    }
+
+    @Test func hydrationKeepsANonPDFEchoWhoseAttachmentCountDiffers() {
+        let store = TranscriptStore()
+        // The text-only fallback is scoped to `.pdf` echoes: every other kind
+        // keeps the exact count-keyed behaviour, so a one-file echo is NOT
+        // swallowed by a same-text row carrying three chips.
+        store.appendUserMessage(
+            "look",
+            attachments: [
+                MessageAttachment(id: "att-1", kind: .file, filename: "notes.txt")
+            ],
+            state: .sending)
+        store.hydrate(
+            rows(
+                #"[{"role": "user", "id": 41, "content": "look\n@file:/a.txt\n@file:/b.txt\n@file:/c.txt"}]"#
+            ))
+        let userRows = store.items.filter { if case .user = $0 { true } else { false } }
+        #expect(userRows.count == 2)
+    }
+
+    @Test func hydrationLetsOnePersistedRowClaimOnlyOnePDFEcho() {
+        let store = TranscriptStore()
+        let pdf = MessageAttachment(id: "att-1", kind: .pdf, filename: "report.pdf")
+        // Two identical PDF sends, only the first persisted.
+        store.appendUserMessage("summarize this", attachments: [pdf], state: .sent)
+        store.appendUserMessage("summarize this", attachments: [pdf], state: .sending)
+        store.hydrate(
+            rows(
+                #"[{"role": "user", "id": 42, "content": "summarize this\n@image:/img/pdf_p1.png\n@image:/img/pdf_p2.png"}]"#
+            ))
+        let userRows = store.items.compactMap { item -> UserMessage? in
+            if case .user(let m) = item { return m }
+            return nil
+        }
+        // The fallback stays one-to-one: the in-flight send survives with its
+        // retry affordance intact.
+        #expect(userRows.count == 2)
+        #expect(userRows.contains { $0.sendState == .sending })
+    }
+
     @Test func hydrationRendersTwoImageOnlyRows() {
         // Two DIFFERENT image-only messages share the dedupe key ("u:#1") —
         // that key only filters the live suffix, so both hydrated rows must

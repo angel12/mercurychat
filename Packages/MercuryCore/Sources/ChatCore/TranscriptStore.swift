@@ -106,11 +106,21 @@ public final class TranscriptStore {
         // matching echoes (oldest-first, since the filter runs in order) and
         // any extra live echo survives — see `droppedUserIndices` below for
         // WHICH echo a row consumes.
+        //
+        // PDF echoes can't be keyed on the count at all — a `.pdf` echo
+        // hydrates as K page chips — so they get a text-only fallback pass
+        // after the count-keyed ones; see below.
         var hydratedUserKeys: [String: Int] = [:]
+        // Every hydrated user row's (text, count-key) pair, in order — the
+        // PDF fallback pass below needs to find a row by TEXT and then check
+        // whether its count-key is still unclaimed.
+        var hydratedUserRows: [(text: String, key: String)] = []
         let hydratedTexts = Set(hydrated.compactMap { item -> String? in
             switch item {
             case .user(let m):
-                hydratedUserKeys["u:" + m.text + "#\(m.attachments.count)", default: 0] += 1
+                let key = "u:" + m.text + "#\(m.attachments.count)"
+                hydratedUserKeys[key, default: 0] += 1
+                hydratedUserRows.append((m.text, key))
                 return nil
             case .assistant(let m): return "a:" + m.text
             default: return nil
@@ -170,6 +180,33 @@ public final class TranscriptStore {
                 let key = "u:" + m.text + "#\(m.attachments.count)"
                 guard let remaining = hydratedUserKeys[key], remaining > 0 else { continue }
                 hydratedUserKeys[key] = remaining - 1
+                droppedUserIndices.insert(index)
+            }
+        }
+        // FALLBACK for PDF echoes, whose count key can NEVER match. A `.pdf`
+        // echo carries one attachment; the row it persists as records the
+        // pages the server rendered — K `@image:` refs — so it hydrates as K
+        // chips. Under the count-keyed passes alone the claim always misses
+        // and the live echo survives NEXT TO its own hydrated row: a
+        // duplicated bubble on every mid-session re-hydration, not the rare
+        // race the other keys guard against.
+        //
+        // So a `.pdf`-carrying echo gets a second chance to claim a hydrated
+        // row on TEXT alone, ignoring the count — but only a row the passes
+        // above left unclaimed, and still one-to-one (N rows consume at most
+        // N echoes), so an in-flight resend keeps its retry affordance. Same
+        // rank order, weakest claim last, for the same reason.
+        for rank in 0...2 {
+            for (index, item) in liveSuffix.enumerated() {
+                guard !droppedUserIndices.contains(index),
+                    case .user(let m) = item,
+                    hydrationClaimRank(m.sendState) == rank,
+                    m.attachments.contains(where: { $0.kind == .pdf }),
+                    let claim = hydratedUserRows.first(where: {
+                        $0.text == m.text && (hydratedUserKeys[$0.key] ?? 0) > 0
+                    })
+                else { continue }
+                hydratedUserKeys[claim.key, default: 0] -= 1
                 droppedUserIndices.insert(index)
             }
         }
