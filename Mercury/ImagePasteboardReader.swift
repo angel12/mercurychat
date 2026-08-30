@@ -37,12 +37,17 @@
             var contents = Contents()
 
             // 1. Finder ⌘C: image-conforming file URLs. Filenames survive.
+            //    Filtered to FILE urls: the type-conformance option matches on
+            //    the path extension, so a copied `https://…/cat.png` link (or
+            //    the source-URL sidecar a browser's "Copy Image" leaves) comes
+            //    back here too — and these URLs are read off DISK downstream,
+            //    so a remote one only produces "Couldn't read cat.png."
             let imageURLs =
-                pasteboard.readObjects(
+                (pasteboard.readObjects(
                     forClasses: [NSURL.self],
                     options: [
                         .urlReadingContentsConformToTypes: [UTType.image.identifier]
-                    ]) as? [URL] ?? []
+                    ]) as? [URL] ?? []).filter(\.isFileURL)
             contents.imageURLs = imageURLs
 
             // Every URL on the pasteboard, unfiltered — the source of the
@@ -67,12 +72,17 @@
             }
 
             // 3. Screenshot / "copy image" case: raw bytes, no filename. Only
-            //    consulted when the pasteboard carried NO file URL at all —
-            //    Finder puts the copied file's ICON on the pasteboard next to
-            //    the URL (even for a PDF, .txt, or folder), and attaching a
-            //    64 px icon in place of the file the user copied would be
-            //    wrong — that file is staged from its URL above.
-            if imageURLs.isEmpty, anyFileURLs.isEmpty,
+            //    consulted when the pasteboard carried no FILE url — Finder
+            //    puts the copied file's ICON on the pasteboard next to the URL
+            //    (even for a PDF, .txt, or folder), and attaching a 64 px icon
+            //    in place of the file the user copied would be wrong; that
+            //    file is staged from its URL above.
+            //
+            //    A non-file URL is not that signal, though: a browser's "Copy
+            //    Image" leaves the image's `https:` source alongside the real
+            //    bytes, and suppressing on ANY url made that paste do nothing
+            //    at all. Only `isFileURL` means "these bytes are an icon."
+            if !anyFileURLs.contains(where: \.isFileURL),
                 let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff)
             {
                 contents.rawImage = data

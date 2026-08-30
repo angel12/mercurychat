@@ -286,9 +286,12 @@ final class ComposerAttachments {
     #if os(macOS)
         /// ⌘V handler (#4). Returns true when the pasteboard held attachable
         /// content — a file of ANY kind, or raw image bytes — even at cap or
-        /// on a read failure, since falling through to a text paste would
-        /// insert the file's path. False for a plain text paste (and for a
-        /// copied browser link), which is never swallowed.
+        /// on a read failure, since falling through to a text paste would then
+        /// insert the file's path. False for a paste with nothing attachable
+        /// on it, which is never swallowed: plain text, and a copied browser
+        /// LINK (a bare `https:` URL is not a file). A link copied ALONGSIDE
+        /// image bytes — what a browser's "Copy Image" leaves — is attachable
+        /// and does return true; the bytes are the point of that paste.
         @discardableResult
         func pasteAttachments(from pasteboard: NSPasteboard = .general) -> Bool {
             let contents = ImagePasteboardReader.read(pasteboard)

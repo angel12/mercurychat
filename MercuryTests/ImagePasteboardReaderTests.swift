@@ -145,6 +145,21 @@
             #expect(contents.isEmpty)
         }
 
+        /// A browser's "Copy Image" puts the bytes on the pasteboard AND, very
+        /// often, the image's source `https:` URL as a sidecar. Only FILE URLs
+        /// signal "the user copied a file, whose icon these bytes are" — a web
+        /// URL says the opposite, so the bytes are the image to attach.
+        @Test func rawImageWithAWebURLSidecarIsStillAttached() {
+            let pasteboard = makeTestPasteboard()
+            pasteboard.writeObjects([NSURL(string: "https://example.com/cat.png")!])
+            pasteboard.setData(pngData(), forType: .png)
+
+            let contents = ImagePasteboardReader.read(pasteboard)
+            #expect(contents.rawImage != nil)
+            #expect(contents.fileURLs.isEmpty)
+            #expect(contents.imageURLs.isEmpty)
+        }
+
         @Test func emptyPasteboardYieldsNoAttachment() {
             let pasteboard = makeTestPasteboard()
 
