@@ -559,14 +559,25 @@ final class ChatController: Identifiable {
     func submit(_ text: String, attachments: [PendingAttachment] = []) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
-        let echoed = attachments.map {
-            MessageAttachment(
-                id: $0.id, kind: $0.kind, filename: $0.filename,
-                previewData: $0.thumbnail ?? $0.data)
-        }
+        let echoed = attachments.map(Self.echoAttachment(for:))
         let echoID = store.appendUserMessage(trimmed, attachments: echoed, state: .sending)
         if !attachments.isEmpty { pendingUploads[echoID] = attachments }
         await dispatch(text: trimmed, echoID: echoID)
+    }
+
+    /// The transcript row a composed attachment echoes as. Only images carry
+    /// preview bytes: `previewData != nil` is what routes a row down the
+    /// thumbnail branch, so a PDF's or file's raw bytes there would draw a
+    /// broken image instead of the filename chip. Non-images render as chips
+    /// on the live path, matching hydrated rows — which never carry
+    /// attachment bytes at all, because the backend doesn't round-trip them.
+    nonisolated static func echoAttachment(for attachment: PendingAttachment)
+        -> MessageAttachment
+    {
+        MessageAttachment(
+            id: attachment.id, kind: attachment.kind, filename: attachment.filename,
+            previewData: attachment.kind == .image
+                ? (attachment.thumbnail ?? attachment.data) : nil)
     }
 
     /// Re-send a failed echo, keeping its identity (the retry updates the
