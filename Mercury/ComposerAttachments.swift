@@ -42,6 +42,13 @@ final class ComposerAttachments {
     /// Ceiling on bytes pulled off disk before preparation. Anything larger
     /// can't survive `ImageAttachmentPreparer`'s 20 MB encoded cap anyway, so
     /// reject it from the file's metadata rather than reading it into memory.
+    ///
+    /// For `.file` sends this is the ONLY limit: unlike `image.attach` (25 MB)
+    /// and `pdf.attach` (50 MB), the gateway's `file.attach` enforces no
+    /// server-side byte cap, so nothing downstream would reject an oversized
+    /// send. 60 MB is ~80 MB of base64 in a single WS frame — inside the
+    /// gateway's raised `ws_max_size`, and about what a phone can hold while
+    /// the frame is built.
     static let maxSourceFileBytes = 60 * 1024 * 1024
 
     /// Server cap for `pdf.attach` payloads (error 4018 above 50 MB) —

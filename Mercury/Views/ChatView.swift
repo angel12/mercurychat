@@ -466,7 +466,7 @@ private struct ChatContentView: View {
             ZStack {
                 Rectangle()
                     .fill(.background.opacity(0.7))
-                Label("Drop files to attach", systemImage: "photo.badge.plus")
+                Label("Drop files to attach", systemImage: "doc.badge.plus")
                     .font(.headline)
                     .foregroundStyle(.secondary)
             }
