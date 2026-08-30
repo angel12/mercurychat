@@ -1,6 +1,7 @@
 # Mercury Chat
 
 [![MercuryCore Tests](http://10.0.1.72:3000/spencer/mercury/actions/workflows/mercurycore-tests.yml/badge.svg)](http://10.0.1.72:3000/spencer/mercury/actions?workflow=mercurycore-tests.yml)
+[![App Tests](http://10.0.1.72:3000/spencer/mercury/actions/workflows/app-tests.yml/badge.svg)](http://10.0.1.72:3000/spencer/mercury/actions?workflow=app-tests.yml)
 
 A native SwiftUI client for [Hermes Agent](https://github.com/NousResearch/hermes-agent) on iOS 17+, macOS 14+, and visionOS 2+. Mercury Chat speaks the same protocol as the official Hermes Desktop app: the `hermes serve` backend's JSON-RPC 2.0 WebSocket gateway at `/api/ws` plus its `/api/*` REST surface.
 
@@ -37,7 +38,7 @@ Packages/MercuryCore/
     TranscriptItem             — user / assistant (markdown+reasoning) / tool row / notice
   Tests/MercuryKitTests/       — protocol-layer tests, incl. real-socket coverage against
                                  hand-rolled loopback HTTP/WebSocket servers (TestServers.swift)
-  Tests/ChatCoreTests/         — transcript reducer + hydration tests
+  Tests/ChatCoreTests/         — transcript reducer + hydration, attachment markers + uploads
 ```
 
 The protocol layer is lifted nearly verbatim from HermesVoice's `HermesKit` (a working Swift 6 client of the same protocol) and extended with transcript hydration, the fuller desktop event set, session-management RPCs, and native-PKCE OAuth.
@@ -74,7 +75,7 @@ The runner's capacity is 1, so the two workflows queue and run one after the oth
 Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-08-11 unless noted. The client has since adopted the `hermes serve` 0.20.5 surface (desktop contract 6); those changes are covered by the automated suites and have not been re-verified live.
 
 ### Milestone 1 — MercuryKit port
-- [x] `swift test` green — now enforced by CI on every PR (148 tests — 102 MercuryKitTests + 46 ChatCoreTests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, real-socket networking against loopback HTTP/WebSocket test servers, transcript reducer + hydration).
+- [x] `swift test` green — now enforced by CI on every PR (199 tests — 110 MercuryKitTests + 89 ChatCoreTests: endpoint parsing, credentials/cookie extraction, payload wrappers, PKCE vectors + live loopback-listener round trips, real-socket networking against loopback HTTP/WebSocket test servers, transcript reducer + hydration, attachment markers + upload sequencing).
 - [x] App-layer suite (`MercuryTests` Xcode target, AppModel glue) green — enforced by CI on every PR (51 tests). Not run by `swift test`; run it locally with `xcodebuild test -scheme MercuryTests -destination 'platform=macOS'`.
 
 ### Milestone 2 — connect + browse
