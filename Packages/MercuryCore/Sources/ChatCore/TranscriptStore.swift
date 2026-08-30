@@ -106,11 +106,26 @@ public final class TranscriptStore {
         // matching echoes (oldest-first, since the filter runs in order) and
         // any extra live echo survives — see `droppedUserIndices` below for
         // WHICH echo a row consumes.
+        //
+        // PDF echoes can't be keyed on the count at all — a `.pdf` echo
+        // hydrates as K page chips — so they are EXCLUDED from the count-keyed
+        // passes entirely and claim only in the text-only fallback below.
+        // Letting them key on their own count (always exactly 1) had them
+        // stealing the row of a same-caption 1-chip image/file sibling
+        // oldest-first: the PDF echo vanished into the wrong row and the
+        // sibling's echo survived as a duplicate bubble. Captionless
+        // attach-only sends (text == "") hit that on any ordinary reconnect.
         var hydratedUserKeys: [String: Int] = [:]
+        // Every hydrated user row's (text, count-key, attachment count) in
+        // order — the PDF fallback pass below finds a row by TEXT, prefers one
+        // whose count is not 1, and checks its count-key is still unclaimed.
+        var hydratedUserRows: [(text: String, key: String, count: Int)] = []
         let hydratedTexts = Set(hydrated.compactMap { item -> String? in
             switch item {
             case .user(let m):
-                hydratedUserKeys["u:" + m.text + "#\(m.attachments.count)", default: 0] += 1
+                let key = "u:" + m.text + "#\(m.attachments.count)"
+                hydratedUserKeys[key, default: 0] += 1
+                hydratedUserRows.append((m.text, key, m.attachments.count))
                 return nil
             case .assistant(let m): return "a:" + m.text
             default: return nil
@@ -162,14 +177,59 @@ public final class TranscriptStore {
             }
         }
         var droppedUserIndices: Set<Int> = []
-        // Within one rank, consumption stays oldest-first.
+        // Within one rank, consumption stays oldest-first. `.pdf`-carrying
+        // echoes sit these passes out — their count key is meaningless and
+        // matching on it only ever robs a sibling (see above).
         for rank in 0...2 {
             for (index, item) in liveSuffix.enumerated() {
-                guard case .user(let m) = item, hydrationClaimRank(m.sendState) == rank
+                guard case .user(let m) = item, hydrationClaimRank(m.sendState) == rank,
+                    !m.attachments.contains(where: { $0.kind == .pdf })
                 else { continue }
                 let key = "u:" + m.text + "#\(m.attachments.count)"
                 guard let remaining = hydratedUserKeys[key], remaining > 0 else { continue }
                 hydratedUserKeys[key] = remaining - 1
+                droppedUserIndices.insert(index)
+            }
+        }
+        // FALLBACK for PDF echoes, whose count key can NEVER match. A `.pdf`
+        // echo carries one attachment; the row it persists as records the
+        // pages the server rendered — K `@image:` refs — so it hydrates as K
+        // chips. Under the count-keyed passes alone the claim always misses
+        // and the live echo survives NEXT TO its own hydrated row: a
+        // duplicated bubble on every mid-session re-hydration, not the rare
+        // race the other keys guard against.
+        //
+        // So a `.pdf`-carrying echo claims a hydrated row on TEXT alone here,
+        // ignoring the count — but only a row the passes above left unclaimed,
+        // and still one-to-one (N rows consume at most N echoes), so an
+        // in-flight resend keeps its retry affordance. Same rank order,
+        // weakest claim last, for the same reason.
+        //
+        // Among unclaimed same-text rows, one whose count is NOT 1 wins: the
+        // PDF's own row carries K page chips, while a 1-chip row is what a
+        // same-caption image/file sibling persists as. Falling back to ANY
+        // unclaimed row still covers the poppler-fallback shape, where the
+        // server couldn't render pages and the PDF persisted as a single
+        // `@file` chip. ACCEPTED residual: a ONE-page PDF against a
+        // same-caption 1-chip sibling is inherently ambiguous — nothing in
+        // either row distinguishes them — so the echo may claim the sibling's
+        // row; one-to-one keeps the outcome to a mispairing, never a
+        // duplicate.
+        for rank in 0...2 {
+            for (index, item) in liveSuffix.enumerated() {
+                guard !droppedUserIndices.contains(index),
+                    case .user(let m) = item,
+                    hydrationClaimRank(m.sendState) == rank,
+                    m.attachments.contains(where: { $0.kind == .pdf })
+                else { continue }
+                let unclaimed = { (row: (text: String, key: String, count: Int)) in
+                    row.text == m.text && (hydratedUserKeys[row.key] ?? 0) > 0
+                }
+                guard
+                    let claim = hydratedUserRows.first(where: { unclaimed($0) && $0.count != 1 })
+                        ?? hydratedUserRows.first(where: unclaimed)
+                else { continue }
+                hydratedUserKeys[claim.key, default: 0] -= 1
                 droppedUserIndices.insert(index)
             }
         }

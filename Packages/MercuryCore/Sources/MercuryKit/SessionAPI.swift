@@ -26,6 +26,28 @@ public struct ImageAttachment: Sendable, Equatable {
     }
 }
 
+/// Result of `file.attach`: the staged file plus the `@file:` directive
+/// line the SUBMITTED prompt must carry for the agent to see the file —
+/// staging alone attaches nothing to a turn.
+public struct FileAttachment: Sendable, Equatable {
+    /// Display name the gateway recorded for the staged file.
+    public var name: String
+    /// Gateway-side staging path.
+    public var path: String
+    /// The `@file:` line to append to the submitted prompt text.
+    public var refText: String
+}
+
+/// Result of `pdf.attach`: the rendered page images now staged in
+/// `attached_images` (drained by the next `prompt.submit`, each detachable
+/// via `image.detach` like any staged image).
+public struct PDFAttachment: Sendable, Equatable {
+    /// Gateway-side staging paths of the rendered pages, in page order.
+    public var pagePaths: [String]
+    /// How many pages the gateway says it staged.
+    public var pagesAttached: Int
+}
+
 /// Typed wrappers over the gateway RPC methods the app uses.
 extension HermesConnection {
     /// Column count reported to the backend; matches the desktop client.
@@ -145,6 +167,68 @@ extension HermesConnection {
         _ = try await request(
             "image.detach",
             params: ["session_id": .string(sessionID), "path": .string(path)])
+    }
+
+    /// `file.attach` — stage a non-image file into the session workspace.
+    /// Unlike images, staged files are NOT drained by `prompt.submit`; the
+    /// returned `refText` must be appended to the submitted text. There is no
+    /// detach RPC and none is needed: an unreferenced staged file is inert.
+    /// Payloads can be tens of MB of base64, hence the long timeout. Never log
+    /// the payload.
+    public func attachFile(
+        sessionID: String, dataURL: String, name: String? = nil
+    ) async throws -> FileAttachment {
+        var params: [String: JSONValue] = [
+            "session_id": .string(sessionID),
+            "data_url": .string(dataURL),
+        ]
+        if let name, !name.isEmpty { params["name"] = .string(name) }
+        let result = try await request("file.attach", params: .object(params), timeout: 300)
+        // An EMPTY `ref_text` fails the same way a missing one does: the
+        // caller appends it to the submitted prompt, so an empty string would
+        // send a message that points at nothing while the staged file sits
+        // unreferenced — the attachment silently dropped.
+        guard result["attached"]?.truthy == true,
+            let path = result["path"]?.stringValue,
+            let refText = result["ref_text"]?.stringValue, !refText.isEmpty
+        else {
+            throw HermesError.malformedResponse("file.attach did not confirm attachment")
+        }
+        return FileAttachment(
+            name: result["name"]?.stringValue ?? (path as NSString).lastPathComponent,
+            path: path, refText: refText)
+    }
+
+    /// `pdf.attach` — render a PDF's pages to PNGs server-side and stage them
+    /// as vision images. Requires poppler on the gateway; error 5028 means it
+    /// is missing (callers fall back to `attachFile`). `first_page`/`last_page`
+    /// are deliberately omitted: the server renders from page 1 up to its
+    /// 25-page cap. 50 MB server cap (4018 above it). Never log the payload.
+    public func attachPDF(
+        sessionID: String, base64: String, filename: String? = nil
+    ) async throws -> PDFAttachment {
+        var params: [String: JSONValue] = [
+            "session_id": .string(sessionID),
+            "content_base64": .string(base64),
+        ]
+        if let filename, !filename.isEmpty { params["filename"] = .string(filename) }
+        let result = try await request("pdf.attach", params: .object(params), timeout: 600)
+        guard result["attached"]?.truthy == true,
+            let pages = result["pages"]?.arrayValue
+        else {
+            throw HermesError.malformedResponse("pdf.attach did not confirm attachment")
+        }
+        // `attached: true` with no usable page paths staged nothing: an empty
+        // success let the send go out with neither vision pages nor any sign
+        // the PDF was lost. Fail it instead, so the echo can go `.failed` and
+        // offer a retry.
+        let paths = pages.compactMap { $0["path"]?.stringValue }
+        guard !paths.isEmpty else {
+            throw HermesError.malformedResponse("pdf.attach staged no pages")
+        }
+        return PDFAttachment(
+            pagePaths: paths,
+            pagesAttached: result["pages_attached"]?.intValue ?? paths.count)
     }
 
     /// Cancel the in-flight turn (used on barge-in while still generating).

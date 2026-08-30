@@ -108,12 +108,13 @@ private struct ChatContentView: View {
         .overlay { dropTarget }
         .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
         // The drop destination sits on the WHOLE chat surface, not just the
-        // composer strip: dropping an image anywhere in the window attaches it.
-        // Finder/Files deliver file URLs (filename preserved, read under
-        // security scope), other apps deliver raw image Data — `onDrop` takes
-        // both content types at once. One destination, not two: stacked
-        // `.dropDestination` modifiers on the same view register a single
-        // delegate, so the second would shadow the first.
+        // composer strip: dropping a file anywhere in the window attaches it.
+        // Finder/Files deliver file URLs of ANY type (filename preserved, read
+        // under security scope, classified by kind), other apps deliver raw
+        // image Data — `onDrop` takes both content types at once. One
+        // destination, not two: stacked `.dropDestination` modifiers on the
+        // same view register a single delegate, so the second would shadow
+        // the first.
         .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
             attachments.loadProviders(providers)
             return !providers.isEmpty
@@ -465,7 +466,7 @@ private struct ChatContentView: View {
             ZStack {
                 Rectangle()
                     .fill(.background.opacity(0.7))
-                Label("Drop images to attach", systemImage: "photo.badge.plus")
+                Label("Drop files to attach", systemImage: "doc.badge.plus")
                     .font(.headline)
                     .foregroundStyle(.secondary)
             }
@@ -477,7 +478,7 @@ private struct ChatContentView: View {
                     .padding(8)
             )
             .transition(.opacity)
-            .accessibilityLabel("Drop images to attach")
+            .accessibilityLabel("Drop files to attach")
         }
     }
 
@@ -600,10 +601,10 @@ private struct ComposerView: View {
                     // the FILE case broke.) `performKeyEquivalent` on a view
                     // in the key window's hierarchy runs BEFORE the menu, so
                     // the catcher gets first refusal; it declines whenever
-                    // the pasteboard held no image and the normal text paste
-                    // proceeds untouched.
+                    // the pasteboard held nothing attachable and the normal
+                    // text paste proceeds untouched.
                     .background(
-                        PasteKeyCatcher(isActive: focused) { attachments.pasteImages() })
+                        PasteKeyCatcher(isActive: focused) { attachments.pasteAttachments() })
                 #endif
 
                 if controller.store.running {
@@ -634,7 +635,10 @@ private struct ComposerView: View {
             // NOT in the message field (e.g. on the send button). The common
             // case — focus in the field — is handled by `PasteKeyCatcher`
             // above, which consumes the key equivalent before the menu.
-            .onPasteCommand(of: [.image]) { providers in
+            .onPasteCommand(of: [.fileURL, .image]) { providers in
+                // Any file, not just images — `loadProviders` classifies by
+                // kind. Deliberately not `[.item]`: that would swallow plain
+                // text pastes that belong in the message field.
                 attachments.loadProviders(providers)
             }
         #endif
@@ -643,7 +647,7 @@ private struct ComposerView: View {
         // people actually do.
         .fileImporter(
             isPresented: $showingFileImporter,
-            allowedContentTypes: [.image],
+            allowedContentTypes: [.item],
             allowsMultipleSelection: true
         ) { result in
             guard case .success(let urls) = result, !urls.isEmpty else { return }
@@ -755,7 +759,7 @@ private struct ComposerView: View {
                 .font(.title2)
         }
         .buttonStyle(.borderless)
-        .help("Attach an image")
+        .help("Attach files")
     }
 
     private func send() {
@@ -838,12 +842,34 @@ private struct AttachmentTray: View {
             HStack(spacing: 8) {
                 ForEach(attachments) { attachment in
                     ZStack(alignment: .topTrailing) {
-                        AttachmentThumbnail(data: attachment.thumbnail ?? attachment.data)
-                            .frame(width: 64, height: 64)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .strokeBorder(.quaternary))
+                        Group {
+                            if attachment.kind == .image {
+                                AttachmentThumbnail(data: attachment.thumbnail ?? attachment.data)
+                            } else {
+                                // PDFs and plain files stage without thumbnail
+                                // bytes — a kind icon over the name instead.
+                                VStack(spacing: 4) {
+                                    Image(
+                                        systemName: attachment.kind == .pdf
+                                            ? "doc.richtext" : "doc"
+                                    )
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                    Text(attachment.filename)
+                                        .font(.caption2)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                .padding(.horizontal, 4)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(.quaternary)
+                            }
+                        }
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(.quaternary))
                         Button {
                             attachments.removeAll { $0.id == attachment.id }
                         } label: {

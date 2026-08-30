@@ -19,6 +19,7 @@ targets:
       - path: Mercury/AppModel.swift
       - path: Mercury/ChatController.swift
       - path: Mercury/ComposerAttachments.swift
+      - path: Mercury/FileAttachmentWire.swift
       - path: Mercury/ImageAttachmentPreparer.swift
       - path: Mercury/ImagePasteboardReader.swift
       - path: MercuryTests
