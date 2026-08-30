@@ -67,7 +67,8 @@ public enum AttachmentMarkers {
     /// bracket/quote characters (mirrors `format_reference_value` and the
     /// desktop's HERMES_DIRECTIVE_RE). Computed, not stored: `Regex` isn't
     /// `Sendable`, so it can't be a static constant under strict concurrency
-    /// — bind it once per parse instead of per line.
+    /// — `stripTrailingRefs` binds it once per PASS (so up to twice per
+    /// parse) instead of once per line.
     private static var refLine:
         Regex<
             (

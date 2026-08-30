@@ -30,15 +30,20 @@ public struct MessageAttachment: Sendable, Equatable, Identifiable {
     }
 }
 
-/// An attachment staged in the composer, ready to upload: bytes are already
-/// downscaled/transcoded to what the wire should carry.
+/// An attachment staged in the composer, ready to upload: `data` is exactly
+/// what the wire should carry. Only `.image` bytes are downscaled/transcoded
+/// on the way in (`ImageAttachmentPreparer`); `.pdf` and `.file` carry the
+/// file's raw bytes, since the server renders or stages them itself.
 public struct PendingAttachment: Sendable, Equatable, Identifiable {
     public var id: String
     public var filename: String
     public var data: Data
     public var kind: MessageAttachment.Kind
     /// Small preview (≤512 px JPEG) for tray/echo thumbnails, so the
-    /// transcript never holds the full wire bytes. Nil falls back to `data`.
+    /// transcript never holds the full wire bytes. Populated on `.image`
+    /// attachments only, where nil falls back to `data`. `.pdf` and `.file`
+    /// always leave it nil and are NOT drawn from `data` — their bytes aren't
+    /// an image; they render as a filename chip instead.
     public var thumbnail: Data?
 
     public init(
