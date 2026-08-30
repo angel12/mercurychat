@@ -108,12 +108,13 @@ private struct ChatContentView: View {
         .overlay { dropTarget }
         .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
         // The drop destination sits on the WHOLE chat surface, not just the
-        // composer strip: dropping an image anywhere in the window attaches it.
-        // Finder/Files deliver file URLs (filename preserved, read under
-        // security scope), other apps deliver raw image Data — `onDrop` takes
-        // both content types at once. One destination, not two: stacked
-        // `.dropDestination` modifiers on the same view register a single
-        // delegate, so the second would shadow the first.
+        // composer strip: dropping a file anywhere in the window attaches it.
+        // Finder/Files deliver file URLs of ANY type (filename preserved, read
+        // under security scope, classified by kind), other apps deliver raw
+        // image Data — `onDrop` takes both content types at once. One
+        // destination, not two: stacked `.dropDestination` modifiers on the
+        // same view register a single delegate, so the second would shadow
+        // the first.
         .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
             attachments.loadProviders(providers)
             return !providers.isEmpty
@@ -465,7 +466,7 @@ private struct ChatContentView: View {
             ZStack {
                 Rectangle()
                     .fill(.background.opacity(0.7))
-                Label("Drop images to attach", systemImage: "photo.badge.plus")
+                Label("Drop files to attach", systemImage: "photo.badge.plus")
                     .font(.headline)
                     .foregroundStyle(.secondary)
             }
@@ -477,7 +478,7 @@ private struct ChatContentView: View {
                     .padding(8)
             )
             .transition(.opacity)
-            .accessibilityLabel("Drop images to attach")
+            .accessibilityLabel("Drop files to attach")
         }
     }
 
