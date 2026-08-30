@@ -601,8 +601,13 @@ final class ChatController: Identifiable {
             // redirects, or steers per its busy-input policy and says which
             // in the result — surface that, or "/steer worked but nothing
             // acknowledged it" (#6). Attachments are staged first and consumed
-            // by the submit; any failure detaches them (an orphaned staged
-            // image is silently swallowed by the NEXT prompt).
+            // by the submit, with two cleanup modes: images and PDF pages are
+            // detached on failure (an orphaned staged image is silently
+            // swallowed by the NEXT prompt), while staged files are inert —
+            // nothing reads them until a prompt names them, so a failed send
+            // simply leaves them unreferenced. Retrying a file send re-stages
+            // it and the earlier orphan stays on the gateway disk as
+            // `name-2.ext`; that residual is accepted.
             let status = try await AttachmentUpload.dispatch(
                 text: text,
                 attachments: attachments,
@@ -610,12 +615,40 @@ final class ChatController: Identifiable {
                 // leave the MainActor — they touch nothing but the connection
                 // actor and the values captured here.
                 attach: { @Sendable [connection] attachment in
-                    let result = try await connection.attachImageBytes(
-                        sessionID: runtimeID,
-                        base64: attachment.data.base64EncodedString(),
-                        filename: attachment.filename
-                    )
-                    return StagedAttachment(detachPaths: [result.path], refText: nil)
+                    switch attachment.kind {
+                    case .image:
+                        let result = try await connection.attachImageBytes(
+                            sessionID: runtimeID,
+                            base64: attachment.data.base64EncodedString(),
+                            filename: attachment.filename)
+                        return StagedAttachment(detachPaths: [result.path], refText: nil)
+                    case .pdf:
+                        do {
+                            let result = try await connection.attachPDF(
+                                sessionID: runtimeID,
+                                base64: attachment.data.base64EncodedString(),
+                                filename: attachment.filename)
+                            return StagedAttachment(detachPaths: result.pagePaths, refText: nil)
+                        } catch let HermesError.rpcError(code, _)
+                            where code == 5028 || code == -32601
+                        {
+                            // No poppler on the gateway (or a pre-pdf.attach backend):
+                            // degrade to a workspace file the agent reads with its tools.
+                            let result = try await connection.attachFile(
+                                sessionID: runtimeID,
+                                dataURL: FileAttachmentWire.dataURL(
+                                    attachment.data, filename: attachment.filename),
+                                name: attachment.filename)
+                            return StagedAttachment(detachPaths: [], refText: result.refText)
+                        }
+                    case .file:
+                        let result = try await connection.attachFile(
+                            sessionID: runtimeID,
+                            dataURL: FileAttachmentWire.dataURL(
+                                attachment.data, filename: attachment.filename),
+                            name: attachment.filename)
+                        return StagedAttachment(detachPaths: [], refText: result.refText)
+                    }
                 },
                 // Cleanup must outlive cancellation: a cancelled send still
                 // has to unstage what it staged, and an inherited-cancellation
