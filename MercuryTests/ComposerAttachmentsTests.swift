@@ -183,4 +183,52 @@ struct ComposerAttachmentsTests {
         #expect(composer.items.isEmpty)
         #expect(composer.error == nil)
     }
+
+    // MARK: Kind classification
+
+    @Test func classifiesByExtension() {
+        #expect(ComposerAttachments.kind(forFilename: "a.png") == .image)
+        #expect(ComposerAttachments.kind(forFilename: "b.JPG") == .image)
+        #expect(ComposerAttachments.kind(forFilename: "c.pdf") == .pdf)
+        #expect(ComposerAttachments.kind(forFilename: "d.csv") == .file)
+        #expect(ComposerAttachments.kind(forFilename: "noext") == .file)
+    }
+
+    @MainActor @Test func nonImageFileStagesRawBytesWithoutImagePreparer() async {
+        let attachments = ComposerAttachments()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notes-\(UUID().uuidString).txt")
+        try? Data("hello".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        attachments.beginBatch()
+        attachments.reserveSlots(1)
+        await attachments.addReserved(contentsOf: url)
+        #expect(attachments.items.count == 1)
+        #expect(attachments.items[0].kind == .file)
+        #expect(attachments.items[0].data == Data("hello".utf8))
+        #expect(attachments.items[0].thumbnail == nil)
+        #expect(attachments.error == nil)
+    }
+
+    @MainActor @Test func oversizedPDFIsRejectedWithPDFError() async {
+        let attachments = ComposerAttachments()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("big-\(UUID().uuidString).pdf")
+        // Sparse-ish: 50 MB + 1 of zeros written once; fine for a unit test.
+        try? Data(count: ComposerAttachments.maxPDFBytes + 1).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        attachments.beginBatch()
+        attachments.reserveSlots(1)
+        await attachments.addReserved(contentsOf: url)
+        #expect(attachments.items.isEmpty)
+        #expect(attachments.error == "PDF is too large to send (50 MB max).")
+    }
+
+    @MainActor @Test func capErrorTalksAboutAttachmentsNotImages() {
+        let attachments = ComposerAttachments()
+        attachments.reserveSlots(ComposerAttachments.maxAttachments + 1)
+        #expect(
+            attachments.error
+                == "Up to \(ComposerAttachments.maxAttachments) attachments per message.")
+    }
 }

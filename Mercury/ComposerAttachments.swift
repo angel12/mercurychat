@@ -12,6 +12,14 @@ import UniformTypeIdentifiers
 /// whole chat surface (#3): `ChatContentView` owns the instance, the composer
 /// renders and sends it. Kept out of ChatView.swift so MercuryTests can
 /// compile the state machine without SwiftUI.
+///
+/// Staging is per-kind (`MessageAttachment.Kind`): a picked/dropped file URL
+/// is classified from its extension by `kind(forFilename:)`, and only `.image`
+/// takes the decode/resize/encode path — `.pdf` and `.file` stage the raw
+/// bytes with no thumbnail. Byte ceilings follow the kind too (`maxPDFBytes`
+/// for PDFs, `maxSourceFileBytes` for everything else); the 5-attachment cap
+/// is shared across kinds. Inputs that arrive as bare DATA (photo picker,
+/// pasted/dropped screenshots) are images by construction and never classify.
 @MainActor
 @Observable
 final class ComposerAttachments {
@@ -35,6 +43,22 @@ final class ComposerAttachments {
     /// can't survive `ImageAttachmentPreparer`'s 20 MB encoded cap anyway, so
     /// reject it from the file's metadata rather than reading it into memory.
     static let maxSourceFileBytes = 60 * 1024 * 1024
+
+    /// Server cap for `pdf.attach` payloads (error 4018 above 50 MB) —
+    /// enforced from file metadata before the read, like the source cap.
+    static let maxPDFBytes = 50 * 1024 * 1024
+
+    /// Kind by declared type (filename extension via UTType). Intent-based on
+    /// purpose: a `.txt` must never take the image decode path just because
+    /// trial-decoding is possible, and raw pasted/picked image DATA (no
+    /// filename) never reaches this — those inputs are inherently images.
+    nonisolated static func kind(forFilename name: String) -> MessageAttachment.Kind {
+        let ext = (name as NSString).pathExtension
+        guard !ext.isEmpty, let type = UTType(filenameExtension: ext) else { return .file }
+        if type.conforms(to: .image) { return .image }
+        if type.conforms(to: .pdf) { return .pdf }
+        return .file
+    }
 
     /// Slots a NEW attachment could still claim: the cap minus what is
     /// staged AND minus what is already being prepared. The photo picker's
@@ -76,7 +100,7 @@ final class ComposerAttachments {
     func reserveSlots(_ count: Int) -> Int {
         let granted = min(max(0, count), availableSlots)
         if granted < count {
-            error = "Up to \(Self.maxAttachments) images per message."
+            error = "Up to \(Self.maxAttachments) attachments per message."
         }
         preparing += granted
         return granted
@@ -95,7 +119,7 @@ final class ComposerAttachments {
     @discardableResult
     func append(_ attachment: PendingAttachment) -> Bool {
         guard items.count < Self.maxAttachments else {
-            error = "Up to \(Self.maxAttachments) images per message."
+            error = "Up to \(Self.maxAttachments) attachments per message."
             return false
         }
         items.append(attachment)
@@ -123,19 +147,36 @@ final class ComposerAttachments {
     /// builds only get read access for the duration of that scope, and the
     /// size pre-check needs that access just as much as the read does.
     /// Consumes a reservation the caller already holds.
+    ///
+    /// The kind is decided from the filename BEFORE the read, because the byte
+    /// ceiling depends on it: PDFs are capped by the server's `pdf.attach`
+    /// limit, everything else by the source cap.
     func addReserved(contentsOf url: URL) async {
         defer { endPreparation() }
+        let kind = Self.kind(forFilename: url.lastPathComponent)
+        let maxBytes = kind == .pdf ? Self.maxPDFBytes : Self.maxSourceFileBytes
         // Whole-file read off the MainActor too: a big image on a slow volume
         // blocks just as long as the encode did.
-        let maxBytes = Self.maxSourceFileBytes
         let outcome = await Task.detached {
             Self.readSecurityScoped(url, maxBytes: maxBytes)
         }.value
         switch outcome {
         case .success(let data):
-            await prepareAndAppend(data: data, name: url.lastPathComponent)
+            switch kind {
+            case .image:
+                await prepareAndAppend(data: data, name: url.lastPathComponent)
+            case .pdf, .file:
+                // No transcode for non-images: raw bytes go on the wire, and
+                // there is no thumbnail — the tray/transcript render a chip.
+                append(PendingAttachment(filename: url.lastPathComponent, data: data, kind: kind))
+            }
         case .failure(.tooLarge):
-            error = "Image is too large to send (60 MB max)."
+            error =
+                kind == .pdf
+                ? "PDF is too large to send (50 MB max)."
+                : (kind == .image
+                    ? "Image is too large to send (60 MB max)."
+                    : "File is too large to send (60 MB max).")
         case .failure(.unreadable):
             error = "Couldn't read \(url.lastPathComponent)."
         }
@@ -181,6 +222,11 @@ final class ComposerAttachments {
     /// Shared by drop and `onPasteCommand`: prefer the file URL representation
     /// so the filename survives, and fall back to raw image bytes. One call =
     /// one batch.
+    ///
+    /// A file URL of ANY type attaches — `addReserved(contentsOf:)` classifies
+    /// it and applies that kind's cap. The raw-data fallback stays image-only:
+    /// bytes with no filename carry no declared type to classify, and the only
+    /// providers that reach it are screenshots and dragged image data.
     ///
     /// The whole batch is reserved here, synchronously, because a provider's
     /// load completion is unbounded in time — reserving inside the completion
