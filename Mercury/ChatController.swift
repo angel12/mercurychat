@@ -610,11 +610,12 @@ final class ChatController: Identifiable {
                 // leave the MainActor — they touch nothing but the connection
                 // actor and the values captured here.
                 attach: { @Sendable [connection] attachment in
-                    try await connection.attachImageBytes(
+                    let result = try await connection.attachImageBytes(
                         sessionID: runtimeID,
                         base64: attachment.data.base64EncodedString(),
                         filename: attachment.filename
-                    ).path
+                    )
+                    return StagedAttachment(detachPaths: [result.path], refText: nil)
                 },
                 // Cleanup must outlive cancellation: a cancelled send still
                 // has to unstage what it staged, and an inherited-cancellation

@@ -1,10 +1,17 @@
 import Foundation
 
-/// An attachment carried by a user message. `Kind` is the extension point
-/// for later types (PDF pages, arbitrary files) — v1 only produces `.image`.
+/// An attachment carried by a user message. `Kind` decides how the bytes
+/// reach the model: inline vision pages, or a staged workspace file the
+/// prompt points at.
 public struct MessageAttachment: Sendable, Equatable, Identifiable {
     public enum Kind: Sendable, Equatable {
         case image
+        /// Rendered to vision pages server-side (`pdf.attach`); falls back to
+        /// `.file` semantics when the gateway lacks poppler.
+        case pdf
+        /// Staged into the session workspace (`file.attach`); reaches the model
+        /// as an `@file:` ref line appended to the submitted prompt.
+        case file
     }
 
     public var id: String
