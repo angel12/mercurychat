@@ -49,8 +49,12 @@ private struct UserBubble: View {
                                             RoundedRectangle(cornerRadius: 10)
                                                 .strokeBorder(.quaternary))
                                 } else {
-                                    // Hydrated rows carry no bytes — a compact chip.
-                                    Label(attachment.filename, systemImage: "photo")
+                                    // No preview bytes — hydrated rows, and
+                                    // live file/PDF echoes, which never carry a
+                                    // thumbnail. A compact chip, icon per kind.
+                                    Label(
+                                        attachment.filename,
+                                        systemImage: chipIcon(attachment.kind))
                                         .font(.caption)
                                         .lineLimit(1)
                                         .padding(.horizontal, 8)
@@ -95,6 +99,16 @@ private struct UserBubble: View {
             }
         }
         .padding(.horizontal)
+    }
+
+    /// SF Symbol for a byte-less attachment chip, matched to the composer
+    /// tray's icons so a file looks the same before and after sending.
+    private func chipIcon(_ kind: MessageAttachment.Kind) -> String {
+        switch kind {
+        case .image: "photo"
+        case .pdf: "doc.richtext"
+        case .file: "doc"
+        }
     }
 }
 

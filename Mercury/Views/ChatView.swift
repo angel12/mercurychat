@@ -634,7 +634,10 @@ private struct ComposerView: View {
             // NOT in the message field (e.g. on the send button). The common
             // case — focus in the field — is handled by `PasteKeyCatcher`
             // above, which consumes the key equivalent before the menu.
-            .onPasteCommand(of: [.image]) { providers in
+            .onPasteCommand(of: [.fileURL, .image]) { providers in
+                // Any file, not just images — `loadProviders` classifies by
+                // kind. Deliberately not `[.item]`: that would swallow plain
+                // text pastes that belong in the message field.
                 attachments.loadProviders(providers)
             }
         #endif
@@ -643,7 +646,7 @@ private struct ComposerView: View {
         // people actually do.
         .fileImporter(
             isPresented: $showingFileImporter,
-            allowedContentTypes: [.image],
+            allowedContentTypes: [.item],
             allowsMultipleSelection: true
         ) { result in
             guard case .success(let urls) = result, !urls.isEmpty else { return }
@@ -755,7 +758,7 @@ private struct ComposerView: View {
                 .font(.title2)
         }
         .buttonStyle(.borderless)
-        .help("Attach an image")
+        .help("Attach files")
     }
 
     private func send() {
@@ -838,12 +841,34 @@ private struct AttachmentTray: View {
             HStack(spacing: 8) {
                 ForEach(attachments) { attachment in
                     ZStack(alignment: .topTrailing) {
-                        AttachmentThumbnail(data: attachment.thumbnail ?? attachment.data)
-                            .frame(width: 64, height: 64)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .strokeBorder(.quaternary))
+                        Group {
+                            if attachment.kind == .image {
+                                AttachmentThumbnail(data: attachment.thumbnail ?? attachment.data)
+                            } else {
+                                // PDFs and plain files stage without thumbnail
+                                // bytes — a kind icon over the name instead.
+                                VStack(spacing: 4) {
+                                    Image(
+                                        systemName: attachment.kind == .pdf
+                                            ? "doc.richtext" : "doc"
+                                    )
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                    Text(attachment.filename)
+                                        .font(.caption2)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                .padding(.horizontal, 4)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(.quaternary)
+                            }
+                        }
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(.quaternary))
                         Button {
                             attachments.removeAll { $0.id == attachment.id }
                         } label: {
