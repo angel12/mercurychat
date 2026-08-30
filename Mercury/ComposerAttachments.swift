@@ -164,7 +164,11 @@ final class ComposerAttachments {
         case .success(let data):
             switch kind {
             case .image:
-                await prepareAndAppend(data: data, name: url.lastPathComponent)
+                // `fileFallbackName`: an image-TYPED file ImageIO can't decode
+                // (`.svg`, `.ai`) still attaches, as a plain file.
+                await prepareAndAppend(
+                    data: data, name: url.lastPathComponent,
+                    fileFallbackName: url.lastPathComponent)
             case .pdf, .file:
                 // No transcode for non-images: raw bytes go on the wire, and
                 // there is no thumbnail — the tray/transcript render a chip.
@@ -183,13 +187,34 @@ final class ComposerAttachments {
     }
 
     /// Encode + append for a preparation whose slot is already reserved.
-    private func prepareAndAppend(data: Data, name: String?) async {
+    ///
+    /// `fileFallbackName` is the escape hatch for a file whose DECLARED type
+    /// is an image but whose bytes ImageIO refuses — `.svg` and `.ai` both
+    /// conform to `public.image` yet neither decodes. Those were a dead end:
+    /// the user attached a file, saw "That doesn't look like an image.", and
+    /// had no way to send it. With a name supplied, `.notAnImage` instead
+    /// stages the raw bytes as `.file`, exactly as an unclassified file would.
+    /// Every other error (`.tooLarge` included) still surfaces, and the raw
+    /// DATA paths (paste, screenshot drop) pass nil: bytes with no filename
+    /// are only ever offered as images, so undecodable bytes there are a real
+    /// failure with no file to fall back to.
+    ///
+    /// The append consumes the caller's reservation the same way the image
+    /// path does — the caller's `defer` releases it, and `append` re-checks
+    /// the cap.
+    private func prepareAndAppend(
+        data: Data, name: String?, fileFallbackName: String? = nil
+    ) async {
         do {
             let prepared = try await Task.detached {
                 try ImageAttachmentPreparer.prepare(data: data, suggestedName: name)
             }.value
             append(prepared)
         } catch {
+            if case ImagePreparationError.notAnImage = error, let fileFallbackName {
+                append(PendingAttachment(filename: fileFallbackName, data: data, kind: .file))
+                return
+            }
             self.error = error.localizedDescription
         }
     }

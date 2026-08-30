@@ -210,6 +210,34 @@ struct ComposerAttachmentsTests {
         #expect(attachments.error == nil)
     }
 
+    /// `.svg` (and `.ai`) conform to `public.image`, so they take the image
+    /// branch — but ImageIO can't decode either, and surfacing "That doesn't
+    /// look like an image." was a dead end for a file the user plainly meant
+    /// to attach. An undecodable image-typed file falls back to `.file`.
+    @MainActor @Test func undecodableImageTypedFileFallsBackToAFileAttachment() async {
+        let attachments = ComposerAttachments()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("drawing-\(UUID().uuidString).svg")
+        let bytes = Data(#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.utf8)
+        try? bytes.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(ComposerAttachments.kind(forFilename: url.lastPathComponent) == .image)
+
+        attachments.beginBatch()
+        attachments.reserveSlots(1)
+        await attachments.addReserved(contentsOf: url)
+
+        #expect(attachments.items.count == 1)
+        #expect(attachments.items[0].kind == .file)
+        #expect(attachments.items[0].data == bytes)
+        #expect(attachments.items[0].filename == url.lastPathComponent)
+        #expect(attachments.items[0].thumbnail == nil)
+        #expect(attachments.error == nil)
+        // The reservation is still released exactly once.
+        #expect(attachments.preparing == 0)
+        #expect(attachments.availableSlots == ComposerAttachments.maxAttachments - 1)
+    }
+
     @MainActor @Test func oversizedPDFIsRejectedWithPDFError() async {
         let attachments = ComposerAttachments()
         let url = FileManager.default.temporaryDirectory
