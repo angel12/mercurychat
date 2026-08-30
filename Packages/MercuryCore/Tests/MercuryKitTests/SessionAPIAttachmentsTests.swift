@@ -132,6 +132,47 @@ struct SessionAPIAttachmentsTests {
         await connection.stop()
     }
 
+    /// An EMPTY `ref_text` is as useless as a missing one: the caller appends
+    /// it to the prompt, so accepting it would submit a send whose staged file
+    /// nothing points at — silently dropping the attachment.
+    @Test func attachFileThrowsOnEmptyRefText() async throws {
+        let server = try await LocalGatewayServer.start(onText: { text, server in
+            guard let frame = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
+                let id = frame["id"]?.intValue
+            else { return }
+            server.respond(
+                id: id,
+                result:
+                    #"{"attached": true, "name": "notes.txt", "path": "/home/h/attachments/notes.txt", "ref_text": ""}"#
+            )
+        })
+        defer { server.stop() }
+        let connection = try await readyConnection(port: server.port)
+        await #expect(throws: HermesError.self) {
+            _ = try await connection.attachFile(
+                sessionID: "ab12", dataURL: "data:;base64,aGk=", name: nil)
+        }
+        await connection.stop()
+    }
+
+    /// `attached: true` with an EMPTY page list staged nothing: returning an
+    /// empty success let the send proceed with no vision pages and no error.
+    @Test func attachPDFThrowsOnEmptyPages() async throws {
+        let server = try await LocalGatewayServer.start(onText: { text, server in
+            guard let frame = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
+                let id = frame["id"]?.intValue
+            else { return }
+            server.respond(id: id, result: #"{"attached": true, "pages": []}"#)
+        })
+        defer { server.stop() }
+        let connection = try await readyConnection(port: server.port)
+        await #expect(throws: HermesError.self) {
+            _ = try await connection.attachPDF(
+                sessionID: "ab12", base64: "cGRm", filename: "report.pdf")
+        }
+        await connection.stop()
+    }
+
     @Test func attachPDFParsesPagePathsInOrder() async throws {
         let box = FrameBox()
         let server = try await LocalGatewayServer.start(onText: { text, server in
