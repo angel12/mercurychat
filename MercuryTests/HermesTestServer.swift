@@ -141,19 +141,8 @@ final class HermesTestServer: @unchecked Sendable {
                 nwConnection.cancel()
                 return
             }
-            if head.lowercased().contains("upgrade: websocket") {
-                upgraded = true
-                buffer.removeSubrange(..<headEnd.upperBound)
-                nwConnection.send(
-                    content: Self.handshakeResponse(head: head),
-                    isComplete: true, completion: .idempotent)
-                sendText(
-                    #"{"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": {}}}"#
-                )
-                return
-            }
-
-            // Plain HTTP: wait for the Content-Length body, script, close.
+            // Parse before the upgrade check: an upgrade request is scripted
+            // like any other, so a test can refuse it.
             let lines = head.components(separatedBy: "\r\n")
             let requestParts = (lines.first ?? "").components(separatedBy: " ")
             guard requestParts.count >= 2 else {
@@ -178,6 +167,26 @@ final class HermesTestServer: @unchecked Sendable {
                     path: path,
                     headers: headers,
                     body: Data(body.prefix(contentLength))))
+
+            if head.lowercased().contains("upgrade: websocket") {
+                // Only an explicit 401 refuses the upgrade: GatewayClient
+                // maps that onto the "(4401)" credential rejection, which is
+                // what stops a redial storm and demands re-auth. Every other
+                // status upgrades, so scripts that answer unlisted paths with
+                // a catch-all 404 keep working unchanged.
+                if response.status != 401 {
+                    upgraded = true
+                    buffer.removeSubrange(..<headEnd.upperBound)
+                    nwConnection.send(
+                        content: Self.handshakeResponse(head: head),
+                        isComplete: true, completion: .idempotent)
+                    sendText(
+                        #"{"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": {}}}"#
+                    )
+                    return
+                }
+            }
+
             let reason = response.status == 200 ? "OK" : "Error"
             let text =
                 "HTTP/1.1 \(response.status) \(reason)\r\n"
@@ -240,5 +249,51 @@ private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
             return taken
         }
         taken?.resume(with: result)
+    }
+}
+
+// MARK: Shared polling helpers
+
+/// Poll until `condition` holds. Socket callbacks land on background queues
+/// and the update pump hops back to the MainActor, so state a test is waiting
+/// on becomes true a few hops after the call that caused it.
+@MainActor
+func eventually(
+    within seconds: TimeInterval = 10, _ condition: @MainActor () -> Bool
+) async -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while Date() < deadline {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return condition()
+}
+
+/// A one-shot cross-thread flag. The scripted server runs its handler on its
+/// own queue, so a test that needs to act *while* a request is in flight has
+/// to learn that it landed from off the MainActor.
+final class TestLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var signalled = false
+
+    func signal() {
+        lock.lock()
+        signalled = true
+        lock.unlock()
+    }
+
+    private var isSet: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return signalled
+    }
+
+    func wait(within seconds: TimeInterval = 5) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if isSet { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return isSet
     }
 }
