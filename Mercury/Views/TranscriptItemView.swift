@@ -227,8 +227,17 @@ private struct ToolRow: View {
                 DiffView(diff: diff)
             } else if let result = tool.resultText, !result.isEmpty {
                 detailBlock("Result", String(result.prefix(4000)))
+            } else if !hasArgs {
+                // Never expand to nothing: say why there is nothing yet.
+                Text(tool.isRunning ? "Running…" : "No details recorded for this call.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private var hasArgs: Bool {
+        !(tool.argsText ?? "").isEmpty
     }
 
     private func detailBlock(_ title: String, _ content: String) -> some View {

@@ -219,6 +219,9 @@ public struct TranscriptMessage: Sendable, Equatable, Identifiable {
     public var toolCallID: String?
     /// Tool args/context preview for `role == "tool"` rows.
     public var context: String?
+    /// `tool_calls` on an assistant row (OpenAI shape): the arguments each
+    /// following `role == "tool"` row was invoked with.
+    public var toolCalls: [ToolCallRef] = []
     public var displayKind: String?
     public var timestamp: Date?
     public var raw: JSONValue
@@ -249,11 +252,34 @@ public struct TranscriptMessage: Sendable, Equatable, Identifiable {
         self.toolName = json["tool_name"]?.stringValue ?? json["name"]?.stringValue
         self.toolCallID = json["tool_call_id"]?.stringValue
         self.context = json["context"]?.stringValue
+        self.toolCalls = json["tool_calls"]?.arrayValue?.compactMap(ToolCallRef.init(json:)) ?? []
         self.displayKind = json["display_kind"]?.stringValue
         if let epoch = json["timestamp"]?.doubleValue {
             self.timestamp = Date(timeIntervalSince1970: epoch)
         }
         self.raw = json
+    }
+}
+
+/// One entry of an assistant row's `tool_calls`. Arguments are the raw
+/// JSON-encoded string the model produced (occasionally an object on older
+/// backends — re-encoded to text either way).
+public struct ToolCallRef: Sendable, Equatable {
+    public var id: String
+    public var name: String?
+    public var arguments: String
+
+    public init?(json: JSONValue) {
+        guard let id = json["id"]?.stringValue, !id.isEmpty else { return nil }
+        self.id = id
+        let function = json["function"]
+        self.name = function?["name"]?.stringValue ?? json["name"]?.stringValue
+        let rawArgs = function?["arguments"] ?? json["arguments"]
+        switch rawArgs {
+        case .string(let text)?: self.arguments = text
+        case .none, .null?: self.arguments = ""
+        case let value?: self.arguments = value.encodedString()
+        }
     }
 }
 
