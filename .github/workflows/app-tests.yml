@@ -1,0 +1,43 @@
+name: App Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  xcode-test:
+    name: xcodebuild test (MercuryTests)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Record tested revision and toolchain
+        run: |
+          git rev-parse HEAD
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Check the committed project includes every app test
+        shell: python
+        run: |
+          from pathlib import Path
+          project = Path('Mercury.xcodeproj/project.pbxproj').read_text()
+          missing = [str(p) for p in Path('MercuryTests').glob('*.swift') if p.name not in project]
+          for path in missing:
+              print(f'::error::{path} is missing from Mercury.xcodeproj; regenerate with XcodeGen')
+          raise SystemExit(bool(missing))
+      - name: Run MercuryTests
+        run: xcodebuild -project Mercury.xcodeproj -scheme MercuryTests -destination 'platform=macOS' test
