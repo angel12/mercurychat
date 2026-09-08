@@ -85,8 +85,24 @@ public final class TranscriptStore {
         var hydrated: [TranscriptItem] = []
         knownRowIDs.removeAll(keepingCapacity: true)
 
+        // Stored transcripts keep call arguments on the ASSISTANT row's
+        // `tool_calls`; the tool row that follows only carries the result.
+        // Collect them up front so every tool row can show its arguments.
+        var argsByCallID: [String: String] = [:]
         for message in messages {
-            guard let item = Self.item(from: message) else { continue }
+            for call in message.toolCalls where !call.arguments.isEmpty {
+                argsByCallID[call.id] = call.arguments
+            }
+        }
+
+        for message in messages {
+            guard var item = Self.item(from: message) else { continue }
+            if case .tool(var row) = item, row.argsText == nil,
+                let callID = row.toolID, let args = argsByCallID[callID]
+            {
+                row.argsText = args
+                item = .tool(row)
+            }
             if let rowID = message.rowID { knownRowIDs.insert(rowID) }
             hydrated.append(item)
         }
@@ -813,6 +829,31 @@ public final class TranscriptStore {
 
     // MARK: Tool rows
 
+    /// Human-readable text for a tool `args` / `result` field. Non-verbose
+    /// gateway sessions (Mercury never enables verbose, so there is no
+    /// `args_text` / `result_text`) send args as a JSON object and the
+    /// result as whatever `json.loads` produced — a string when the tool
+    /// returned plain text, otherwise an object/array. Strings pass through;
+    /// structured values are pretty-printed; null and `{}` render as nothing.
+    static func displayText(_ value: JSONValue?) -> String? {
+        guard let value else { return nil }
+        switch value {
+        case .null:
+            return nil
+        case .string(let text):
+            return text.isEmpty ? nil : text
+        case .object(let dict) where dict.isEmpty:
+            return nil
+        case .array(let items) where items.isEmpty:
+            return nil
+        default:
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            guard let data = try? encoder.encode(value) else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }
+    }
+
     private func startTool(_ payload: JSONValue) {
         let toolID = payload["tool_id"]?.stringValue ?? nextLiveID("toolid")
         let row = ToolActivity(
@@ -820,7 +861,7 @@ public final class TranscriptStore {
             toolID: toolID,
             name: payload["name"]?.stringValue ?? "tool",
             context: payload["context"]?.stringValue ?? payload["preview"]?.stringValue,
-            argsText: payload["args_text"]?.stringValue,
+            argsText: payload["args_text"]?.stringValue ?? Self.displayText(payload["args"]),
             isRunning: true,
             timestamp: Date())
         items.append(.tool(row))
@@ -853,11 +894,13 @@ public final class TranscriptStore {
         if let name = payload["name"]?.stringValue { row.name = name }
         row.summary = payload["summary"]?.stringValue ?? row.summary
         row.resultText = payload["result_text"]?.stringValue
-            ?? payload["result"]?.stringValue
+            ?? Self.displayText(payload["result"])
             ?? row.resultText
         row.inlineDiff = payload["inline_diff"]?.stringValue ?? row.inlineDiff
         row.durationSeconds = payload["duration_s"]?.doubleValue ?? row.durationSeconds
-        if row.argsText == nil { row.argsText = payload["args_text"]?.stringValue }
+        if row.argsText == nil {
+            row.argsText = payload["args_text"]?.stringValue ?? Self.displayText(payload["args"])
+        }
         row.isRunning = false
         items[index] = .tool(row)
         toolRowIndex.removeValue(forKey: toolID)

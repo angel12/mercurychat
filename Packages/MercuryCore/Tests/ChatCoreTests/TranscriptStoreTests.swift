@@ -1266,3 +1266,112 @@ struct ToolInterleaveTests {
         #expect(bubble.text == "streamed")
     }
 }
+
+@MainActor
+@Suite("TranscriptStore tool details (issue #76)")
+struct TranscriptToolDetailTests {
+    private func rows(_ text: String) -> [TranscriptMessage] {
+        json(text).arrayValue!.compactMap(TranscriptMessage.init(json:))
+    }
+
+    // Non-verbose gateway sessions (Mercury never enables verbose) send the
+    // full arguments as a JSON object under `args`, never `args_text`.
+    @Test func toolStartFallsBackToArgsObjectForArgsText() {
+        let store = TranscriptStore()
+        store.apply(
+            event(
+                "tool.start",
+                #"{"tool_id": "t1", "name": "honcho_search", "context": "qwen best settings", "args": {"query": "qwen best settings", "limit": 5}}"#
+            ))
+        guard case .tool(let row) = store.items.last else {
+            Issue.record("expected tool row")
+            return
+        }
+        let args = row.argsText ?? ""
+        #expect(args.contains("\"query\""))
+        #expect(args.contains("qwen best settings"))
+        #expect(args.contains("\"limit\""))
+    }
+
+    @Test func toolStartPrefersArgsTextWhenPresent() {
+        let store = TranscriptStore()
+        store.apply(
+            event(
+                "tool.start",
+                #"{"tool_id": "t1", "name": "terminal", "args": {"cmd": "ls"}, "args_text": "VERBOSE"}"#
+            ))
+        guard case .tool(let row) = store.items.last else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(row.argsText == "VERBOSE")
+    }
+
+    // The gateway `json.loads` the result when it can, so `result` is often
+    // an object or array rather than a string.
+    @Test func toolCompleteRendersObjectResult() {
+        let store = TranscriptStore()
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "web", "args": {}}"#))
+        store.apply(
+            event(
+                "tool.complete",
+                #"{"tool_id": "t1", "name": "web", "args": {}, "result": {"hits": [{"title": "Qwen"}], "count": 1}, "summary": "1 hit"}"#
+            ))
+        guard case .tool(let row) = store.items.last else {
+            Issue.record("expected tool row")
+            return
+        }
+        let result = row.resultText ?? ""
+        #expect(result.contains("\"hits\""))
+        #expect(result.contains("Qwen"))
+    }
+
+    @Test func toolCompleteKeepsStringResultVerbatim() {
+        let store = TranscriptStore()
+        store.apply(
+            event(
+                "tool.complete",
+                #"{"tool_id": "t2", "name": "terminal", "args": {"cmd": "ls"}, "result": "a\nb\nc"}"#
+            ))
+        guard case .tool(let row) = store.items.last else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(row.resultText == "a\nb\nc")
+        #expect((row.argsText ?? "").contains("\"cmd\""))
+    }
+
+    @Test func toolCompleteDoesNotOverwriteArgsWithEmptyObject() {
+        let store = TranscriptStore()
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "web", "args": {"url": "x"}}"#))
+        store.apply(event("tool.complete", #"{"tool_id": "t1", "name": "web", "args": {}}"#))
+        guard case .tool(let row) = store.items.last else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect((row.argsText ?? "").contains("\"url\""))
+    }
+
+    // Stored transcripts keep the call arguments on the ASSISTANT row's
+    // `tool_calls`, keyed to the following tool row by `tool_call_id`.
+    @Test func hydrationAttachesToolCallArgumentsToToolRows() {
+        let store = TranscriptStore()
+        store.hydrate(
+            rows(
+                """
+                [{"id": 1, "role": "user", "content": "list files"},
+                 {"id": 2, "role": "assistant", "content": "",
+                  "tool_calls": [{"id": "call_1", "type": "function",
+                                  "function": {"name": "terminal", "arguments": "{\\"cmd\\": \\"ls\\"}"}}]},
+                 {"id": 3, "role": "tool", "tool_name": "terminal", "tool_call_id": "call_1", "content": "a b"},
+                 {"id": 4, "role": "assistant", "content": "two files"}]
+                """))
+        guard case .tool(let row) = store.items[1] else {
+            Issue.record("expected tool row second; got \(store.items)")
+            return
+        }
+        #expect(row.name == "terminal")
+        #expect(row.resultText == "a b")
+        #expect(row.argsText == #"{"cmd": "ls"}"#)
+    }
+}
