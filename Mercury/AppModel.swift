@@ -53,12 +53,42 @@ final class AppModel {
     private(set) var browseLoading = false
     var browseError: String?
 
+    // MARK: Bot Mode roster
+
+    /// Which list the sidebar shows. Bots is offered only while
+    /// `botModeSupported == true`.
+    enum SidebarTab: String { case sessions, bots }
+    var sidebarTab: SidebarTab = .sessions
+
+    private(set) var bots: [BotSummary] = []
+    private(set) var botsLoading = false
+    var botsError: String?
+    /// Fetched avatar images by profile name. Session-lived: cleared on
+    /// disconnect, refetched on demand.
+    private(set) var botAvatars: [String: Data] = [:]
+    private var botAvatarFetchesInFlight: Set<String> = []
+    /// Roster refreshes are throttled: `profiles.list` with sessions walks
+    /// every profile's state.db, so sessions.changed bursts (one per turn
+    /// end) must not stack listing calls.
+    private var lastBotsRefresh: Date?
+
     // MARK: Navigation
+
+    /// A bot roster row's click target: the profile plus its server-resolved
+    /// canonical Bot Chat (nil stored id = no canonical chat yet — create it).
+    struct BotChatTarget: Hashable {
+        var profile: String
+        var displayTitle: String
+        /// The canonical chat's live tip (`resolved_id`), resolved by the
+        /// server at listing time.
+        var storedID: String?
+    }
 
     /// Sidebar selection → detail. `newSession` opens the new-session flow.
     enum Route: Hashable {
         case session(SessionSummary)
         case newSession(cwd: String?)
+        case botChat(BotChatTarget)
     }
     var route: Route?
 
@@ -445,6 +475,13 @@ final class AppModel {
         contractNotice = nil
         keychainNotice = nil
         botModeSupported = nil
+        sidebarTab = .sessions
+        bots = []
+        botsLoading = false
+        botsError = nil
+        botAvatars = [:]
+        botAvatarFetchesInFlight = []
+        lastBotsRefresh = nil
     }
 
     /// Immediate re-dial on foreground (backoff skip).
@@ -493,6 +530,16 @@ final class AppModel {
 
     func renameSession(_ session: SessionSummary, to title: String) async {
         guard let connection else { return }
+        // A session titled "Bot Chat" is (or is indistinguishable from) a
+        // bot's canonical forever-chat — the gateway registry resolves by
+        // that exact name, so renaming severs the bot relationship and the
+        // next open mints a replacement. The sidebar hides Rename for these
+        // rows; this covers any other caller.
+        guard session.title != BotChatPolicy.canonicalTitle else {
+            browseError =
+                "That's a bot's canonical Bot Chat — its title is its identity and can't change."
+            return
+        }
         do {
             try await connection.rest.updateSession(
                 storedID: session.storedID, title: title, profile: session.profile)
@@ -601,6 +648,11 @@ final class AppModel {
         switch event.type {
         case GatewayEvent.Kind.sessionsChanged:
             Task { await refreshProjects() }
+            // Keep the visible roster's previews/ordering fresh; loadBots'
+            // throttle absorbs the per-turn burst of these events.
+            if sidebarTab == .bots {
+                Task { await loadBots() }
+            }
         default:
             break
         }
@@ -697,6 +749,57 @@ final class AppModel {
         recentSessions = []
         projectTree = nil
         await refreshProjects()
+    }
+
+    // MARK: Bot Mode roster
+
+    /// Refresh the Bots roster. The full listing walks every profile's
+    /// state.db, so refreshes within 5s of the last are dropped unless
+    /// forced (pull-to-refresh).
+    func loadBots(force: Bool = false) async {
+        guard let connection, botModeSupported == true else { return }
+        if !force, let last = lastBotsRefresh, Date().timeIntervalSince(last) < 5 {
+            return
+        }
+        if botsLoading { return }
+        botsLoading = true
+        defer { botsLoading = false }
+        lastBotsRefresh = Date()
+        do {
+            bots = try await connection.listBots()
+            botsError = nil
+        } catch {
+            // Keep the stale roster visible; surface the failure alongside.
+            botsError = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    /// Kick off the avatar fetch for a roster row when the server has one we
+    /// haven't cached. Fire-and-forget from row `.task`s; failures just leave
+    /// the geometric fallback face.
+    func fetchBotAvatarIfNeeded(_ bot: BotSummary) {
+        guard bot.hasAvatar, botAvatars[bot.name] == nil,
+            !botAvatarFetchesInFlight.contains(bot.name),
+            let connection
+        else { return }
+        botAvatarFetchesInFlight.insert(bot.name)
+        Task {
+            defer { botAvatarFetchesInFlight.remove(bot.name) }
+            if let asset = try? await connection.profileAvatar(name: bot.name) {
+                botAvatars[bot.name] = asset.data
+            }
+        }
+    }
+
+    /// A roster row's click target. The canonical chat's server-resolved
+    /// live tip is read fresh from the row (never cached across opens);
+    /// a bot with no canonical chat yet gets one created on open.
+    func botChatTarget(for bot: BotSummary) -> BotChatTarget {
+        BotChatTarget(
+            profile: bot.name,
+            displayTitle: bot.title,
+            storedID: bot.canonicalSession?.resolvedID ?? bot.canonicalSession?.storedID)
     }
 
     /// Cheap probe for `desktop_contract` drift. The throwaway lazy session

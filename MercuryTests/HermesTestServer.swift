@@ -1,6 +1,13 @@
 import CryptoKit
 import Foundation
+import MercuryKit
 import Network
+
+/// One JSON-RPC request captured off the scripted WebSocket.
+struct TestRPCRequest: Sendable {
+    var method: String
+    var params: JSONValue
+}
 
 /// The request/response pair for the scripted REST surface.
 struct TestHTTPRequest: Sendable {
@@ -32,31 +39,52 @@ final class HermesTestServer: @unchecked Sendable {
     private let listener: NWListener
     private let lock = NSLock()
     private let handler: @Sendable (TestHTTPRequest) -> TestHTTPResponse
+    /// Scripted WS JSON-RPC surface: return a result value to answer a
+    /// request, nil for `{}`. Every inbound request is captured in
+    /// `rpcRequests` either way.
+    private let rpcHandler: (@Sendable (String, JSONValue) -> JSONValue?)?
     private var connections: [Connection] = []
+    private var capturedRPCs: [TestRPCRequest] = []
     private(set) var port: UInt16 = 0
 
+    /// The JSON-RPC requests received over the WebSocket, in arrival order.
+    var rpcRequests: [TestRPCRequest] {
+        lock.withLock { capturedRPCs }
+    }
+
     static func start(
+        rpc: (@Sendable (String, JSONValue) -> JSONValue?)? = nil,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) async throws -> HermesTestServer {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
-        let server = HermesTestServer(listener: listener, handler: handler)
+        let server = HermesTestServer(listener: listener, rpcHandler: rpc, handler: handler)
         try await server.waitUntilReady()
         return server
     }
 
     private init(
         listener: NWListener,
+        rpcHandler: (@Sendable (String, JSONValue) -> JSONValue?)?,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) {
         self.listener = listener
+        self.rpcHandler = rpcHandler
         self.handler = handler
         // Installed BEFORE start(): a started NWListener without a
         // newConnectionHandler fails with EINVAL.
         listener.newConnectionHandler = { [weak self] nwConnection in
             guard let self else { return }
-            let connection = Connection(nwConnection, handler: self.handler)
+            let connection = Connection(
+                nwConnection, handler: self.handler
+            ) { [weak self] method, params in
+                guard let self else { return nil }
+                self.lock.withLock {
+                    self.capturedRPCs.append(TestRPCRequest(method: method, params: params))
+                }
+                return self.rpcHandler?(method, params)
+            }
             self.lock.withLock { self.connections.append(connection) }
             connection.begin()
         }
@@ -99,15 +127,20 @@ final class HermesTestServer: @unchecked Sendable {
     private final class Connection: @unchecked Sendable {
         private let nwConnection: NWConnection
         private let handler: @Sendable (TestHTTPRequest) -> TestHTTPResponse
+        /// Captures each WS JSON-RPC request and yields its scripted result
+        /// (nil → `{}`).
+        private let rpcSink: @Sendable (String, JSONValue) -> JSONValue?
         private var buffer = Data()
         private var upgraded = false
 
         init(
             _ nwConnection: NWConnection,
-            handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
+            handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse,
+            rpcSink: @escaping @Sendable (String, JSONValue) -> JSONValue?
         ) {
             self.nwConnection = nwConnection
             self.handler = handler
+            self.rpcSink = rpcSink
         }
 
         func begin() {
@@ -124,9 +157,11 @@ final class HermesTestServer: @unchecked Sendable {
                 [weak self] data, _, isComplete, error in
                 guard let self, error == nil else { return }
                 if let data { self.buffer.append(data) }
-                if !self.upgraded { self.tryHandleHTTP(isComplete: isComplete) }
-                // After the upgrade, inbound client frames (RPCs) are simply
-                // ignored — nothing under test awaits their answers.
+                if !self.upgraded {
+                    self.tryHandleHTTP(isComplete: isComplete)
+                } else {
+                    self.drainRPCFrames()
+                }
                 if !isComplete { self.receiveNext() }
             }
         }
@@ -183,6 +218,9 @@ final class HermesTestServer: @unchecked Sendable {
                     sendText(
                         #"{"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": {}}}"#
                     )
+                    // Frames pipelined behind the upgrade head are already
+                    // in the buffer — drain them now, not on the next read.
+                    drainRPCFrames()
                     return
                 }
             }
@@ -213,6 +251,56 @@ final class HermesTestServer: @unchecked Sendable {
             return Data(
                 ("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                     + "Connection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n").utf8)
+        }
+
+        /// Decode complete (masked) client frames off the buffer and answer
+        /// each JSON-RPC request with its scripted result. Same frame
+        /// grammar as the package's TestServers.
+        private func drainRPCFrames() {
+            while buffer.count >= 2 {
+                let opcode = buffer[buffer.startIndex] & 0x0F
+                let second = buffer[buffer.index(after: buffer.startIndex)]
+                let masked = second & 0x80 != 0
+                var length = Int(second & 0x7F)
+                var offset = 2
+                let bytes = Array(buffer)
+                if length == 126 {
+                    guard bytes.count >= 4 else { return }
+                    length = Int(bytes[2]) << 8 | Int(bytes[3])
+                    offset = 4
+                } else if length == 127 {
+                    guard bytes.count >= 10 else { return }
+                    length = bytes[2..<10].reduce(0) { $0 << 8 | Int($1) }
+                    offset = 10
+                }
+                let maskLength = masked ? 4 : 0
+                guard bytes.count >= offset + maskLength + length else { return }
+                var payload = Array(bytes[(offset + maskLength)..<(offset + maskLength + length)])
+                if masked {
+                    let key = Array(bytes[offset..<(offset + 4)])
+                    for index in payload.indices { payload[index] ^= key[index % 4] }
+                }
+                buffer.removeFirst(offset + maskLength + length)
+                if opcode == 0x1 { handleRPCText(Data(payload)) }
+            }
+        }
+
+        private func handleRPCText(_ payload: Data) {
+            guard let frame = try? JSONDecoder().decode(JSONValue.self, from: payload),
+                let method = frame["method"]?.stringValue,
+                let id = frame["id"]?.intValue
+            else { return }
+            let result = rpcSink(method, frame["params"] ?? .null) ?? .object([:])
+            let response = JSONValue.object([
+                "jsonrpc": .string("2.0"),
+                "id": .number(Double(id)),
+                "result": result,
+            ])
+            if let data = try? JSONEncoder().encode(response),
+                let text = String(data: data, encoding: .utf8)
+            {
+                sendText(text)
+            }
         }
 
         /// Send one unmasked server→client text frame (payloads here are

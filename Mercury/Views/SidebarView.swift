@@ -8,35 +8,58 @@ struct SidebarView: View {
     @State private var renameTarget: SessionSummary?
     @State private var renameText = ""
     @State private var deleteTarget: SessionSummary?
+    @State private var botSearch = ""
+    @State private var showHiddenBots = false
 
     var body: some View {
         @Bindable var model = model
         List(selection: $model.route) {
-            if !model.profiles.isEmpty || model.profilesLoading {
-                profileSection
+            if model.botModeSupported == true {
+                tabSection
             }
 
-            if let tree = model.projectTree {
-                ForEach(tree.projects) { project in
-                    projectSection(project, scoped: tree.scopedSessionIDs)
+            if model.sidebarTab == .bots {
+                botsSections
+            } else {
+                if !model.profiles.isEmpty || model.profilesLoading {
+                    profileSection
                 }
-            }
 
-            recentsSection
+                if let tree = model.projectTree {
+                    ForEach(tree.projects) { project in
+                        projectSection(project, scoped: tree.scopedSessionIDs)
+                    }
+                }
 
-            if let error = model.browseError {
-                Section {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                recentsSection
+
+                if let error = model.browseError {
+                    Section {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
                 }
             }
         }
         .listStyle(.sidebar)
         .overlay {
-            if model.browseLoading && model.recentSessions.isEmpty {
+            if model.sidebarTab == .bots {
+                if model.botsLoading && model.bots.isEmpty {
+                    ProgressView("Loading bots…")
+                }
+            } else if model.browseLoading && model.recentSessions.isEmpty {
                 ProgressView("Loading sessions…")
             }
         }
-        .refreshable { await model.refreshProjects() }
+        .task(id: model.sidebarTab) {
+            if model.sidebarTab == .bots { await model.loadBots() }
+        }
+        .refreshable {
+            if model.sidebarTab == .bots {
+                await model.loadBots(force: true)
+            } else {
+                await model.refreshProjects()
+            }
+        }
         .alert("Rename Session", isPresented: renameAlertShown) {
             TextField("Title", text: $renameText)
             Button("Rename") {
@@ -77,6 +100,83 @@ struct SidebarView: View {
                 }
             }
         }
+    }
+
+    private var tabSection: some View {
+        @Bindable var model = model
+        return Section {
+            Picker("Sidebar", selection: $model.sidebarTab) {
+                Text("Sessions").tag(AppModel.SidebarTab.sessions)
+                Text("Bots").tag(AppModel.SidebarTab.bots)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+    }
+
+    // MARK: Bots roster
+
+    @ViewBuilder
+    private var botsSections: some View {
+        Section {
+            TextField("Search bots", text: $botSearch)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+        }
+
+        let rows = visibleBots
+        Section {
+            ForEach(rows) { bot in
+                BotRow(bot: bot)
+            }
+            if rows.isEmpty && !model.botsLoading {
+                Text(botSearch.isEmpty ? "No bots yet" : "No bots match")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            }
+        } footer: {
+            let hiddenCount = model.bots.filter(\.hidden).count
+            if hiddenCount > 0 {
+                Button {
+                    showHiddenBots.toggle()
+                } label: {
+                    Label(
+                        showHiddenBots
+                            ? "Hide hidden bots"
+                            : "Show \(hiddenCount) hidden bot\(hiddenCount == 1 ? "" : "s")",
+                        systemImage: showHiddenBots ? "eye.slash" : "eye")
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+            }
+        }
+
+        if let error = model.botsError {
+            Section {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+    }
+
+    /// Roster order matches the desktop: pinned first, then newest activity,
+    /// then name. Hidden bots are display-only hidden — the eye toggle
+    /// reveals them dimmed-in-place semantics are Phase 2; here they simply
+    /// join the list.
+    private var visibleBots: [BotSummary] {
+        let query = botSearch.trimmingCharacters(in: .whitespaces).lowercased()
+        return model.bots
+            .filter { showHiddenBots || !$0.hidden }
+            .filter {
+                query.isEmpty || $0.title.lowercased().contains(query)
+                    || $0.name.lowercased().contains(query)
+            }
+            .sorted { a, b in
+                if a.pinned != b.pinned { return a.pinned }
+                let dateA = a.lastActivity ?? .distantPast
+                let dateB = b.lastActivity ?? .distantPast
+                if dateA != dateB { return dateA > dateB }
+                return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            }
     }
 
     private var profileSection: some View {
@@ -180,11 +280,16 @@ struct SidebarView: View {
             }
         }
         .contextMenu {
-            Button {
-                renameText = session.title ?? ""
-                renameTarget = session
-            } label: {
-                Label("Rename…", systemImage: "pencil")
+            // Canonical Bot Chats resolve by their exact title — renaming one
+            // severs its bot's forever-chat (AppModel.renameSession refuses
+            // too; hiding the item explains less but confuses least).
+            if session.title != BotChatPolicy.canonicalTitle {
+                Button {
+                    renameText = session.title ?? ""
+                    renameTarget = session
+                } label: {
+                    Label("Rename…", systemImage: "pencil")
+                }
             }
             Button {
                 Task { await model.togglePin(session) }

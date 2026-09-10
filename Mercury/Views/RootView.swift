@@ -35,6 +35,20 @@ struct ConnectedView: View {
             case .newSession(let cwd):
                 ChatView(mode: .create(cwd: cwd, title: nil), sessionKey: "new-\(cwd ?? "")")
                     .id("new-session-\(cwd ?? "")")
+            case .botChat(let target):
+                // The canonical chat is resolved inside begin(.bot) by the
+                // exact-title registry lookup — never from the roster row,
+                // which can be stale. The row's sighting only rides along so
+                // an empty lookup that contradicts it fails closed.
+                ChatView(
+                    mode: .bot(
+                        profile: target.profile,
+                        expectCanonical: target.storedID != nil),
+                    sessionKey: "bot-\(target.profile)",
+                    botContext: .init(
+                        profile: target.profile, displayTitle: target.displayTitle)
+                )
+                .id("bot-\(target.profile)")
             case nil:
                 ContentUnavailableView(
                     "No Session Selected",
@@ -46,4 +60,5 @@ struct ConnectedView: View {
             ConnectionBannerView()
         }
     }
+
 }
