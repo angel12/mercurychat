@@ -115,20 +115,33 @@ struct ProfileAssetTests {
     }
 }
 
-@Suite("BotChatPolicy reroute")
+@Suite("BotChatPolicy")
 struct BotChatPolicyTests {
-    @Test func forksAreRerouted() {
-        #expect(BotChatPolicy.reroute("/new") == "/compact")
-        #expect(BotChatPolicy.reroute("/reset") == "/compact")
-        #expect(BotChatPolicy.reroute("  /new fresh start  ") == "/compact")
-        #expect(BotChatPolicy.reroute("/NEW") == "/compact")
+    @Test func compactCommandsAreIntercepted() {
+        #expect(BotChatPolicy.isCompactCommand("/new"))
+        #expect(BotChatPolicy.isCompactCommand("/reset"))
+        #expect(BotChatPolicy.isCompactCommand("/compact"))
+        #expect(BotChatPolicy.isCompactCommand("  /new fresh start  "))
+        #expect(BotChatPolicy.isCompactCommand("/NEW"))
     }
 
     @Test func everythingElsePassesThrough() {
-        #expect(BotChatPolicy.reroute("/compact") == nil)
-        #expect(BotChatPolicy.reroute("/newer things") == nil)
-        #expect(BotChatPolicy.reroute("tell me about /new") == nil)
-        #expect(BotChatPolicy.reroute("hello") == nil)
-        #expect(BotChatPolicy.reroute("") == nil)
+        #expect(!BotChatPolicy.isCompactCommand("/newer things"))
+        #expect(!BotChatPolicy.isCompactCommand("tell me about /new"))
+        #expect(!BotChatPolicy.isCompactCommand("hello"))
+        #expect(!BotChatPolicy.isCompactCommand(""))
+    }
+
+    @Test func canonicalRowRecognition() {
+        // Exact-lookup gateways report the lineage root's title.
+        #expect(BotChatPolicy.isCanonicalRow(rootTitle: "Bot Chat", title: "anything"))
+        // Windowed listings carry only the plain title.
+        #expect(BotChatPolicy.isCanonicalRow(rootTitle: nil, title: "Bot Chat"))
+        #expect(BotChatPolicy.isCanonicalRow(rootTitle: "", title: " Bot Chat "))
+        // A non-canonical root title is disqualifying even when the tip's
+        // display title matches.
+        #expect(!BotChatPolicy.isCanonicalRow(rootTitle: "Notes", title: "Bot Chat"))
+        #expect(!BotChatPolicy.isCanonicalRow(rootTitle: nil, title: "Bot Chats"))
+        #expect(!BotChatPolicy.isCanonicalRow(rootTitle: nil, title: nil))
     }
 }

@@ -530,6 +530,16 @@ final class AppModel {
 
     func renameSession(_ session: SessionSummary, to title: String) async {
         guard let connection else { return }
+        // A session titled "Bot Chat" is (or is indistinguishable from) a
+        // bot's canonical forever-chat — the gateway registry resolves by
+        // that exact name, so renaming severs the bot relationship and the
+        // next open mints a replacement. The sidebar hides Rename for these
+        // rows; this covers any other caller.
+        guard session.title != BotChatPolicy.canonicalTitle else {
+            browseError =
+                "That's a bot's canonical Bot Chat — its title is its identity and can't change."
+            return
+        }
         do {
             try await connection.rest.updateSession(
                 storedID: session.storedID, title: title, profile: session.profile)

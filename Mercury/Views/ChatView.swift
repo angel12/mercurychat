@@ -526,9 +526,15 @@ private struct ChatContentView: View {
                     .help(usageDetail(usage))
                 }
                 Menu {
-                    Button("Rename Session…") {
-                        renameText = controller.store.title ?? ""
-                        renameShown = true
+                    // A canonical Bot Chat's title is its registry identity —
+                    // renaming it would sever the bot's forever-chat, so the
+                    // affordance disappears there (the controller also guards
+                    // the write itself).
+                    if !controller.isCanonicalBotChat {
+                        Button("Rename Session…") {
+                            renameText = controller.store.title ?? ""
+                            renameShown = true
+                        }
                     }
                     if let profile = controller.store.profileName {
                         Text("Profile: \(profile)")

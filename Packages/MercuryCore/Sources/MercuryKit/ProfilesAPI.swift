@@ -168,21 +168,37 @@ public struct ProfileAsset: Sendable, Equatable {
 
 /// The canonical Bot Chat is a forever-chat: `/new` (or `/reset`) would fork
 /// the relationship into a scratch session — the one thing Bot Mode promises
-/// never happens. The desktop composer reroutes both to `/compact` (fresh
-/// working context, same conversation); Mercury applies the same policy.
+/// never happens. Those commands (and an explicit `/compact`) run REAL
+/// compression via the `session.compress` RPC instead — `prompt.submit`
+/// treats slash text as an ordinary message, so rewriting the string alone
+/// would only send "/compact" to the model.
 public enum BotChatPolicy {
-    /// The replacement text when `text` must be rerouted inside a canonical
-    /// Bot Chat, or nil to send it unchanged. Only the leading command token
+    /// The canonical registry title. (profile, "Bot Chat") IS the bot's
+    /// forever-chat identity — the gateway resolves by this exact name, so
+    /// renaming a canonical chat severs the relationship.
+    public static let canonicalTitle = "Bot Chat"
+
+    /// True when `text` must run compression instead of being submitted as a
+    /// prompt inside a canonical Bot Chat. Only the leading command token
     /// matters — arguments (e.g. `/new some title`) don't rescue a fork.
-    public static func reroute(_ text: String) -> String? {
+    public static func isCompactCommand(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let command = trimmed.split(separator: " ", maxSplits: 1).first.map(String.init)
         switch command?.lowercased() {
-        case "/new", "/reset":
-            return "/compact"
+        case "/new", "/reset", "/compact":
+            return true
         default:
-            return nil
+            return false
         }
+    }
+
+    /// Whether a listed/looked-up session row is a canonical Bot Chat.
+    /// Exact-lookup gateways report the durable lineage root's title as
+    /// `root_title`; windowed listings carry only `title` (desktop parity).
+    public static func isCanonicalRow(rootTitle: String?, title: String?) -> Bool {
+        let root = rootTitle?.trimmingCharacters(in: .whitespaces) ?? ""
+        if !root.isEmpty { return root == canonicalTitle }
+        return title?.trimmingCharacters(in: .whitespaces) == canonicalTitle
     }
 }
 
@@ -217,6 +233,54 @@ extension HermesConnection {
             params: .object(["include_sessions": .bool(true)]),
             timeout: timeout)
         return result["profiles"]?.arrayValue?.compactMap(BotSummary.init(json:)) ?? []
+    }
+
+    /// Authoritative per-open canonical Bot Chat lookup: `session.list`'s
+    /// exact-title fast path on the bot's profile. The gateway resolves the
+    /// compression lineage to the live tip (`resolved_id`), resurrects
+    /// accidentally-archived canonical rows, and answers `sessions: []` for
+    /// confirmed absence. Hidden rows resolve (canonical chats are born
+    /// hidden on the desktop). Throws on transport/RPC failure — callers
+    /// must fail CLOSED there: a failed registry lookup never reads as
+    /// "no Bot Chat exists", because creating on that misreading is how a
+    /// forever-chat forks.
+    public func findCanonicalBotChat(
+        profile: String, timeout: TimeInterval = 30
+    ) async throws -> BotSessionStub? {
+        let result = try await request(
+            "session.list",
+            params: .object([
+                "profile": .string(profile),
+                "title": .string(BotChatPolicy.canonicalTitle),
+                "include_hidden": .bool(true),
+                "limit": .number(200),
+            ]),
+            timeout: timeout)
+        let rows = result["sessions"]?.arrayValue ?? []
+        return rows.lazy
+            .filter {
+                BotChatPolicy.isCanonicalRow(
+                    rootTitle: $0["root_title"]?.stringValue,
+                    title: $0["title"]?.stringValue)
+            }
+            .compactMap(BotSessionStub.init(json:))
+            .first
+    }
+
+    /// Real context compression for a live session — the RPC behind the
+    /// desktop's `/compact`. (`prompt.submit` treats slash text as an
+    /// ordinary message, so this is the only way to actually compress.)
+    /// Returns the result's `status`: "compressed", "pending" (still running
+    /// server-side; the transcript refreshes when it lands), or a host-owned
+    /// value like "aborted".
+    public func compressSession(
+        sessionID: String, timeout: TimeInterval = 300
+    ) async throws -> String {
+        let result = try await request(
+            "session.compress",
+            params: .object(["session_id": .string(sessionID)]),
+            timeout: timeout)
+        return result["status"]?.stringValue ?? "compressed"
     }
 
     /// A profile's avatar image, or nil when the profile has none

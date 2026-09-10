@@ -13,6 +13,14 @@ final class ChatController: Identifiable {
     enum Mode {
         case create(cwd: String?, title: String?)
         case resume(SessionSummary)
+        /// A bot's canonical Bot Chat, resolved AT OPEN TIME by the exact-title
+        /// registry lookup — never from a cached roster row, which can be
+        /// stale (created moments ago on this device inside the roster
+        /// throttle, or created by another client since the listing).
+        /// `expectCanonical` carries the roster's last positive confirmation:
+        /// when it saw a canonical chat but the lookup comes back empty, the
+        /// open fails closed instead of minting a duplicate forever-chat.
+        case bot(profile: String, expectCanonical: Bool)
     }
 
     let id = UUID()
@@ -127,7 +135,63 @@ final class ChatController: Identifiable {
                 guard generation == beginGeneration else { return }
                 adopt(handle)
 
+            case .bot(let profile, let expectCanonical):
+                // FAIL CLOSED on lookup failure: a failed registry check must
+                // never read as "no Bot Chat exists" — creating on that
+                // misreading is exactly how a forever-chat forks. The error
+                // surfaces with the standard retry affordance.
+                guard let existing = try await resolveCanonicalChat(
+                    profile: profile, expectCanonical: expectCanonical)
+                else {
+                    guard generation == beginGeneration else { return }
+                    // Confirmed absence: this bot never had a Bot Chat. Mint
+                    // it — titled exactly "Bot Chat", the name that makes it
+                    // canonical in the gateway's registry.
+                    let handle = try await connection.createSession(
+                        cwd: nil, profile: profile, title: BotChatPolicy.canonicalTitle)
+                    guard generation == beginGeneration else { return }
+                    effectiveProfile = profile
+                    adopt(handle)
+                    return
+                }
+                guard generation == beginGeneration else { return }
+                try await performResume(
+                    SessionSummary(
+                        json: .object([
+                            "session_id": .string(existing.resolvedID ?? existing.storedID),
+                            "profile": .string(profile),
+                        ]))!,
+                    generation: generation)
+
             case .resume(let session):
+                try await performResume(session, generation: generation)
+            }
+        } catch {
+            guard generation == beginGeneration else { return }
+            errorMessage = Self.describe(error)
+        }
+    }
+
+    /// The open-time canonical registry lookup (`session.list` exact-title
+    /// fast path). nil = confirmed absence; throws = unconfirmed (transport
+    /// failure, or an empty answer contradicting the roster's last positive
+    /// sighting — a profile backend mid-restart can answer an empty list).
+    private func resolveCanonicalChat(
+        profile: String, expectCanonical: Bool
+    ) async throws -> BotSessionStub? {
+        if let existing = try await connection.findCanonicalBotChat(profile: profile) {
+            return existing
+        }
+        if expectCanonical {
+            throw HermesError.malformedResponse(
+                "Couldn't confirm this bot's Bot Chat registry — not starting a new chat. Try again.")
+        }
+        return nil
+    }
+
+    /// The resume body shared by `.resume` and the `.bot` registry path.
+    /// Runs under the caller's begin generation.
+    private func performResume(_ session: SessionSummary, generation: Int) async throws {
                 let profile = session.profile ?? self.profile
                 effectiveProfile = profile
                 // Resume (omit_messages) and REST hydration run in parallel —
@@ -169,11 +233,6 @@ final class ChatController: Identifiable {
                         "Couldn't load this session's history: \(Self.describe(error))"
                 }
                 applyResumeExtras(handle.raw)
-            }
-        } catch {
-            guard generation == beginGeneration else { return }
-            errorMessage = Self.describe(error)
-        }
     }
 
     /// `session.resume` with a bounded retry on the two transient refusals
@@ -562,12 +621,14 @@ final class ChatController: Identifiable {
     // MARK: Actions
 
     func submit(_ text: String, attachments: [PendingAttachment] = []) async {
-        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isCanonicalBotChat, let rerouted = BotChatPolicy.reroute(trimmed) {
-            store.appendNotice(
-                "A Bot Chat never forks — running \(rerouted) instead for a fresh "
-                    + "working context in the same conversation.")
-            trimmed = rerouted
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // /new, /reset, /compact in a canonical Bot Chat run REAL compression
+        // via session.compress — prompt.submit treats slash text as an
+        // ordinary message, so submitting "/compact" would only send those
+        // characters to the model while claiming a fresh context.
+        if isCanonicalBotChat, attachments.isEmpty, BotChatPolicy.isCompactCommand(trimmed) {
+            await runCanonicalCompact()
+            return
         }
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
         let echoed = attachments.map(Self.echoAttachment(for:))
@@ -709,6 +770,34 @@ final class ChatController: Identifiable {
         }
     }
 
+    /// A Bot Chat never forks: compress the working context in place and
+    /// re-resume, so the same conversation continues with fresh headroom.
+    /// Compression can rotate the lineage tip — the re-resume's re-anchor
+    /// logic follows it.
+    private func runCanonicalCompact() async {
+        guard let runtimeID, let storedID else {
+            errorMessage = "The session isn't open yet — try again in a moment."
+            return
+        }
+        store.appendNotice(
+            "A Bot Chat never forks — compressing the working context in place…")
+        do {
+            let status = try await connection.compressSession(sessionID: runtimeID)
+            switch status {
+            case "compressed":
+                await begin(.resume(sessionSummaryForResume(storedID: storedID)))
+            case "pending":
+                store.appendNotice(
+                    "Compression is still running server-side — the transcript refreshes when it lands."
+                )
+            default:
+                store.appendNotice("Compression ended early (\(status)).", level: .error)
+            }
+        } catch {
+            errorMessage = Self.describe(error)
+        }
+    }
+
     func interrupt() async {
         guard let runtimeID else { return }
         try? await connection.interruptSession(sessionID: runtimeID)
@@ -736,6 +825,17 @@ final class ChatController: Identifiable {
     }
 
     func rename(_ title: String) async {
+        // The canonical title IS the bot relationship: the gateway's registry
+        // resolves by the exact name "Bot Chat", so renaming it severs the
+        // forever-chat and the next open would mint a replacement. The UI
+        // hides Rename for canonical chats; this guard covers every other
+        // path to the title write.
+        guard !isCanonicalBotChat else {
+            store.appendNotice(
+                "This is the bot's canonical Bot Chat — its title is its identity and can't change.",
+                level: .error)
+            return
+        }
         guard let runtimeID else { return }
         _ = try? await connection.setSessionTitle(sessionID: runtimeID, title: title)
     }

@@ -36,13 +36,19 @@ struct ConnectedView: View {
                 ChatView(mode: .create(cwd: cwd, title: nil), sessionKey: "new-\(cwd ?? "")")
                     .id("new-session-\(cwd ?? "")")
             case .botChat(let target):
+                // The canonical chat is resolved inside begin(.bot) by the
+                // exact-title registry lookup — never from the roster row,
+                // which can be stale. The row's sighting only rides along so
+                // an empty lookup that contradicts it fails closed.
                 ChatView(
-                    mode: botChatMode(target),
-                    sessionKey: "bot-\(target.profile)-\(target.storedID ?? "new")",
+                    mode: .bot(
+                        profile: target.profile,
+                        expectCanonical: target.storedID != nil),
+                    sessionKey: "bot-\(target.profile)",
                     botContext: .init(
                         profile: target.profile, displayTitle: target.displayTitle)
                 )
-                .id("bot-\(target.profile)-\(target.storedID ?? "new")")
+                .id("bot-\(target.profile)")
             case nil:
                 ContentUnavailableView(
                     "No Session Selected",
@@ -55,18 +61,4 @@ struct ConnectedView: View {
         }
     }
 
-    /// Resume the canonical Bot Chat's server-resolved tip, or create it —
-    /// titled exactly "Bot Chat", the NAME that makes it canonical (the
-    /// gateway's registry resolves by that title on every listing).
-    private func botChatMode(_ target: AppModel.BotChatTarget) -> ChatController.Mode {
-        if let storedID = target.storedID {
-            return .resume(
-                SessionSummary(
-                    json: .object([
-                        "session_id": .string(storedID),
-                        "profile": .string(target.profile),
-                    ]))!)
-        }
-        return .create(cwd: nil, title: "Bot Chat")
-    }
 }
