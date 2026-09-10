@@ -33,6 +33,11 @@ final class ChatController: Identifiable {
 
     private let connection: HermesConnection
     private let profile: String?
+
+    /// This chat is a bot's canonical Bot Chat — a forever-chat that must
+    /// never fork. The composer path reroutes `/new` and `/reset` to
+    /// `/compact` (BotChatPolicy); regular sessions keep full `/new` freedom.
+    var isCanonicalBotChat = false
     private static let logger = Logger(subsystem: "Mercury", category: "ChatController")
     /// Older-history paging state (order=latest offsets count back from the
     /// newest row).
@@ -557,7 +562,13 @@ final class ChatController: Identifiable {
     // MARK: Actions
 
     func submit(_ text: String, attachments: [PendingAttachment] = []) async {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isCanonicalBotChat, let rerouted = BotChatPolicy.reroute(trimmed) {
+            store.appendNotice(
+                "A Bot Chat never forks — running \(rerouted) instead for a fresh "
+                    + "working context in the same conversation.")
+            trimmed = rerouted
+        }
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
         let echoed = attachments.map(Self.echoAttachment(for:))
         let echoID = store.appendUserMessage(trimmed, attachments: echoed, state: .sending)

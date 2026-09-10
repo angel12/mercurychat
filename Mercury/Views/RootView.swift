@@ -35,6 +35,14 @@ struct ConnectedView: View {
             case .newSession(let cwd):
                 ChatView(mode: .create(cwd: cwd, title: nil), sessionKey: "new-\(cwd ?? "")")
                     .id("new-session-\(cwd ?? "")")
+            case .botChat(let target):
+                ChatView(
+                    mode: botChatMode(target),
+                    sessionKey: "bot-\(target.profile)-\(target.storedID ?? "new")",
+                    botContext: .init(
+                        profile: target.profile, displayTitle: target.displayTitle)
+                )
+                .id("bot-\(target.profile)-\(target.storedID ?? "new")")
             case nil:
                 ContentUnavailableView(
                     "No Session Selected",
@@ -45,5 +53,20 @@ struct ConnectedView: View {
         .overlay(alignment: .bottom) {
             ConnectionBannerView()
         }
+    }
+
+    /// Resume the canonical Bot Chat's server-resolved tip, or create it —
+    /// titled exactly "Bot Chat", the NAME that makes it canonical (the
+    /// gateway's registry resolves by that title on every listing).
+    private func botChatMode(_ target: AppModel.BotChatTarget) -> ChatController.Mode {
+        if let storedID = target.storedID {
+            return .resume(
+                SessionSummary(
+                    json: .object([
+                        "session_id": .string(storedID),
+                        "profile": .string(target.profile),
+                    ]))!)
+        }
+        return .create(cwd: nil, title: "Bot Chat")
     }
 }
