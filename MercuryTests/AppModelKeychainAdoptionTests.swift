@@ -45,7 +45,9 @@ struct AppModelKeychainAdoptionTests {
     }
 
     /// `persistValidatedServer` writes UserDefaults: restore what was there.
-    private func preservingDefaults<T>(_ body: () async throws -> T) async rethrows -> T {
+    /// The body runs on the main actor like the tests themselves, and returns
+    /// nothing, so no value crosses isolation (Swift 6.1 rejects that).
+    private func preservingDefaults(_ body: @MainActor () async -> Void) async {
         let prior = ["lastServer", "savedServers"].map {
             ($0, UserDefaults.standard.object(forKey: $0))
         }
@@ -58,7 +60,7 @@ struct AppModelKeychainAdoptionTests {
                 }
             }
         }
-        return try await body()
+        await body()
     }
 
     private func tokenServer() async throws -> HermesTestServer {
@@ -78,7 +80,7 @@ struct AppModelKeychainAdoptionTests {
         defer { server.stop() }
         let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
 
-        try await preservingDefaults {
+        await preservingDefaults {
             let model = AppModel(tokenStore: store(failingWrites: failures))
             defer { model.disconnect() }
             await model.connect(endpoint: endpoint, credentials: .sessionToken("tok"))
@@ -112,7 +114,7 @@ struct AppModelKeychainAdoptionTests {
         defer { server.stop() }
         let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
 
-        try await preservingDefaults {
+        await preservingDefaults {
             let model = AppModel(tokenStore: store(failingWrites: 1))
             defer { model.disconnect() }
             await model.connect(
