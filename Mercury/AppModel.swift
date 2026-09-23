@@ -959,12 +959,15 @@ final class AppModel {
 
     /// Create a bot from the New Bot quick path, the way hermes desktop does
     /// (#27 Phase 3): the profile id comes from the typed name
-    /// (`BotCreation`), the profile clones `default`'s config and shares the
-    /// launch profile's auth, and its SOUL carries the bot's identity. Then
-    /// the look gets its title, the roster refreshes, and the new bot's Bot
-    /// Chat opens with its self-introduction. Returns nil on success, else a
-    /// user-facing failure message; nothing is created on a refusal.
-    func createBot(name: String, title: String, description: String) async -> String? {
+    /// (`BotCreation`), the profile clones `cloneFrom`'s config (or starts
+    /// fresh when nil) and shares the launch profile's auth, and its SOUL
+    /// carries the bot's identity. Then the look gets its title, the roster
+    /// refreshes, and the new bot's Bot Chat opens with its
+    /// self-introduction. Returns nil on success, else a user-facing failure
+    /// message; nothing is created on a refusal.
+    func createBot(
+        name: String, title: String, description: String, cloneFrom: String? = "default"
+    ) async -> String? {
         guard let connection else { return "Not connected." }
         let identity = BotCreation.identity(name: name, title: title)
         let slug = identity.slug
@@ -980,7 +983,7 @@ final class AppModel {
                 name: slug,
                 options: ProfileCreateOptions(
                     description: BotCreation.profileDescription(title: identity.title, description: mission),
-                    cloneFrom: "default",
+                    cloneFrom: cloneFrom,
                     soul: BotCreation.soul(slug: slug, title: identity.title, description: mission),
                     shareAuth: true))
         } catch {

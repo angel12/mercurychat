@@ -172,6 +172,7 @@ struct NewBotSheet: View {
     @State private var name = ""
     @State private var title = ""
     @State private var descriptionText = ""
+    @State private var cloneFrom: String? = "default"
     @State private var creating = false
     @State private var errorMessage: String?
 
@@ -186,6 +187,14 @@ struct NewBotSheet: View {
                         .lineLimit(1...3)
                 } footer: {
                     Text(idHint)
+                }
+                Section {
+                    Picker("Clone from", selection: $cloneFrom) {
+                        Text("Fresh profile").tag(String?.none)
+                        ForEach(cloneSourceNames, id: \.self) { name in
+                            Text(name).tag(Optional(name))
+                        }
+                    }
                 }
                 if let errorMessage {
                     Section {
@@ -210,28 +219,41 @@ struct NewBotSheet: View {
             .interactiveDismissDisabled(creating)
         }
         #if os(macOS)
-            .frame(minWidth: 400, minHeight: 260)
+            .frame(minWidth: 400, minHeight: 320)
         #endif
     }
 
     private var slug: String { BotCreation.identity(name: name, title: title).slug }
 
+    /// "default" first, then the other roster names in order, without
+    /// duplicates. "default" is offered even when the roster doesn't list it.
+    private var cloneSourceNames: [String] {
+        var names = ["default"]
+        for bot in model.bots where !names.contains(bot.name) {
+            names.append(bot.name)
+        }
+        return names
+    }
+
     /// Shows the profile id the name becomes, so a surprising slug (an
     /// accented or non-Latin name) is visible before anything is created.
     private var idHint: String {
-        if name.trimmingCharacters(in: .whitespaces).isEmpty {
-            return "The name becomes the bot's profile id. It clones your default profile's settings and shares its sign-ins."
+        guard name.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return slug.isEmpty
+                ? "Use letters or numbers in the name: it becomes the bot's profile id."
+                : "Profile id: \(slug)"
         }
-        return slug.isEmpty
-            ? "Use letters or numbers in the name: it becomes the bot's profile id."
-            : "Profile id: \(slug)"
+        if let cloneFrom {
+            return "The name becomes the bot's profile id. It clones \(cloneFrom)'s settings and shares your default profile's sign-ins."
+        }
+        return "The name becomes the bot's profile id. It starts from a fresh profile and shares your default profile's sign-ins."
     }
 
     private func create() async {
         creating = true
         errorMessage = nil
         let failure = await model.createBot(
-            name: name, title: title, description: descriptionText)
+            name: name, title: title, description: descriptionText, cloneFrom: cloneFrom)
         creating = false
         if let failure {
             errorMessage = failure
