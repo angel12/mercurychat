@@ -78,11 +78,11 @@ struct BotProfileDraftTests {
         #expect(draft.changes().model == nil)
     }
 
-    /// `profiles.describe` sometimes reports every toolset as off even
-    /// though the bot really has toolsets enabled (seen on hermes 0.21.4;
-    /// cause unknown). Editing from that state would replace the real
-    /// toolsets with just whatever the user toggled, so the section is
-    /// read-only until the server can report the real list.
+    /// `profiles.describe` reports every toolset as off, even though the
+    /// bot has toolsets enabled, once a named profile turns on the
+    /// gateway's multiplexing (hermes 0.21.4). Editing from that state
+    /// would replace the real toolsets with whatever the user toggled, so
+    /// the section is read-only until the server reports the real list.
     @Test(arguments: [true, false])
     func allToolsetsOffIsNotEditable(pinned: Bool) throws {
         var profile = try original(toolsetsEnabled: [false, false])

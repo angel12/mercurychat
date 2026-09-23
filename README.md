@@ -28,7 +28,7 @@ Packages/MercuryCore/
                                  Bot Chat composer rule
 ```
 
-The protocol layer is **MercuryKit** ([angel12/mercurykit](https://github.com/angel12/mercurykit)), the Swift client for Hermes shared with Mercury Voice: endpoints, credentials and Keychain storage, authentication (including native PKCE), the JSON-RPC gateway and its supervisor, REST, session and Bot Mode RPCs, and the wire models. It is pinned exactly to `0.1.0` in two places that must move together: `Packages/MercuryCore/Package.swift` (for ChatCore) and `project.yml` (for the app and `MercuryTests`). Its own tests run in its repository. Chat keeps app UI and composer rules, such as `BotChatPolicy.isCompactCommand`.
+The protocol layer is **MercuryKit** ([angel12/mercurykit](https://github.com/angel12/mercurykit)), the Swift client for Hermes shared with Mercury Voice: endpoints, credentials and Keychain storage, authentication (including native PKCE), the JSON-RPC gateway and its supervisor, REST, session and Bot Mode RPCs, and the wire models. It is pinned exactly to `0.3.0` in two places that must move together: `Packages/MercuryCore/Package.swift` (for ChatCore) and `project.yml` (for the app and `MercuryTests`). Its own tests run in its repository. Chat keeps app UI and composer rules, such as `BotChatPolicy.isCompactCommand`.
 
 Saved credentials live in the Keychain under the service `com.mercury.tokens` (`AppModel.keychainService`). Keep that string: it predates the rename to Mercury Chat, and changing it strands every saved sign-in.
 
@@ -85,6 +85,9 @@ Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-0
 - [ ] Not triggered live: the secret sheet (the agent has no tool that requests one) and the connection card (the agent installed an MCP server through the terminal instead). Both are unit-tested.
 - [ ] Known gap: a request answered from another client gets no `request.cancel` from upstream, so its card stays until the turn ends. An answer from it then comes back expired, with a notice.
 - [x] New Bot quick path live on 2026-09-23 against `hermes serve` 0.21.4 (#27 Phase 3): created "M3 Check" (id `m3-check`) from the simulator. On disk: the composed SOUL, the "Title — Description" profile description, the look's title and `created`, shared auth, and the inherited model. The Bot Chat opened and the bot introduced itself once. The test profile was then deleted.
+- [x] Advanced bot editor live on 2026-09-23 against `hermes serve` 0.21.4 (#27 Phase 3), on a CLI-created test profile: a SOUL edit reached `SOUL.md`, turning off a skill wrote `skills.disabled`, and a model pick pinned `model.default`. Each change round-tripped when the screen reopened, and nothing else was sent. The test profiles were then deleted.
+- [ ] Not exercised live: the expensive-model confirmation (the chosen model wasn't guarded) and MCP toggles (no servers configured). Both are unit-tested.
+- [ ] Toolsets are read-only while hermes reports every one disabled. That happens whenever a named profile exists: `profiles.describe` swallows an unscoped-secret error on the multiplexing gateway. Editing from that state would strip the bot's real toolsets.
 
 ### Milestones 4–6 — polish + resilience
 - [x] macOS split view, sidebar selection → resume, rename/pin/delete context menus, workspace `+` buttons, keyboard shortcuts.

@@ -27,11 +27,13 @@ public struct BotProfileDraft: Equatable, Sendable {
     /// while the list itself is non-empty. That combination can't reflect
     /// reality: an unpinned profile always gets the (non-empty) platform
     /// defaults, and upstream clears an explicit pin whenever the enabled
-    /// list is empty. The backend has been seen returning every toolset
-    /// disabled for profiles that do have toolsets enabled (hermes 0.21.4).
-    /// Saving toolsets from that state would replace the bot's real
-    /// toolsets with whatever was toggled, so the section stays read-only.
-    /// Remove once the backend reliably reports toolsets.
+    /// list is empty. Yet hermes 0.21.4 (and `main` at `36d2229e38`) reports
+    /// exactly that whenever a named profile exists: the multiplexing
+    /// gateway refuses the unscoped `XAI_API_KEY` read inside
+    /// `_get_platform_tools`, and `_describe_toolsets` swallows the error
+    /// as "nothing enabled". Saving toolsets from that state would replace
+    /// the bot's real toolsets with whatever was toggled, so the section
+    /// stays read-only. Remove once `profiles.describe` scopes that read.
     public var toolsetsEditable: Bool {
         !(!original.toolsets.isEmpty && original.toolsets.allSatisfy { !$0.enabled })
     }
