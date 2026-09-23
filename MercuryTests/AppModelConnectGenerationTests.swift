@@ -33,7 +33,7 @@ struct AppModelConnectGenerationTests {
 
         let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
         let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
-        defer { store.deleteToken(for: endpoint) }
+        defer { try? store.deleteToken(for: endpoint) }
 
         let model = AppModel(tokenStore: store)
         defer { model.disconnect() }
@@ -70,7 +70,7 @@ struct AppModelConnectGenerationTests {
 
         let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
         let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
-        defer { store.deleteToken(for: endpoint) }
+        defer { try? store.deleteToken(for: endpoint) }
 
         let model = AppModel(tokenStore: store)
         defer { model.disconnect() }
@@ -98,7 +98,7 @@ struct AppModelConnectGenerationTests {
 
         let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
         let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
-        defer { store.deleteToken(for: endpoint) }
+        defer { try? store.deleteToken(for: endpoint) }
 
         let model = AppModel(tokenStore: store)
         defer { model.disconnect() }
@@ -139,8 +139,8 @@ struct AppModelConnectGenerationTests {
         let fastEndpoint = try ServerEndpoint.parse("http://127.0.0.1:\(fast.port)").endpoint
         let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
         defer {
-            store.deleteToken(for: slowEndpoint)
-            store.deleteToken(for: fastEndpoint)
+            try? store.deleteToken(for: slowEndpoint)
+            try? store.deleteToken(for: fastEndpoint)
         }
 
         let model = AppModel(tokenStore: store)

@@ -91,7 +91,7 @@ struct BotChatControllerTests {
             {
                 model.disconnect()
                 server.stop()
-                store.deleteToken(for: endpoint)
+                try? store.deleteToken(for: endpoint)
             }
         )
     }

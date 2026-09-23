@@ -17,7 +17,10 @@ A useful report includes:
 
 - A concise description and your severity assessment.
 - The affected component by file path and line range
-  (e.g. `Packages/MercuryCore/Sources/MercuryKit/HermesAuthenticator.swift:64-99`).
+  (e.g. `Mercury/AppModel.swift:252-325`). The protocol layer, including
+  authentication and Keychain storage, is the MercuryKit package
+  ([angel12/mercurykit](https://github.com/angel12/mercurykit)); for code there,
+  give its file path and the MercuryKit version from `Packages/MercuryCore/Package.swift`.
 - Platform and OS version, and the commit SHA you tested against.
 - A reproduction, or a clear explanation of the attack path if a live
   reproduction is impractical.

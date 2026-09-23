@@ -67,6 +67,8 @@ struct ConnectionBannerView: View {
             return "Reconnecting…"
         case .disconnected(let reason):
             return reason.map { "Disconnected: \($0)" } ?? "Disconnected — retrying…"
+        case .refused(let reason):
+            return reason.map { "Refused: \($0)" } ?? "The server refused this connection."
         default:
             return nil
         }
@@ -123,6 +125,7 @@ struct ConnectionBannerView: View {
             case .ready(let isReconnect): return isReconnect ? "ready (reconnected)" : "ready"
             case .disconnected(let reason): return "disconnected\(reason.map { ": \($0)" } ?? "")"
             case .authExpired: return "auth expired"
+            case .refused(let reason): return "refused\(reason.map { ": \($0)" } ?? "")"
             case .unreachable(let reason):
                 return "unreachable\(reason.map { ": \($0)" } ?? "")"
             }

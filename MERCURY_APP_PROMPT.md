@@ -138,6 +138,8 @@ Remote liveness: on scene-activation and network-path change, don't just trust t
 
 ## 3. Architecture
 
+> *Historical: this is the original build brief. The `MercuryKit` layer described here now lives in the shared [MercuryKit](https://github.com/angel12/mercurykit) package, and `Packages/MercuryCore` vends only `ChatCore` (#27, Phase 2.5).*
+
 Three layers, SPM package + app target:
 
 1. **`MercuryKit`** (SPM, platform-free) — the protocol layer, lifted from HermesVoice's HermesKit and extended:

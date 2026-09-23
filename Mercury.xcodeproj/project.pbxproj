@@ -36,6 +36,7 @@
 		C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB97969196F04F2B48FCB03E /* ChatController.swift */; };
 		CED739D997A85C49B4F77C2A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */; };
 		D5245B27591F8A6DDB021053 /* FileAttachmentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C7D11718D49275BD388B653 /* FileAttachmentWire.swift */; };
+		DA2AA34E4B0CDD6757AE8F28 /* AppModelKeychainAdoptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */; };
 		DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */; };
 		DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */; };
 		DDD64F0FF5EAE6CB69646DEE /* ImageAttachmentPreparerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0EF1FA0B2C23FD41721AD9 /* ImageAttachmentPreparerTests.swift */; };
@@ -48,6 +49,7 @@
 
 /* Begin PBXFileReference section */
 		0C99AB79C63CE492D73E34BE /* MercuryTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MercuryTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelKeychainAdoptionTests.swift; sourceTree = "<group>"; };
 		10C155E77B1833A19AAA2F00 /* StatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusViews.swift; sourceTree = "<group>"; };
 		10E6E34D97806B51F0F8A12A /* Mercury.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Mercury.entitlements; sourceTree = "<group>"; };
 		1F9D39A196D74786863013AC /* AppModelConnectGenerationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelConnectGenerationTests.swift; sourceTree = "<group>"; };
@@ -120,6 +122,7 @@
 				D5220C37E1E54AD412B7EC6C /* AppModelChatLifecycleTests.swift */,
 				1F9D39A196D74786863013AC /* AppModelConnectGenerationTests.swift */,
 				E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */,
+				1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */,
 				90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */,
 				49E79A6A236A9462B5F3B2A2 /* ChatEchoAttachmentTests.swift */,
 				401441B5559E261DC51F2AA5 /* ComposerAttachmentsTests.swift */,
@@ -253,6 +256,7 @@
 			mainGroup = 02D9B97A924CCAA0D001BCD4;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */,
 				3D2440CC248BD21D88656E73 /* XCLocalSwiftPackageReference "Packages/MercuryCore" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -309,6 +313,7 @@
 				A13AC4FAFCA7F638095C7F77 /* AppModelChatLifecycleTests.swift in Sources */,
 				F5744D3FAE932DFD5180C93D /* AppModelConnectGenerationTests.swift in Sources */,
 				DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */,
+				DA2AA34E4B0CDD6757AE8F28 /* AppModelKeychainAdoptionTests.swift in Sources */,
 				8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */,
 				C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */,
 				C029DF6E28A3950A40013491 /* ChatEchoAttachmentTests.swift in Sources */,
@@ -587,6 +592,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/angel12/mercurykit";
+			requirement = {
+				kind = exactVersion;
+				version = 0.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		100C35A23B0A18D00444F5E1 /* ChatCore */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -594,6 +610,7 @@
 		};
 		270DCD916107ED2451EA4BB3 /* MercuryKit */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */;
 			productName = MercuryKit;
 		};
 		39C57500F981C503D4C31DD8 /* ChatCore */ = {
@@ -602,6 +619,7 @@
 		};
 		6A2149E41114F3E415ACCC47 /* MercuryKit */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */;
 			productName = MercuryKit;
 		};
 /* End XCSwiftPackageProductDependency section */

@@ -50,7 +50,7 @@ struct AppModelCredentialPersistenceTests {
         // Isolated keychain service — fixtures never touch the real
         // `com.mercury.tokens` items.
         let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
-        defer { store.deleteToken(for: endpoint) }
+        defer { try? store.deleteToken(for: endpoint) }
         // persistValidatedServer writes UserDefaults: snapshot and restore
         // whatever this domain held rather than blindly removing the keys.
         let priorDefaults = ["lastServer", "savedServers"].map {

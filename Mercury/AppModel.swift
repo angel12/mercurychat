@@ -40,6 +40,10 @@ final class AppModel {
         if case .connecting = phase, connection != nil { return true }
         if case .disconnected = phase, connection != nil { return true }
         if case .unreachable = phase, connection != nil { return true }
+        // A refused connection (WS 4403 Host/Origin/peer guard) has stopped
+        // for good; stay put so the banner can show why. The embedded kit
+        // reported this as a final `.disconnected(reason:)`.
+        if case .refused = phase, connection != nil { return true }
         return false
     }
 
@@ -124,9 +128,14 @@ final class AppModel {
     private let tokenStore: KeychainTokenStore
     private var updatePump: Task<Void, Never>?
 
+    /// The Keychain service Mercury Chat's saved credentials live under.
+    /// Keep this exact string: it predates the app's rename, and a new
+    /// value would strand every existing sign-in.
+    static let keychainService = "com.mercury.tokens"
+
     /// Tests inject an isolated keychain service so fixtures never touch
     /// the real `com.mercury.tokens` items.
-    init(tokenStore: KeychainTokenStore = KeychainTokenStore()) {
+    init(tokenStore: KeychainTokenStore = KeychainTokenStore(service: AppModel.keychainService)) {
         self.tokenStore = tokenStore
     }
 
@@ -162,7 +171,9 @@ final class AppModel {
         savedServers.removeAll { $0.urlString == server.urlString }
         persistServers()
         if let parsed = try? ServerEndpoint.parse(server.urlString) {
-            tokenStore.deleteToken(for: parsed.endpoint)
+            // Best effort, as before: a failed delete must not block
+            // forgetting the server.
+            try? tokenStore.deleteToken(for: parsed.endpoint)
             insecureAllowedServers.removeAll { $0 == parsed.endpoint.key }
             if endpoint?.key == parsed.endpoint.key { disconnect() }
         }
@@ -262,7 +273,9 @@ final class AppModel {
         let authenticator = HermesAuthenticator(
             endpoint: endpoint, credentials: credentials
         ) { [weak self] rotated in
-            if !store.setCredentials(rotated, for: endpoint) {
+            do {
+                try store.setCredentials(rotated, for: endpoint)
+            } catch {
                 Task { @MainActor [weak self] in
                     self?.keychainNotice = Self.keychainWriteFailureNotice
                 }
@@ -635,7 +648,9 @@ final class AppModel {
     private func persistValidatedServer(
         endpoint: ServerEndpoint, credentials: ServerCredentials
     ) {
-        if !tokenStore.setCredentials(credentials, for: endpoint) {
+        do {
+            try tokenStore.setCredentials(credentials, for: endpoint)
+        } catch {
             keychainNotice = Self.keychainWriteFailureNotice
         }
         UserDefaults.standard.set(endpoint.key, forKey: "lastServer")
@@ -708,7 +723,7 @@ final class AppModel {
                 profile: profile, limit: 30)
             browseError = nil
         } catch let error as HermesError {
-            if case .rpcError(HermesError.RPCCode.methodNotFound, _) = error {
+            if case .rpcError(HermesError.RPCCode.methodNotFound, _, _) = error {
                 // Older backend without projects.* — degrade to grouping the
                 // flat list by repo root / cwd.
                 await degradeToFlatSessions()
