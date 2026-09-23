@@ -1,3 +1,4 @@
+import ChatCore
 import Foundation
 import MercuryKit
 import Network
@@ -89,6 +90,9 @@ final class AppModel {
         /// The canonical chat's live tip (`resolved_id`), resolved by the
         /// server at listing time.
         var storedID: String?
+        /// A bot created moments ago: its Bot Chat opens with the
+        /// self-introduction kickoff (`BotCreation.kickoff`).
+        var kickoff = false
     }
 
     /// Sidebar selection → detail. `newSession` opens the new-session flow.
@@ -869,6 +873,53 @@ final class AppModel {
         } catch {
             return (error as? HermesError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// Create a bot from the New Bot quick path, the way hermes desktop does
+    /// (#27 Phase 3): the profile id comes from the typed name
+    /// (`BotCreation`), the profile clones `default`'s config and shares the
+    /// launch profile's auth, and its SOUL carries the bot's identity. Then
+    /// the look gets its title, the roster refreshes, and the new bot's Bot
+    /// Chat opens with its self-introduction. Returns nil on success, else a
+    /// user-facing failure message; nothing is created on a refusal.
+    func createBot(name: String, title: String, description: String) async -> String? {
+        guard let connection else { return "Not connected." }
+        let identity = BotCreation.identity(name: name, title: title)
+        let slug = identity.slug
+        guard BotCreation.isValidProfileID(slug) else {
+            return "Give the bot a name with letters or numbers. It becomes the bot's profile id."
+        }
+        if bots.contains(where: { $0.name == slug }) {
+            return "A bot with the profile id “\(slug)” already exists. Pick another name."
+        }
+        let mission = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            _ = try await connection.createProfile(
+                name: slug,
+                options: ProfileCreateOptions(
+                    description: BotCreation.profileDescription(title: identity.title, description: mission),
+                    cloneFrom: "default",
+                    soul: BotCreation.soul(slug: slug, title: identity.title, description: mission),
+                    shareAuth: true))
+        } catch {
+            return (error as? HermesError)?.errorDescription ?? error.localizedDescription
+        }
+        // The look, as the desktop writes it (`created` in epoch ms). Best
+        // effort: the bot exists either way, and Edit Bot can set a title.
+        var look: [String: JSONValue] = [
+            "created": .number((Date().timeIntervalSince1970 * 1000).rounded())
+        ]
+        if !identity.title.isEmpty { look["title"] = .string(identity.title) }
+        _ = try? await connection.configureBotMeta(
+            name: slug, meta: .object(look), expectedRevision: nil)
+        await loadBots(force: true)
+        route = .botChat(
+            BotChatTarget(
+                profile: slug,
+                displayTitle: BotCreation.displayName(slug: slug, title: identity.title),
+                storedID: nil,
+                kickoff: true))
+        return nil
     }
 
     /// A roster row's click target. The canonical chat's server-resolved

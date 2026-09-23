@@ -16,6 +16,7 @@
 		21A656ABC237B3E540CC7FB3 /* HermesTestServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */; };
 		2E07BC82FD414262CFCE88B3 /* AppModelAuthExpiredTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE84A4573D4C31E09178C736 /* AppModelAuthExpiredTests.swift */; };
 		373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10C155E77B1833A19AAA2F00 /* StatusViews.swift */; };
+		4076301EEC42EF845C3C6445 /* NewBotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */; };
 		4828EC5B01A9727856D87971 /* ImagePasteboardReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4E5B653456C4152778487 /* ImagePasteboardReader.swift */; };
 		49807DE024DC02E30AFFDBD8 /* ImagePasteboardReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47BAE63C6C10818D90CB6BEA /* ImagePasteboardReaderTests.swift */; };
 		56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5AB9D4B96A47F2A0E24656A /* RootView.swift */; };
@@ -66,6 +67,7 @@
 		5F29F375C5956F20E4F2A200 /* MercuryCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MercuryCore; path = Packages/MercuryCore; sourceTree = SOURCE_ROOT; };
 		696FDD7EA0879D6A21F3E07B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		70298A3FB29008EA90770D28 /* ServerRequestAdoptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerRequestAdoptionTests.swift; sourceTree = "<group>"; };
+		7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewBotTests.swift; sourceTree = "<group>"; };
 		7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesTestServer.swift; sourceTree = "<group>"; };
 		8DF179C9F278DF4C94236661 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotChatControllerTests.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 				7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */,
 				AF0EF1FA0B2C23FD41721AD9 /* ImageAttachmentPreparerTests.swift */,
 				47BAE63C6C10818D90CB6BEA /* ImagePasteboardReaderTests.swift */,
+				7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */,
 				70298A3FB29008EA90770D28 /* ServerRequestAdoptionTests.swift */,
 			);
 			path = MercuryTests;
@@ -329,6 +332,7 @@
 				DDD64F0FF5EAE6CB69646DEE /* ImageAttachmentPreparerTests.swift in Sources */,
 				4828EC5B01A9727856D87971 /* ImagePasteboardReader.swift in Sources */,
 				49807DE024DC02E30AFFDBD8 /* ImagePasteboardReaderTests.swift in Sources */,
+				4076301EEC42EF845C3C6445 /* NewBotTests.swift in Sources */,
 				04C8550BCC9000ABA1667054 /* ServerRequestAdoptionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
