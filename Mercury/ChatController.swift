@@ -887,7 +887,7 @@ final class ChatController: Identifiable {
         do {
             let status = try await connection.respondMcpSetup(
                 requestID: request.requestID, status: "declined", server: request.server,
-                detail: "Declined from Mercury (in-app MCP setup is not supported).")
+                detail: "Declined from Mercury Chat (in-app MCP setup is not supported).")
             return settlePrompt(
                 status, what: "answer",
                 clear: { self.store.clearMcpSetup(requestID: request.requestID) })

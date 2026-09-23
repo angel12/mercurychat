@@ -151,7 +151,7 @@ struct ConnectView: View {
     private func oauthForm(_ pending: AppModel.PendingOAuthLogin) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(
-                "This server uses \(pending.providerDisplayName) sign-in. Mercury opens your browser; after you approve, it finishes automatically."
+                "This server uses \(pending.providerDisplayName) sign-in. Mercury Chat opens your browser; after you approve, it finishes automatically."
             )
             .font(.callout)
 
@@ -268,7 +268,7 @@ struct ConnectHelpView: View {
                     "From a machine that can reach the Mac: `ssh -L 9119:127.0.0.1:9119 you@mac`, then connect to localhost:9119 with the token.")
                 recipe(
                     "Why can't I reach a remote server directly?",
-                    "A backend bound to 127.0.0.1 refuses non-local peers. Either use a tunnel that presents a loopback peer, or run the backend with a non-loopback bind — that enables gated mode, and Mercury signs in with a username & password when the server has one configured.")
+                    "A backend bound to 127.0.0.1 refuses non-local peers. Either use a tunnel that presents a loopback peer, or run the backend with a non-loopback bind — that enables gated mode, and Mercury Chat signs in with a username & password when the server has one configured.")
             }
             .navigationTitle("How do I connect?")
             #if !os(macOS)
