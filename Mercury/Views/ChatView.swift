@@ -1020,7 +1020,7 @@ private struct McpSetupCard: View {
                     .foregroundStyle(.secondary)
             }
             Text(
-                "Mercury can't run MCP setup flows yet. To add it, run `hermes mcp \(terminalVerb) \(request.server)` in a terminal — or decline and the agent will continue without it."
+                "Mercury Chat can't run MCP setup flows yet. To add it, run `hermes mcp \(terminalVerb) \(request.server)` in a terminal — or decline and the agent will continue without it."
             )
             .font(.footnote)
             .foregroundStyle(.secondary)

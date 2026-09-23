@@ -871,7 +871,7 @@ final class AppModel {
         guard let contract = try? await connection.probeDesktopContract() else { return }
         if contract != GatewayClient.builtAgainstDesktopContract {
             contractNotice =
-                "This server speaks desktop contract v\(contract); Mercury was built against v\(GatewayClient.builtAgainstDesktopContract). Most things should still work, but expect rough edges."
+                "This server speaks desktop contract v\(contract); Mercury Chat was built against v\(GatewayClient.builtAgainstDesktopContract). Most things should still work, but expect rough edges."
         }
     }
 }
