@@ -297,6 +297,11 @@ struct EditBotSheet: View {
                         }
                     }
                 }
+                Section {
+                    NavigationLink("Advanced") { BotAdvancedView(bot: bot) }
+                } footer: {
+                    Text("Soul, model, skills, toolsets and MCP servers.")
+                }
                 if let errorMessage {
                     Section {
                         Text(errorMessage).font(.caption).foregroundStyle(.red)
