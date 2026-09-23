@@ -23,6 +23,19 @@ public struct BotProfileDraft: Equatable, Sendable {
 
     public var hasChanges: Bool { changes() != ProfileChanges() }
 
+    /// False when `profiles.describe` reported every toolset as disabled
+    /// while the list itself is non-empty. That combination can't reflect
+    /// reality: an unpinned profile always gets the (non-empty) platform
+    /// defaults, and upstream clears an explicit pin whenever the enabled
+    /// list is empty. The backend has been seen returning every toolset
+    /// disabled for profiles that do have toolsets enabled (hermes 0.21.4).
+    /// Saving toolsets from that state would replace the bot's real
+    /// toolsets with whatever was toggled, so the section stays read-only.
+    /// Remove once the backend reliably reports toolsets.
+    public var toolsetsEditable: Bool {
+        !(!original.toolsets.isEmpty && original.toolsets.allSatisfy { !$0.enabled })
+    }
+
     public func changes() -> ProfileChanges {
         var changes = ProfileChanges()
         if soul != original.soul { changes.soul = soul }
@@ -30,7 +43,7 @@ public struct BotProfileDraft: Equatable, Sendable {
         if skills != original.skills {
             changes.disabledSkills = skills.filter { !$0.enabled }.map(\.name)
         }
-        if toolsets != original.toolsets {
+        if toolsetsEditable && toolsets != original.toolsets {
             let enabled = toolsets.filter(\.enabled)
             changes.enabledToolsets = enabled.count == toolsets.count || enabled.isEmpty ? [] : enabled.map(\.name)
         }

@@ -77,4 +77,42 @@ struct BotProfileDraftTests {
         draft.model = nil
         #expect(draft.changes().model == nil)
     }
+
+    /// `profiles.describe` sometimes reports every toolset as off even
+    /// though the bot really has toolsets enabled (seen on hermes 0.21.4;
+    /// cause unknown). Editing from that state would replace the real
+    /// toolsets with just whatever the user toggled, so the section is
+    /// read-only until the server can report the real list.
+    @Test(arguments: [true, false])
+    func allToolsetsOffIsNotEditable(pinned: Bool) throws {
+        var profile = try original(toolsetsEnabled: [false, false])
+        profile.toolsetsPinned = pinned
+        var draft = BotProfileDraft(profile)
+        #expect(!draft.toolsetsEditable)
+
+        draft.toolsets[0].enabled = true
+        #expect(draft.changes().enabledToolsets == nil)
+        #expect(!draft.hasChanges)
+    }
+
+    @Test func anExplicitPinIsEditable() throws {
+        var profile = try original(toolsetsEnabled: [true, false])
+        profile.toolsetsPinned = true
+        let draft = BotProfileDraft(profile)
+        #expect(draft.toolsetsEditable)
+    }
+
+    @Test func anUnpinnedProfileIsEditable() throws {
+        var profile = try original(toolsetsEnabled: [true, false])
+        profile.toolsetsPinned = false
+        let draft = BotProfileDraft(profile)
+        #expect(draft.toolsetsEditable)
+    }
+
+    @Test func anEmptyToolsetListIsEditable() throws {
+        var profile = try original(toolsetsEnabled: [])
+        profile.toolsetsPinned = true
+        let draft = BotProfileDraft(profile)
+        #expect(draft.toolsetsEditable)
+    }
 }

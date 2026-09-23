@@ -215,9 +215,12 @@ struct BotAdvancedView: View {
 
     @ViewBuilder
     private func toolsetsSection(_ draft: Binding<BotProfileDraft>) -> some View {
-        Section("Toolsets") {
+        Section {
             if draft.wrappedValue.toolsets.isEmpty {
                 Text("None installed.").foregroundStyle(.secondary)
+            } else if !draft.wrappedValue.toolsetsEditable {
+                Text("The server didn't report this bot's toolsets, so they can't be edited here. Change them with `hermes -p \(bot.name) tools`.")
+                    .foregroundStyle(.secondary)
             } else {
                 ForEach(draft.toolsets) { $toolset in
                     Toggle(isOn: $toolset.enabled) {
@@ -232,6 +235,8 @@ struct BotAdvancedView: View {
                     }
                 }
             }
+        } header: {
+            Text("Toolsets")
         }
     }
 
