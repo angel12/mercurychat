@@ -135,6 +135,38 @@ struct NewBotTests {
                 == .botChat(.init(profile: "scout", displayTitle: "Researcher", storedID: nil, kickoff: true)))
     }
 
+    @Test func cloningAnotherBotSendsItsName() async throws {
+        let (model, server, cleanup) = try await connectedModel(GatewayScript(existing: ["default", "scout"]))
+        defer { cleanup() }
+
+        let error = await model.createBot(
+            name: "Scout Two", title: "", description: "", cloneFrom: "scout")
+        #expect(error == nil)
+
+        let create = try #require(requests("profiles.create", in: server).last)
+        #expect(create["clone_from"] == "scout")
+        #expect(create["share_auth"] == true)
+        #expect(
+            create["soul"]
+                == .string(BotCreation.soul(slug: "scout-two", title: "", description: "")))
+    }
+
+    @Test func aFreshProfileSendsNoCloneSource() async throws {
+        let (model, server, cleanup) = try await connectedModel(GatewayScript(existing: ["default", "scout"]))
+        defer { cleanup() }
+
+        let error = await model.createBot(
+            name: "Scout Three", title: "", description: "", cloneFrom: nil)
+        #expect(error == nil)
+
+        let create = try #require(requests("profiles.create", in: server).last)
+        #expect(create["clone_from"] == nil)
+        #expect(create["share_auth"] == true)
+        #expect(
+            create["soul"]
+                == .string(BotCreation.soul(slug: "scout-three", title: "", description: "")))
+    }
+
     @Test func aNameOnlyBotHasNoTitleInItsLook() async throws {
         let (model, server, cleanup) = try await connectedModel(GatewayScript())
         defer { cleanup() }
