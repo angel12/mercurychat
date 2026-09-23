@@ -19,8 +19,10 @@
 		4076301EEC42EF845C3C6445 /* NewBotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */; };
 		4828EC5B01A9727856D87971 /* ImagePasteboardReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4E5B653456C4152778487 /* ImagePasteboardReader.swift */; };
 		49807DE024DC02E30AFFDBD8 /* ImagePasteboardReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47BAE63C6C10818D90CB6BEA /* ImagePasteboardReaderTests.swift */; };
+		539AA08FE874D44AE007BD46 /* BotAdvancedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63BEC3749530E29DB9F96DE8 /* BotAdvancedView.swift */; };
 		56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5AB9D4B96A47F2A0E24656A /* RootView.swift */; };
 		584BF8743978889C3AD32FC5 /* ImageAttachmentPreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2385853D812F0AEB3C05FE /* ImageAttachmentPreparer.swift */; };
+		66BF4F028E62E698A078D2AA /* BotAdvancedEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */; };
 		6BD6AA9B2CB31BC95C479BB2 /* BotEditViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4F2EB9420A2A5C328AB1CC0 /* BotEditViews.swift */; };
 		6C581D209F0763A1135AEA10 /* ImagePasteboardReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4E5B653456C4152778487 /* ImagePasteboardReader.swift */; };
 		6E5E2D22CA223D4F5EB709F1 /* FileAttachmentWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E7D656F8B884F791BFC64E /* FileAttachmentWireTests.swift */; };
@@ -65,8 +67,10 @@
 		57E7D656F8B884F791BFC64E /* FileAttachmentWireTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileAttachmentWireTests.swift; sourceTree = "<group>"; };
 		590FA74BCF5DB7884E8C404F /* Mercury.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mercury.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F29F375C5956F20E4F2A200 /* MercuryCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MercuryCore; path = Packages/MercuryCore; sourceTree = SOURCE_ROOT; };
+		63BEC3749530E29DB9F96DE8 /* BotAdvancedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAdvancedView.swift; sourceTree = "<group>"; };
 		696FDD7EA0879D6A21F3E07B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		70298A3FB29008EA90770D28 /* ServerRequestAdoptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerRequestAdoptionTests.swift; sourceTree = "<group>"; };
+		7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAdvancedEditorTests.swift; sourceTree = "<group>"; };
 		7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewBotTests.swift; sourceTree = "<group>"; };
 		7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesTestServer.swift; sourceTree = "<group>"; };
 		8DF179C9F278DF4C94236661 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
@@ -127,6 +131,7 @@
 				1F9D39A196D74786863013AC /* AppModelConnectGenerationTests.swift */,
 				E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */,
 				1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */,
+				7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */,
 				90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */,
 				49E79A6A236A9462B5F3B2A2 /* ChatEchoAttachmentTests.swift */,
 				401441B5559E261DC51F2AA5 /* ComposerAttachmentsTests.swift */,
@@ -161,6 +166,7 @@
 		34EF0B497D35DDAC5A3A45EA /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				63BEC3749530E29DB9F96DE8 /* BotAdvancedView.swift */,
 				B4F2EB9420A2A5C328AB1CC0 /* BotEditViews.swift */,
 				FDB791832F7A5EDCF9BCA81C /* BotViews.swift */,
 				CF52417D9BAD3C00374A1420 /* ChatView.swift */,
@@ -293,6 +299,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8B349087493237E06C15B9FD /* AppModel.swift in Sources */,
+				539AA08FE874D44AE007BD46 /* BotAdvancedView.swift in Sources */,
 				6BD6AA9B2CB31BC95C479BB2 /* BotEditViews.swift in Sources */,
 				9870DAC2473936640DAA3211 /* BotViews.swift in Sources */,
 				8B5F8EF23C7156F46304EC10 /* ChatController.swift in Sources */,
@@ -320,6 +327,7 @@
 				F5744D3FAE932DFD5180C93D /* AppModelConnectGenerationTests.swift in Sources */,
 				DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */,
 				DA2AA34E4B0CDD6757AE8F28 /* AppModelKeychainAdoptionTests.swift in Sources */,
+				66BF4F028E62E698A078D2AA /* BotAdvancedEditorTests.swift in Sources */,
 				8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */,
 				C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */,
 				C029DF6E28A3950A40013491 /* ChatEchoAttachmentTests.swift in Sources */,
@@ -606,7 +614,7 @@
 			repositoryURL = "https://github.com/angel12/mercurykit";
 			requirement = {
 				kind = exactVersion;
-				version = 0.2.0;
+				version = 0.3.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

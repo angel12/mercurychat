@@ -103,6 +103,20 @@ final class AppModel {
     }
     var route: Route?
 
+    /// `saveBotProfile`'s outcome. `.failed` keeps the caller's draft (no
+    /// reload) — the Advanced screen resends every changed section on retry.
+    enum BotProfileSaveResult: Equatable {
+        case saved
+        case needsModelConfirmation(String)
+        case failed(String)
+    }
+
+    /// `loadBotProfile`'s failure: a user-facing message, already resolved
+    /// from the gateway's `HermesError` (or a transport failure).
+    struct BotEditorError: Error, Equatable {
+        let message: String
+    }
+
     /// The chat currently on screen; receives the event stream.
     private(set) var activeChat: ChatController?
 
@@ -872,6 +886,74 @@ final class AppModel {
             return nil
         } catch {
             return (error as? HermesError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// The advanced editor's snapshot of a bot's profile.
+    func loadBotProfile(_ name: String) async -> Result<ProfileDescription, BotEditorError> {
+        guard let connection else { return .failure(.init(message: "Not connected.")) }
+        do {
+            return .success(try await connection.describeProfile(name: name))
+        } catch {
+            return .failure(.init(message: (error as? HermesError)?.errorDescription ?? error.localizedDescription))
+        }
+    }
+
+    /// The models a bot can pin; nil when the gateway can't list them (the
+    /// editor then keeps the current pin read-only).
+    func botModelInventory(_ name: String) async -> ModelInventory? {
+        try? await connection?.modelInventory(profile: name)
+    }
+
+    /// Save the advanced editor's changed sections. A guarded model comes
+    /// back as `needsModelConfirmation`, with every other section applied.
+    func saveBotProfile(_ name: String, draft: BotProfileDraft) async -> BotProfileSaveResult {
+        let changes = draft.changes()
+        guard changes != ProfileChanges() else { return .saved }
+        guard let connection else { return .failed("Not connected.") }
+        do {
+            let outcome = try await connection.configureProfile(name: name, changes: changes)
+            if !outcome.failedSections.isEmpty {
+                let names = outcome.failedSections.map(Self.sectionName).joined(separator: ", ")
+                return .failed("The gateway couldn't save: \(names). Try again.")
+            }
+            // A blank pin (empty model or provider) is silently skipped
+            // upstream rather than reported as failed or guarded — catch
+            // that here so a model change never appears to have saved when
+            // it didn't.
+            if changes.model != nil, outcome.applied[.model] == nil, !outcome.confirmationRequired {
+                return .failed("The gateway couldn't save: Model. Try again.")
+            }
+            if outcome.confirmationRequired {
+                let message = outcome.confirmationMessage.flatMap { $0.isEmpty ? nil : $0 }
+                return .needsModelConfirmation(message ?? "This model needs confirmation.")
+            }
+            return .saved
+        } catch {
+            return .failed((error as? HermesError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
+
+    /// Resend only the model, confirmed. Returns nil on success.
+    func confirmBotModel(_ name: String, pin: ProfileDescription.ModelPin) async -> String? {
+        guard let connection else { return "Not connected." }
+        do {
+            let outcome = try await connection.configureProfile(
+                name: name, changes: ProfileChanges(model: pin, confirmExpensiveModel: true))
+            return outcome.applied[.model] == true ? nil : "The gateway didn't confirm the model change. Try again."
+        } catch {
+            return (error as? HermesError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private static func sectionName(_ section: ProfileConfigureOutcome.Section) -> String {
+        switch section {
+        case .soul: "Soul"
+        case .description: "Description"
+        case .model: "Model"
+        case .skills: "Skills"
+        case .toolsets: "Toolsets"
+        case .mcpServers: "MCP servers"
         }
     }
 
