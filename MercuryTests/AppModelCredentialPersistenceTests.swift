@@ -77,10 +77,16 @@ struct AppModelCredentialPersistenceTests {
 
         let becameReady = await eventually { model.phase == .ready(isReconnect: false) }
         #expect(becameReady, "connection never reached ready: \(model.phase)")
+        // The phase is published before the ready-time save runs (it awaits
+        // the authenticator's live credentials first), so wait for the save
+        // itself: it adds the server to this model's list right after the
+        // Keychain write. (Not `lastServer`: parallel tests share it.)
+        let persisted = await eventually {
+            model.savedServers.contains { $0.urlString == endpoint.key }
+        }
+        #expect(persisted, "the ready-time save never ran")
 
-        // The pump's ready-time persist runs before the phase is observable,
-        // so the keychain verdict is already final here. It must hold the
-        // ROTATED pair — persisting the stale one strands next launch on a
+        // The keychain verdict is final now. It must hold the ROTATED pair — persisting the stale one strands next launch on a
         // refresh token the server has already burned.
         guard case .password(let saved)? = store.credentials(for: endpoint) else {
             Issue.record("no password credentials were persisted")
