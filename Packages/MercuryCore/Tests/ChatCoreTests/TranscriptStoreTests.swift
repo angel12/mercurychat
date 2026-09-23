@@ -57,6 +57,64 @@ struct TranscriptStoreTests {
         #expect(store.items.count == 2)
     }
 
+    // The backend marks a turn running without saying so: at turn start it
+    // emits only `message.start`, and the one turn-bound `session.info` is
+    // the settle at the end (#83; tui_gateway/prompt_turn.py).
+
+    @Test func messageStartMarksTheTurnRunningUntilItSettles() {
+        let store = TranscriptStore()
+        store.appendUserMessage("write a paragraph")
+        store.apply(event("message.start"))
+        #expect(store.running)
+
+        store.apply(event("tool.start", #"{"tool_id": "t1", "name": "terminal"}"#))
+        store.apply(
+            serverRequest(
+                "srq-ddddddddddd1", "approval",
+                #"{"request_id": "ap1", "command": "ls", "allow_permanent": false}"#))
+        #expect(store.running)
+        #expect(store.pendingApproval != nil)
+
+        // Not the end of the turn: it can chain.
+        store.apply(event("message.complete", #"{"text": "Done.", "status": "ok"}"#))
+        #expect(store.running)
+
+        store.apply(event("session.info", #"{"running": false}"#))
+        #expect(!store.running)
+        #expect(store.pendingApproval == nil)
+        let toolRows = store.items.compactMap { item -> ToolActivity? in
+            if case .tool(let row) = item { return row }
+            return nil
+        }
+        #expect(toolRows.count == 1)
+        #expect(toolRows.allSatisfy { !$0.isRunning })
+    }
+
+    @Test func lateTurnEventsDoNotRestartASettledTurn() {
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("session.info", #"{"running": false}"#))
+        store.apply(event("message.delta", #"{"text": "late"}"#))
+        store.apply(event("message.complete", #"{"text": "late", "status": "ok"}"#))
+        store.apply(event("tool.complete", #"{"tool_id": "t9", "name": "terminal"}"#))
+        store.apply(event("session.usage", #"{"usage": {"input": 1, "output": 1}}"#))
+        store.apply(event("session.info", #"{"title": "Renamed"}"#))
+        #expect(!store.running)
+    }
+
+    @Test func aChainedTurnAfterTheSettleRunsAgain() {
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("message.complete", #"{"text": "One.", "status": "ok"}"#))
+        store.apply(event("session.info", #"{"running": false}"#))
+        // A queued prompt or goal follow-up: the gateway settles, then
+        // starts the next turn with its own message.start.
+        store.apply(event("message.start"))
+        #expect(store.running)
+        store.apply(event("session.info", #"{"running": false}"#))
+        #expect(!store.running)
+    }
+
     @Test func userEchoCounterTracksLiveEchoesOnly() {
         let store = TranscriptStore()
         #expect(store.userEchoCounter == 0)

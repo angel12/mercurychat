@@ -20,9 +20,11 @@ public final class TranscriptStore {
 
     public private(set) var items: [TranscriptItem] = []
 
-    /// True while a turn is streaming. Driven by `session.info.running` —
-    /// the REAL end-of-turn signal (`message.complete` can be followed by
-    /// chained turns).
+    /// True while a turn is streaming. Set by `message.start` — the backend
+    /// marks a turn running without a `session.info` saying so; the one
+    /// turn-bound `session.info` is the settle at the end — and cleared by
+    /// `session.info.running == false`, the REAL end-of-turn signal
+    /// (`message.complete` can be followed by chained turns).
     public private(set) var running = false
 
     /// `tool.generating {name}` — transient "preparing…" hint. No tool row
@@ -609,6 +611,7 @@ public final class TranscriptStore {
     public func apply(_ event: GatewayEvent) {
         switch event.type {
         case GatewayEvent.Kind.messageStart:
+            running = true
             markQueuedPromptsStarted()
             openBubble()
 
