@@ -11,6 +11,16 @@ struct ChatView: View {
     let mode: ChatController.Mode
     /// Stable identity for the .task that creates the controller.
     let sessionKey: String
+    /// Set when this chat is a bot's canonical Bot Chat: pins the profile
+    /// (create mode would otherwise fall back to the sidebar's selected
+    /// profile), captions the chat with the bot's name, and arms the
+    /// never-fork composer policy.
+    var botContext: BotChatContext?
+
+    struct BotChatContext {
+        var profile: String
+        var displayTitle: String
+    }
 
     @State private var controller: ChatController?
     /// One shared sheet slot — stacked SwiftUI sheets fault.
@@ -33,7 +43,9 @@ struct ChatView: View {
     var body: some View {
         Group {
             if let controller {
-                ChatContentView(controller: controller, activeSheet: $activeSheet)
+                ChatContentView(
+                    controller: controller, activeSheet: $activeSheet,
+                    titleOverride: botContext?.displayTitle)
             } else {
                 ProgressView("Opening session…")
             }
@@ -42,6 +54,7 @@ struct ChatView: View {
             // nil = disconnected before this body ran: keep the progress
             // placeholder; RootView swaps to the connect screen.
             guard let chat = model.openChat(profile: profileForMode) else { return }
+            chat.isCanonicalBotChat = botContext != nil
             controller = chat
             await chat.begin(mode)
         }
@@ -74,6 +87,7 @@ struct ChatView: View {
     }
 
     private var profileForMode: String? {
+        if let botContext { return botContext.profile }
         if case .resume(let session) = mode { return session.profile }
         return nil
     }
@@ -83,6 +97,9 @@ struct ChatView: View {
 private struct ChatContentView: View {
     @Bindable var controller: ChatController
     @Binding var activeSheet: ChatView.ChatSheet?
+    /// A canonical Bot Chat is captioned with its bot's name (desktop
+    /// parity) instead of the stored session title.
+    var titleOverride: String?
     @State private var composerText = ""
     @State private var renameShown = false
     @State private var renameText = ""
@@ -119,7 +136,7 @@ private struct ChatContentView: View {
             attachments.loadProviders(providers)
             return !providers.isEmpty
         }
-        .navigationTitle(controller.store.title ?? "Session")
+        .navigationTitle(titleOverride ?? controller.store.title ?? "Session")
         #if !os(macOS)
             .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -509,9 +526,15 @@ private struct ChatContentView: View {
                     .help(usageDetail(usage))
                 }
                 Menu {
-                    Button("Rename Session…") {
-                        renameText = controller.store.title ?? ""
-                        renameShown = true
+                    // A canonical Bot Chat's title is its registry identity —
+                    // renaming it would sever the bot's forever-chat, so the
+                    // affordance disappears there (the controller also guards
+                    // the write itself).
+                    if !controller.isCanonicalBotChat {
+                        Button("Rename Session…") {
+                            renameText = controller.store.title ?? ""
+                            renameShown = true
+                        }
                     }
                     if let profile = controller.store.profileName {
                         Text("Profile: \(profile)")
