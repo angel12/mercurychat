@@ -10,6 +10,7 @@ struct SidebarView: View {
     @State private var deleteTarget: SessionSummary?
     @State private var botSearch = ""
     @State private var showHiddenBots = false
+    @State private var newBotShown = false
 
     var body: some View {
         @Bindable var model = model
@@ -122,7 +123,13 @@ struct SidebarView: View {
             TextField("Search bots", text: $botSearch)
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
+            Button {
+                newBotShown = true
+            } label: {
+                Label("New Bot", systemImage: "plus")
+            }
         }
+        .sheet(isPresented: $newBotShown) { NewBotSheet() }
 
         let rows = visibleBots
         Section {

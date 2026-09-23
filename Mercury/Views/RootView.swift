@@ -46,7 +46,8 @@ struct ConnectedView: View {
                         expectCanonical: target.storedID != nil),
                     sessionKey: "bot-\(target.profile)",
                     botContext: .init(
-                        profile: target.profile, displayTitle: target.displayTitle)
+                        profile: target.profile, displayTitle: target.displayTitle,
+                        kickoff: target.kickoff)
                 )
                 .id("bot-\(target.profile)")
             case nil:

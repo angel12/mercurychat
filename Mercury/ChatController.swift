@@ -629,6 +629,14 @@ final class ChatController: Identifiable {
 
     // MARK: Actions
 
+    /// A newly created bot's first turn: it introduces itself, as on the
+    /// desktop. Only into a live, empty chat, so reopening the chat, or one
+    /// with a transcript, never sends it again.
+    func sendKickoffIfFresh() async {
+        guard runtimeID != nil, store.items.isEmpty, !store.running else { return }
+        await submit(BotCreation.kickoff)
+    }
+
     func submit(_ text: String, attachments: [PendingAttachment] = []) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // /new, /reset, /compact in a canonical Bot Chat run REAL compression

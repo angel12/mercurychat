@@ -20,6 +20,8 @@ struct ChatView: View {
     struct BotChatContext {
         var profile: String
         var displayTitle: String
+        /// Just created: open with the bot's self-introduction.
+        var kickoff = false
     }
 
     @State private var controller: ChatController?
@@ -57,6 +59,9 @@ struct ChatView: View {
             chat.isCanonicalBotChat = botContext != nil
             controller = chat
             await chat.begin(mode)
+            if botContext?.kickoff == true {
+                await chat.sendKickoffIfFresh()
+            }
         }
         .onDisappear {
             if let controller { model.closeChat(controller) }

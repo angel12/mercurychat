@@ -9,6 +9,12 @@ struct TestRPCRequest: Sendable {
     var params: JSONValue
 }
 
+/// A scripted answer to one WS JSON-RPC request.
+enum TestRPCReply: Sendable {
+    case result(JSONValue)
+    case error(code: Int, message: String)
+}
+
 /// The request/response pair for the scripted REST surface.
 struct TestHTTPRequest: Sendable {
     var method: String
@@ -43,6 +49,9 @@ final class HermesTestServer: @unchecked Sendable {
     /// request, nil for `{}`. Every inbound request is captured in
     /// `rpcRequests` either way.
     private let rpcHandler: (@Sendable (String, JSONValue) -> JSONValue?)?
+    /// Scripted JSON-RPC errors: return `(code, message)` to answer a request
+    /// with an error instead of a result.
+    private let rpcErrorHandler: (@Sendable (String, JSONValue) -> (Int, String)?)?
     private var connections: [Connection] = []
     private var capturedRPCs: [TestRPCRequest] = []
     private(set) var port: UInt16 = 0
@@ -54,12 +63,14 @@ final class HermesTestServer: @unchecked Sendable {
 
     static func start(
         rpc: (@Sendable (String, JSONValue) -> JSONValue?)? = nil,
+        rpcError: (@Sendable (String, JSONValue) -> (Int, String)?)? = nil,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) async throws -> HermesTestServer {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
-        let server = HermesTestServer(listener: listener, rpcHandler: rpc, handler: handler)
+        let server = HermesTestServer(
+            listener: listener, rpcHandler: rpc, rpcErrorHandler: rpcError, handler: handler)
         try await server.waitUntilReady()
         return server
     }
@@ -67,10 +78,12 @@ final class HermesTestServer: @unchecked Sendable {
     private init(
         listener: NWListener,
         rpcHandler: (@Sendable (String, JSONValue) -> JSONValue?)?,
+        rpcErrorHandler: (@Sendable (String, JSONValue) -> (Int, String)?)?,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) {
         self.listener = listener
         self.rpcHandler = rpcHandler
+        self.rpcErrorHandler = rpcErrorHandler
         self.handler = handler
         // Installed BEFORE start(): a started NWListener without a
         // newConnectionHandler fails with EINVAL.
@@ -79,11 +92,14 @@ final class HermesTestServer: @unchecked Sendable {
             let connection = Connection(
                 nwConnection, handler: self.handler
             ) { [weak self] method, params in
-                guard let self else { return nil }
+                guard let self else { return .result(.object([:])) }
                 self.lock.withLock {
                     self.capturedRPCs.append(TestRPCRequest(method: method, params: params))
                 }
-                return self.rpcHandler?(method, params)
+                if let (code, message) = self.rpcErrorHandler?(method, params) {
+                    return .error(code: code, message: message)
+                }
+                return .result(self.rpcHandler?(method, params) ?? .object([:]))
             }
             self.lock.withLock { self.connections.append(connection) }
             connection.begin()
@@ -127,16 +143,15 @@ final class HermesTestServer: @unchecked Sendable {
     private final class Connection: @unchecked Sendable {
         private let nwConnection: NWConnection
         private let handler: @Sendable (TestHTTPRequest) -> TestHTTPResponse
-        /// Captures each WS JSON-RPC request and yields its scripted result
-        /// (nil → `{}`).
-        private let rpcSink: @Sendable (String, JSONValue) -> JSONValue?
+        /// Captures each WS JSON-RPC request and yields its scripted reply.
+        private let rpcSink: @Sendable (String, JSONValue) -> TestRPCReply
         private var buffer = Data()
         private var upgraded = false
 
         init(
             _ nwConnection: NWConnection,
             handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse,
-            rpcSink: @escaping @Sendable (String, JSONValue) -> JSONValue?
+            rpcSink: @escaping @Sendable (String, JSONValue) -> TestRPCReply
         ) {
             self.nwConnection = nwConnection
             self.handler = handler
@@ -290,13 +305,14 @@ final class HermesTestServer: @unchecked Sendable {
                 let method = frame["method"]?.stringValue,
                 let id = frame["id"]?.intValue
             else { return }
-            let result = rpcSink(method, frame["params"] ?? .null) ?? .object([:])
-            let response = JSONValue.object([
-                "jsonrpc": .string("2.0"),
-                "id": .number(Double(id)),
-                "result": result,
-            ])
-            if let data = try? JSONEncoder().encode(response),
+            var response: [String: JSONValue] = ["jsonrpc": "2.0", "id": .number(Double(id))]
+            switch rpcSink(method, frame["params"] ?? .null) {
+            case .result(let result):
+                response["result"] = result
+            case .error(let code, let message):
+                response["error"] = ["code": .number(Double(code)), "message": .string(message)]
+            }
+            if let data = try? JSONEncoder().encode(JSONValue.object(response)),
                 let text = String(data: data, encoding: .utf8)
             {
                 sendText(text)

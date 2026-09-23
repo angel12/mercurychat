@@ -1,3 +1,4 @@
+import ChatCore
 import ImageIO
 import MercuryKit
 import PhotosUI
@@ -156,6 +157,87 @@ struct RoutinesSheet: View {
         Binding(
             get: { deleteTarget != nil },
             set: { if !$0 { deleteTarget = nil } })
+    }
+}
+
+// MARK: - New bot
+
+/// The New Bot quick path (#27 Phase 3): Name, and optionally Title and
+/// Description. The bot is created the way hermes desktop creates one
+/// (`AppModel.createBot`), then its Bot Chat opens and it introduces itself.
+struct NewBotSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name = ""
+    @State private var title = ""
+    @State private var descriptionText = ""
+    @State private var creating = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Name", text: $name)
+                        .autocorrectionDisabled()
+                    TextField("Title (optional)", text: $title)
+                    TextField("Description (optional)", text: $descriptionText, axis: .vertical)
+                        .lineLimit(1...3)
+                } footer: {
+                    Text(idHint)
+                }
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage).font(.caption).foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("New Bot")
+            #if !os(macOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .disabled(creating)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") { Task { await create() } }
+                        .disabled(creating || slug.isEmpty)
+                }
+            }
+            .interactiveDismissDisabled(creating)
+        }
+        #if os(macOS)
+            .frame(minWidth: 400, minHeight: 260)
+        #endif
+    }
+
+    private var slug: String { BotCreation.identity(name: name, title: title).slug }
+
+    /// Shows the profile id the name becomes, so a surprising slug (an
+    /// accented or non-Latin name) is visible before anything is created.
+    private var idHint: String {
+        if name.trimmingCharacters(in: .whitespaces).isEmpty {
+            return "The name becomes the bot's profile id. It clones your default profile's settings and shares its sign-ins."
+        }
+        return slug.isEmpty
+            ? "Use letters or numbers in the name: it becomes the bot's profile id."
+            : "Profile id: \(slug)"
+    }
+
+    private func create() async {
+        creating = true
+        errorMessage = nil
+        let failure = await model.createBot(
+            name: name, title: title, description: descriptionText)
+        creating = false
+        if let failure {
+            errorMessage = failure
+        } else {
+            dismiss()
+        }
     }
 }
 

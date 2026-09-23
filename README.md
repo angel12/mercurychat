@@ -84,6 +84,7 @@ Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-0
 - [x] Contract-7 prompts triggered live on 2026-09-23 against `hermes serve` 0.21.4 (#27, M2): clarify answered through `clarify.lock`; approval Allow Once ran the command; sudo Decline let the agent continue; an unanswered approval timed out and its card cleared.
 - [ ] Not triggered live: the secret sheet (the agent has no tool that requests one) and the connection card (the agent installed an MCP server through the terminal instead). Both are unit-tested.
 - [ ] Known gap: a request answered from another client gets no `request.cancel` from upstream, so its card stays until the turn ends. An answer from it then comes back expired, with a notice.
+- [x] New Bot quick path live on 2026-09-23 against `hermes serve` 0.21.4 (#27 Phase 3): created "M3 Check" (id `m3-check`) from the simulator. On disk: the composed SOUL, the "Title — Description" profile description, the look's title and `created`, shared auth, and the inherited model. The Bot Chat opened and the bot introduced itself once. The test profile was then deleted.
 
 ### Milestones 4–6 — polish + resilience
 - [x] macOS split view, sidebar selection → resume, rename/pin/delete context menus, workspace `+` buttons, keyboard shortcuts.
