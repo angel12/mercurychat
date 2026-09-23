@@ -317,7 +317,11 @@ final class AppModel {
         // pass REST and still refuse the socket (Host/Origin guards, ticket
         // rules) — the documented false-positive trap. Dial first; the
         // connection is saved when the gateway reaches ready.
-        let connection = HermesConnection(endpoint: endpoint, authenticator: authenticator)
+        // Contract ≥ 7: advertise server requests on every socket and answer
+        // approval, clarify, sudo and secret. Requests Chat can't answer
+        // (vault.*, terminal.read, tour, …) stay open for another client.
+        let connection = HermesConnection(
+            endpoint: endpoint, authenticator: authenticator, serverRequestPolicy: .chat)
         self.connection = connection
         startUpdatePump(connection, credentialsToSave: credentials)
         startPathMonitor()
@@ -877,16 +881,21 @@ final class AppModel {
             storedID: bot.canonicalSession?.resolvedID ?? bot.canonicalSession?.storedID)
     }
 
-    /// Cheap probe for `desktop_contract` drift. The throwaway lazy session
-    /// it needs lives in `probeDesktopContract()`, which guarantees the close
-    /// (and retries it once) so a cancelled or failed probe can't leave a
-    /// ghost session in the sidebar (issue #49).
+    /// The oldest backend Chat supports: prompts arrive as contract-7
+    /// server requests, and the contract-6 prompt events aren't handled.
+    static let contractRequirement = DesktopContractRequirement.serverRequests
+
+    /// Warn when the backend is older than `contractRequirement`. A newer
+    /// one is fine: later contracts only add opt-in features. The throwaway
+    /// lazy session the probe needs lives in `probeDesktopContract()`, which
+    /// guarantees the close (and retries it once) so a cancelled or failed
+    /// probe can't leave a ghost session in the sidebar (issue #49).
     private func checkContractVersion() async {
         guard let connection, contractNotice == nil else { return }
         guard let contract = try? await connection.probeDesktopContract() else { return }
-        if contract != GatewayClient.builtAgainstDesktopContract {
+        if case .older(let reported) = Self.contractRequirement.assess(contract) {
             contractNotice =
-                "This server speaks desktop contract v\(contract); Mercury Chat was built against v\(GatewayClient.builtAgainstDesktopContract). Most things should still work, but expect rough edges."
+                "This server speaks desktop contract v\(reported); Mercury Chat needs v\(Self.contractRequirement.minimum) or newer. Approval, clarify, sudo and secret prompts won't appear until the backend is updated."
         }
     }
 }
