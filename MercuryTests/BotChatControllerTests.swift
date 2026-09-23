@@ -76,7 +76,15 @@ struct BotChatControllerTests {
         let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
         let model = AppModel(tokenStore: store)
         await model.connect(endpoint: endpoint, credentials: nil)
-        let ready = await eventually { model.isConnected }
+        // Wait for the actual `.ready` phase, not `isConnected` — that is
+        // already true while the socket is still dialing (`.connecting` with
+        // a connection installed), and a begin() fired in that window throws
+        // "not connected" instead of exercising the flow under test. Locally
+        // the dial always won this race; CI's runner lost it.
+        let ready = await eventually {
+            if case .ready = model.phase { return true }
+            return false
+        }
         try #require(ready)
         return (
             model, server,
