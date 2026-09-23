@@ -250,7 +250,7 @@ final class ChatController: Identifiable {
                 return try await connection.resumeSession(
                     storedID: storedID, profile: profile)
             } catch let error as HermesError {
-                guard case .rpcError(let code, _) = error,
+                guard case .rpcError(let code, _, _) = error,
                     code == HermesError.RPCCode.sessionBusy
                         || code == HermesError.RPCCode.sessionNotFound,
                     attempt < 3
@@ -712,7 +712,7 @@ final class ChatController: Identifiable {
                                 base64: attachment.data.base64EncodedString(),
                                 filename: attachment.filename)
                             return StagedAttachment(detachPaths: result.pagePaths, refText: nil)
-                        } catch let HermesError.rpcError(code, _)
+                        } catch let HermesError.rpcError(code, _, _)
                             where code == 5028 || code == -32601
                         {
                             // No poppler on the gateway (or a pre-pdf.attach backend):

@@ -253,6 +253,7 @@
 			mainGroup = 02D9B97A924CCAA0D001BCD4;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */,
 				3D2440CC248BD21D88656E73 /* XCLocalSwiftPackageReference "Packages/MercuryCore" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -587,6 +588,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/angel12/mercurykit";
+			requirement = {
+				kind = exactVersion;
+				version = 0.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		100C35A23B0A18D00444F5E1 /* ChatCore */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -594,6 +606,7 @@
 		};
 		270DCD916107ED2451EA4BB3 /* MercuryKit */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */;
 			productName = MercuryKit;
 		};
 		39C57500F981C503D4C31DD8 /* ChatCore */ = {
@@ -602,6 +615,7 @@
 		};
 		6A2149E41114F3E415ACCC47 /* MercuryKit */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */;
 			productName = MercuryKit;
 		};
 /* End XCSwiftPackageProductDependency section */

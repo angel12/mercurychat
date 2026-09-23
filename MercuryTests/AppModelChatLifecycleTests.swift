@@ -36,7 +36,7 @@ struct AppModelChatLifecycleTests {
         // `com.mercury.tokens` items. (No credentials are passed below, so
         // nothing is ever persisted; the store is only injection hygiene.)
         let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
-        defer { store.deleteToken(for: endpoint) }
+        defer { try? store.deleteToken(for: endpoint) }
 
         let model = AppModel(tokenStore: store)
         defer { model.disconnect() }
@@ -125,7 +125,7 @@ struct AppModelChatLifecycleTests {
             {
                 model.disconnect()
                 server.stop()
-                store.deleteToken(for: endpoint)
+                try? store.deleteToken(for: endpoint)
             }
         )
     }

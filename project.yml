@@ -6,6 +6,11 @@ options:
     visionOS: "2.0"
   xcodeVersion: "16.0"
 packages:
+  # The shared protocol kit, pinned to the same version as
+  # Packages/MercuryCore/Package.swift so both references resolve to one copy.
+  MercuryKit:
+    url: https://github.com/angel12/mercurykit
+    exactVersion: 0.1.0
   MercuryCore:
     path: Packages/MercuryCore
 targets:
@@ -24,10 +29,10 @@ targets:
       - path: Mercury/ImagePasteboardReader.swift
       - path: MercuryTests
     dependencies:
+      - package: MercuryKit
+        product: MercuryKit
       - package: MercuryCore
-        products:
-          - MercuryKit
-          - ChatCore
+        product: ChatCore
     settings:
       base:
         SWIFT_VERSION: "6.0"
@@ -42,10 +47,10 @@ targets:
     sources:
       - Mercury
     dependencies:
+      - package: MercuryKit
+        product: MercuryKit
       - package: MercuryCore
-        products:
-          - MercuryKit
-          - ChatCore
+        product: ChatCore
     settings:
       base:
         SWIFT_VERSION: "6.0"
