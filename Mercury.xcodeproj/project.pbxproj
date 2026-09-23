@@ -606,7 +606,7 @@
 			repositoryURL = "https://github.com/angel12/mercurykit";
 			requirement = {
 				kind = exactVersion;
-				version = 0.2.0;
+				version = 0.3.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
