@@ -71,6 +71,9 @@ final class AppModel {
     /// every profile's state.db, so sessions.changed bursts (one per turn
     /// end) must not stack listing calls.
     private var lastBotsRefresh: Date?
+    /// Bumped on every `cron.changed` gateway event — routine views observe
+    /// it and refetch (the event carries no payload).
+    private(set) var cronEpoch = 0
 
     // MARK: Navigation
 
@@ -653,6 +656,8 @@ final class AppModel {
             if sidebarTab == .bots {
                 Task { await loadBots() }
             }
+        case GatewayEvent.Kind.cronChanged:
+            cronEpoch += 1
         default:
             break
         }
@@ -789,6 +794,61 @@ final class AppModel {
             if let asset = try? await connection.profileAvatar(name: bot.name) {
                 botAvatars[bot.name] = asset.data
             }
+        }
+    }
+
+    /// Write a bot's ui_meta look fields (nil = leave unchanged; empty string
+    /// clears). Read-modify-write of the COMPLETE `hermes-bots` object — the
+    /// gateway replaces the namespace wholesale — armed with the roster row's
+    /// CAS revision so a concurrent desktop edit conflicts instead of being
+    /// clobbered. Returns nil on success, else a user-facing failure message.
+    func saveBotLook(
+        _ bot: BotSummary, title: String? = nil, description: String? = nil,
+        hidden: Bool? = nil
+    ) async -> String? {
+        guard let connection else { return "Not connected." }
+        var meta = bot.uiMetaRaw?.objectValue ?? [:]
+        if let title { meta["title"] = .string(title) }
+        if let description { meta["description"] = .string(description) }
+        if let hidden { meta["hidden"] = .bool(hidden) }
+        do {
+            let outcome = try await connection.configureBotMeta(
+                name: bot.name, meta: .object(meta),
+                expectedRevision: bot.uiMetaRevision)
+            switch outcome {
+            case .persisted:
+                await loadBots(force: true)
+                return nil
+            case .conflict:
+                await loadBots(force: true)
+                return
+                    "This bot was edited from another device since the roster loaded — it has been refreshed, try again."
+            case .failed:
+                return "The gateway didn't confirm the change — try again."
+            }
+        } catch {
+            return (error as? HermesError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Upload (or clear, with nil) a bot's avatar, then refresh the cached
+    /// image and roster row. Returns nil on success, else a failure message.
+    func saveBotAvatar(_ bot: BotSummary, jpegData: Data?) async -> String? {
+        guard let connection else { return "Not connected." }
+        do {
+            let dataURL = jpegData.map {
+                "data:image/jpeg;base64,\($0.base64EncodedString())"
+            }
+            try await connection.setProfileAvatar(name: bot.name, dataURL: dataURL)
+            if let jpegData {
+                botAvatars[bot.name] = jpegData
+            } else {
+                botAvatars.removeValue(forKey: bot.name)
+            }
+            await loadBots(force: true)
+            return nil
+        } catch {
+            return (error as? HermesError)?.errorDescription ?? error.localizedDescription
         }
     }
 

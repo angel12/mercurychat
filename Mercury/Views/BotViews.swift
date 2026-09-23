@@ -8,6 +8,10 @@ struct BotRow: View {
     @Environment(AppModel.self) private var model
     let bot: BotSummary
 
+    @State private var editShown = false
+    @State private var routinesShown = false
+    @State private var actionError: String?
+
     var body: some View {
         NavigationLink(value: AppModel.Route.botChat(model.botChatTarget(for: bot))) {
             HStack(spacing: 10) {
@@ -51,6 +55,43 @@ struct BotRow: View {
             }
         }
         .task(id: bot.name) { model.fetchBotAvatarIfNeeded(bot) }
+        .contextMenu {
+            Button {
+                editShown = true
+            } label: {
+                Label("Edit Bot…", systemImage: "pencil")
+            }
+            Button {
+                routinesShown = true
+            } label: {
+                Label("Routines…", systemImage: "clock.arrow.circlepath")
+            }
+            Divider()
+            Button {
+                Task { actionError = await model.saveBotLook(bot, hidden: !bot.hidden) }
+            } label: {
+                Label(
+                    bot.hidden ? "Unhide Bot" : "Hide Bot",
+                    systemImage: bot.hidden ? "eye" : "eye.slash")
+            }
+        }
+        .sheet(isPresented: $editShown) { EditBotSheet(bot: bot) }
+        .sheet(isPresented: $routinesShown) {
+            RoutinesSheet(profile: bot.name, title: bot.title)
+        }
+        .alert(
+            "Couldn't update \(bot.title)", isPresented: actionErrorShown
+        ) {
+            Button("OK") { actionError = nil }
+        } message: {
+            Text(actionError ?? "")
+        }
+    }
+
+    private var actionErrorShown: Binding<Bool> {
+        Binding(
+            get: { actionError != nil },
+            set: { if !$0 { actionError = nil } })
     }
 }
 

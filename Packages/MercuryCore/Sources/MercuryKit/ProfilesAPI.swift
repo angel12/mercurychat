@@ -87,7 +87,27 @@ public struct BotSummary: Sendable, Equatable, Hashable, Identifiable {
     /// now" affordances; worker sessions never appear in session lists.
     public var workerLastActive: Date?
 
+    /// The complete `ui_meta['hermes-bots']` object as stored. Writes to
+    /// `ui_meta` merge KEY-WISE at the top level — sending the namespace
+    /// replaces the whole object — so editors must read-modify-write from
+    /// this, never send a partial patch.
+    public var uiMetaRaw: JSONValue?
+    /// The gateway's CAS revision for the `hermes-bots` ui_meta key
+    /// (`ui_meta_revisions`). Pass it back on writes so a concurrent edit
+    /// from another client conflicts instead of being clobbered. nil on
+    /// gateways predating gateway-owned CAS.
+    public var uiMetaRevision: Int?
+
     public var id: String { name }
+
+    // JSONValue (uiMetaRaw) is Equatable but not Hashable; identity + the
+    // CAS revision is plenty of hash discrimination for roster diffing.
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(uiMetaRevision)
+        hasher.combine(canonicalSession)
+        hasher.combine(lastSession)
+    }
 
     /// Display title, matching the desktop's precedence: Bot Mode title,
     /// then the profile's display name, then the raw profile name.
@@ -128,6 +148,8 @@ public struct BotSummary: Sendable, Equatable, Hashable, Identifiable {
         hasAvatar = json["has_avatar"]?.truthy ?? false
 
         let meta = json["ui_meta"]?["hermes-bots"]
+        uiMetaRaw = meta?.objectValue != nil ? meta : nil
+        uiMetaRevision = json["ui_meta_revisions"]?["hermes-bots"]?.intValue
         metaTitle = meta?["title"]?.stringValue
         metaDescription = meta?["description"]?.stringValue
         shape = meta?["shape"]?.stringValue
@@ -162,6 +184,95 @@ public struct ProfileAsset: Sendable, Equatable {
         mime = json["mime"]?.stringValue
             ?? String(dataURL.dropFirst(5).prefix(while: { $0 != ";" && $0 != "," }))
     }
+}
+
+// MARK: - Routines (cron)
+
+/// One cron job as `cron.manage` reports it. Deliberately its own type: the
+/// wire keys the id as `job_id`, carries the schedule as a plain string, and
+/// splits errors into separate fields (desktop parity).
+public struct CronJob: Sendable, Equatable, Identifiable {
+    public var jobID: String
+    /// Bot routines are namespaced `[bot:<name>] <routine>`.
+    public var name: String
+    public var schedule: String?
+    public var prompt: String?
+    public var enabled: Bool
+    public var state: String?
+    public var lastStatus: String?
+    public var lastRunAt: Date?
+    public var nextRunAt: Date?
+    public var lastFireError: String?
+    public var deliver: String?
+
+    public var id: String { jobID }
+
+    /// The routine's display name with any `[bot:<name>]` namespace stripped.
+    public var displayName: String {
+        guard name.hasPrefix("[bot:"), let close = name.firstIndex(of: "]") else {
+            return name
+        }
+        let stripped = name[name.index(after: close)...]
+            .trimmingCharacters(in: .whitespaces)
+        return stripped.isEmpty ? name : stripped
+    }
+
+    /// True when the `[bot:<name>]` namespace matches `botName` — the safe
+    /// client-side filter for gateways that ignore the profile scope.
+    public func belongsToBot(named botName: String) -> Bool {
+        name.lowercased().hasPrefix("[bot:\(botName.lowercased())]")
+    }
+
+    public init?(json: JSONValue) {
+        guard let jobID = json["job_id"]?.stringValue ?? json["id"]?.stringValue,
+            !jobID.isEmpty
+        else { return nil }
+        self.jobID = jobID
+        name = json["name"]?.stringValue ?? jobID
+        schedule = json["schedule"]?.stringValue
+        prompt = json["prompt"]?.stringValue ?? json["prompt_preview"]?.stringValue
+        enabled = json["enabled"]?.truthy ?? true
+        state = json["state"]?.stringValue
+        lastStatus = json["last_status"]?.stringValue
+        lastFireError = json["last_fire_error"]?.stringValue
+        deliver = json["deliver"]?.stringValue
+        lastRunAt = Self.date(json["last_run_at"])
+        nextRunAt = Self.date(json["next_run_at"])
+    }
+
+    /// Cron timestamps arrive as ISO strings (with or without fractional
+    /// seconds) or epoch seconds, depending on the store's age.
+    private static func date(_ value: JSONValue?) -> Date? {
+        if let epoch = value?.doubleValue, epoch > 0 {
+            return Date(timeIntervalSince1970: epoch)
+        }
+        guard let iso = value?.stringValue, !iso.isEmpty else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+    }
+}
+
+/// A `cron.manage list` result: the jobs plus whether the gateway honored the
+/// profile scope (`scoped`). When it didn't (older gateway), callers must
+/// apply the safe `[bot:<name>]` namespace filter themselves.
+public struct CronJobList: Sendable, Equatable {
+    public var jobs: [CronJob]
+    public var scopedToProfile: Bool
+}
+
+// MARK: - Bot meta writes
+
+/// Outcome of a `profiles.configure` ui_meta write.
+public enum BotMetaWriteOutcome: Sendable, Equatable {
+    /// The gateway confirmed the write (`applied.ui_meta == true`).
+    case persisted
+    /// Per-key CAS rejected the write: another client changed the meta since
+    /// this roster row was read. Reload and re-apply.
+    case conflict
+    /// The gateway answered but did not confirm (`applied.ui_meta` false or
+    /// missing) — treat as failed rather than assuming success.
+    case failed
 }
 
 // MARK: - Canonical-chat composer policy
@@ -293,5 +404,105 @@ extension HermesConnection {
             params: .object(["name": .string(name), "asset": .string("avatar")]),
             timeout: timeout)
         return ProfileAsset(json: result)
+    }
+
+    /// Store (or clear) a profile's avatar. `dataURL` must be a PNG/JPEG/WebP
+    /// data URL ≤ 2MB — downscale on-device first.
+    public func setProfileAvatar(
+        name: String, dataURL: String?, timeout: TimeInterval = 60
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "name": .string(name), "asset": .string("avatar"),
+        ]
+        if let dataURL {
+            params["data"] = .string(dataURL)
+        } else {
+            params["clear"] = .bool(true)
+        }
+        _ = try await request("profiles.set_asset", params: .object(params), timeout: timeout)
+    }
+
+    /// Write a bot's COMPLETE `ui_meta['hermes-bots']` object. The gateway
+    /// merges ui_meta key-wise at the top level, so `meta` replaces the whole
+    /// namespace — build it by modifying the roster row's `uiMetaRaw`, never
+    /// from scratch. `expectedRevision` (the row's `uiMetaRevision`) arms the
+    /// per-key CAS so a concurrent desktop edit conflicts instead of being
+    /// clobbered; pass nil only when the row reported no revision map.
+    public func configureBotMeta(
+        name: String, meta: JSONValue, expectedRevision: Int?,
+        timeout: TimeInterval = 30
+    ) async throws -> BotMetaWriteOutcome {
+        var params: [String: JSONValue] = [
+            "name": .string(name),
+            "ui_meta": .object(["hermes-bots": meta]),
+        ]
+        if let expectedRevision {
+            params["ui_meta_expected_revisions"] = .object([
+                "hermes-bots": .number(Double(expectedRevision))
+            ])
+        }
+        let result = try await request(
+            "profiles.configure", params: .object(params), timeout: timeout)
+        return Self.metaWriteOutcome(from: result)
+    }
+
+    /// Maps a `profiles.configure` result onto the write outcome — split out
+    /// so the CAS interpretation is unit-testable.
+    public static func metaWriteOutcome(from result: JSONValue) -> BotMetaWriteOutcome {
+        let applied = result["applied"]
+        if applied?["ui_meta_conflicts"]?.objectValue?.isEmpty == false {
+            return .conflict
+        }
+        return applied?["ui_meta"]?.truthy == true ? .persisted : .failed
+    }
+
+    // MARK: Routines
+
+    /// A profile's cron jobs (bot routines are named `[bot:<name>] …`).
+    /// Includes paused jobs — excluding them reads as deletion in a toggle
+    /// UI. `scopedToProfile` is false on gateways that ignored the profile
+    /// param; apply `CronJob.belongsToBot` there.
+    public func listCronJobs(
+        profile: String, timeout: TimeInterval = 30
+    ) async throws -> CronJobList {
+        let result = try await request(
+            "cron.manage",
+            params: .object([
+                "action": .string("list"),
+                "include_disabled": .bool(true),
+                "profile": .string(profile),
+            ]),
+            timeout: timeout)
+        return CronJobList(
+            jobs: result["jobs"]?.arrayValue?.compactMap(CronJob.init(json:)) ?? [],
+            scopedToProfile: result["scoped"]?.stringValue == profile)
+    }
+
+    /// Pause or resume one cron job in the profile's store.
+    public func setCronJobEnabled(
+        jobID: String, enabled: Bool, profile: String, timeout: TimeInterval = 30
+    ) async throws {
+        _ = try await request(
+            "cron.manage",
+            params: .object([
+                "action": .string(enabled ? "resume" : "pause"),
+                "name": .string(jobID),
+                "profile": .string(profile),
+            ]),
+            timeout: timeout)
+    }
+
+    /// Permanently remove one cron job from the profile's store.
+    public func removeCronJob(
+        jobID: String, profile: String, timeout: TimeInterval = 30
+    ) async throws {
+        _ = try await request(
+            "cron.manage",
+            params: .object([
+                "action": .string("remove"),
+                "name": .string(jobID),
+                "profile": .string(profile),
+            ]),
+            timeout: timeout)
     }
 }

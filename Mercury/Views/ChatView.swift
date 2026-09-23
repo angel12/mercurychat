@@ -45,7 +45,7 @@ struct ChatView: View {
             if let controller {
                 ChatContentView(
                     controller: controller, activeSheet: $activeSheet,
-                    titleOverride: botContext?.displayTitle)
+                    botContext: botContext)
             } else {
                 ProgressView("Opening session…")
             }
@@ -97,9 +97,12 @@ struct ChatView: View {
 private struct ChatContentView: View {
     @Bindable var controller: ChatController
     @Binding var activeSheet: ChatView.ChatSheet?
-    /// A canonical Bot Chat is captioned with its bot's name (desktop
-    /// parity) instead of the stored session title.
-    var titleOverride: String?
+    /// Set for a canonical Bot Chat: captions the chat with the bot's name
+    /// (desktop parity) and offers the Routines sheet from the toolbar.
+    var botContext: ChatView.BotChatContext?
+    @State private var routinesShown = false
+
+    private var titleOverride: String? { botContext?.displayTitle }
     @State private var composerText = ""
     @State private var renameShown = false
     @State private var renameText = ""
@@ -147,6 +150,11 @@ private struct ChatContentView: View {
                 Task { await controller.rename(renameText) }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $routinesShown) {
+            if let botContext {
+                RoutinesSheet(profile: botContext.profile, title: botContext.displayTitle)
+            }
         }
         .onChange(of: controller.store.pendingClarify) { _, request in
             if let request { activeSheet = .clarify(request) } else if isClarify { activeSheet = nil }
@@ -529,12 +537,15 @@ private struct ChatContentView: View {
                     // A canonical Bot Chat's title is its registry identity —
                     // renaming it would sever the bot's forever-chat, so the
                     // affordance disappears there (the controller also guards
-                    // the write itself).
+                    // the write itself). Bot chats get Routines instead.
                     if !controller.isCanonicalBotChat {
                         Button("Rename Session…") {
                             renameText = controller.store.title ?? ""
                             renameShown = true
                         }
+                    }
+                    if botContext != nil {
+                        Button("Routines…") { routinesShown = true }
                     }
                     if let profile = controller.store.profileName {
                         Text("Profile: \(profile)")

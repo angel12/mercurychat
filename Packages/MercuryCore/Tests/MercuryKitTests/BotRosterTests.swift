@@ -115,6 +115,68 @@ struct ProfileAssetTests {
     }
 }
 
+@Suite("CronJob parsing")
+struct CronJobTests {
+    @Test func parsesFullRow() throws {
+        let job = try #require(
+            CronJob(
+                json: json(
+                    """
+                    {"job_id": "job-1", "name": "[bot:researcher] Morning digest",
+                     "schedule": "0 7 * * *", "prompt": "Summarize my inbox",
+                     "enabled": false, "state": "paused", "last_status": "ok",
+                     "last_run_at": "2026-09-21T07:00:02.150Z",
+                     "next_run_at": "2026-09-23T07:00:00Z",
+                     "deliver": "bot-chat"}
+                    """)))
+        #expect(job.jobID == "job-1")
+        #expect(job.displayName == "Morning digest")
+        #expect(job.belongsToBot(named: "researcher"))
+        #expect(!job.belongsToBot(named: "other"))
+        #expect(!job.enabled)
+        // Fractional and whole-second ISO timestamps both parse.
+        #expect(job.lastRunAt != nil)
+        #expect(job.nextRunAt != nil)
+    }
+
+    @Test func unnamespacedJobKeepsItsName() throws {
+        let job = try #require(
+            CronJob(json: json(#"{"job_id": "j2", "name": "nightly backup"}"#)))
+        #expect(job.displayName == "nightly backup")
+        #expect(!job.belongsToBot(named: "nightly"))
+        #expect(job.enabled)  // default on
+    }
+}
+
+@Suite("Bot meta write outcomes")
+struct BotMetaWriteOutcomeTests {
+    @Test func confirmedWriteIsPersisted() {
+        let result = json(#"{"ok": true, "applied": {"ui_meta": true}}"#)
+        #expect(HermesConnection.metaWriteOutcome(from: result) == .persisted)
+    }
+
+    @Test func casConflictIsSurfaced() {
+        // The gateway rejects the WHOLE write on any per-key mismatch and
+        // reports the conflicting keys + live revisions.
+        let result = json(
+            """
+            {"ok": false, "applied": {"ui_meta": false,
+             "ui_meta_conflicts": {"hermes-bots": {"expected": 3, "actual": 5}},
+             "ui_meta_revisions": {"hermes-bots": 5}}}
+            """)
+        #expect(HermesConnection.metaWriteOutcome(from: result) == .conflict)
+    }
+
+    @Test func unconfirmedWriteIsFailed() {
+        // Older gateways answer without `applied` at all; a false success
+        // here previously masked dropped writes (desktop's serverOutcome).
+        #expect(HermesConnection.metaWriteOutcome(from: json(#"{"ok": true}"#)) == .failed)
+        #expect(
+            HermesConnection.metaWriteOutcome(
+                from: json(#"{"applied": {"ui_meta": false}}"#)) == .failed)
+    }
+}
+
 @Suite("BotChatPolicy")
 struct BotChatPolicyTests {
     @Test func compactCommandsAreIntercepted() {
