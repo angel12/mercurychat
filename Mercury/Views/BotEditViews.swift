@@ -1,0 +1,311 @@
+import ImageIO
+import MercuryKit
+import PhotosUI
+import SwiftUI
+import UniformTypeIdentifiers
+
+// MARK: - Routines
+
+/// A bot's recurring routines: the cron jobs in its profile's store
+/// (`[bot:<name>] …` namespace stripped for display). List / pause / resume /
+/// delete — creation still happens agent-side ("set up a morning digest") or
+/// on the desktop; the gateway exposes no run-now action.
+struct RoutinesSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let profile: String
+    let title: String
+
+    @State private var jobs: [CronJob] = []
+    @State private var loading = true
+    @State private var errorMessage: String?
+    @State private var deleteTarget: CronJob?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let errorMessage {
+                    Text(errorMessage).font(.caption).foregroundStyle(.red)
+                }
+                ForEach(jobs) { job in
+                    jobRow(job)
+                }
+                if jobs.isEmpty && !loading && errorMessage == nil {
+                    ContentUnavailableView(
+                        "No routines",
+                        systemImage: "clock.badge.questionmark",
+                        description: Text(
+                            "Ask \(title) to set one up — “every morning, summarize my inbox”."
+                        ))
+                }
+            }
+            .overlay { if loading && jobs.isEmpty { ProgressView() } }
+            .navigationTitle("\(title)'s Routines")
+            #if !os(macOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            // cron.changed fires on every store mutation (including our own
+            // toggles) and on job fires — refetch keeps next-run/status live.
+            .task(id: model.cronEpoch) { await load() }
+            .refreshable { await load() }
+            .confirmationDialog(
+                "Delete “\(deleteTarget?.displayName ?? "this routine")”? It stops running permanently.",
+                isPresented: deleteDialogShown,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Routine", role: .destructive) {
+                    if let target = deleteTarget {
+                        Task { await remove(target) }
+                    }
+                    deleteTarget = nil
+                }
+                Button("Cancel", role: .cancel) { deleteTarget = nil }
+            }
+        }
+    }
+
+    private func jobRow(_ job: CronJob) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(job.displayName).lineLimit(1)
+                Spacer()
+                Toggle(
+                    "Enabled",
+                    isOn: Binding(
+                        get: { job.enabled },
+                        set: { enabled in Task { await setEnabled(job, enabled) } })
+                )
+                .labelsHidden()
+            }
+            if let schedule = job.schedule, !schedule.isEmpty {
+                Text(schedule)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 6) {
+                if let next = job.nextRunAt, job.enabled {
+                    Text("next \(next, format: .relative(presentation: .named))")
+                } else if !job.enabled {
+                    Text("paused")
+                }
+                if let status = job.lastStatus, !status.isEmpty {
+                    Text("· last: \(status)")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            if let error = job.lastFireError, !error.isEmpty {
+                Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+            }
+        }
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) {
+                deleteTarget = job
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    private func load() async {
+        guard let connection = model.connection else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let list = try await connection.listCronJobs(profile: profile)
+            // An unscoped answer (older gateway) contains every profile's
+            // jobs — fall back to the namespace filter.
+            jobs = list.scopedToProfile
+                ? list.jobs : list.jobs.filter { $0.belongsToBot(named: profile) }
+            errorMessage = nil
+        } catch {
+            errorMessage = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    private func setEnabled(_ job: CronJob, _ enabled: Bool) async {
+        guard let connection = model.connection else { return }
+        do {
+            try await connection.setCronJobEnabled(
+                jobID: job.jobID, enabled: enabled, profile: profile)
+            await load()
+        } catch {
+            errorMessage = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    private func remove(_ job: CronJob) async {
+        guard let connection = model.connection else { return }
+        do {
+            try await connection.removeCronJob(jobID: job.jobID, profile: profile)
+            await load()
+        } catch {
+            errorMessage = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    private var deleteDialogShown: Binding<Bool> {
+        Binding(
+            get: { deleteTarget != nil },
+            set: { if !$0 { deleteTarget = nil } })
+    }
+}
+
+// MARK: - Edit bot
+
+/// Edit a bot's look: display title, description, hidden flag, and avatar.
+/// Everything lands in backend-synced state (`ui_meta['hermes-bots']` via
+/// read-modify-write + CAS, avatar via `profiles.set_asset`), so the change
+/// appears on every desktop connected to this gateway.
+struct EditBotSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let bot: BotSummary
+
+    @State private var title: String
+    @State private var descriptionText: String
+    @State private var hidden: Bool
+    @State private var pickedAvatar: PhotosPickerItem?
+    /// nil = untouched; .some(nil) = clear; .some(data) = replace.
+    @State private var newAvatarJPEG: Data??
+    @State private var saving = false
+    @State private var errorMessage: String?
+
+    init(bot: BotSummary) {
+        self.bot = bot
+        _title = State(initialValue: bot.metaTitle ?? "")
+        _descriptionText = State(initialValue: bot.metaDescription ?? "")
+        _hidden = State(initialValue: bot.hidden)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField(bot.name, text: $title)
+                    TextField("Description", text: $descriptionText, axis: .vertical)
+                        .lineLimit(1...3)
+                }
+                Section {
+                    Toggle("Hidden from roster", isOn: $hidden)
+                } footer: {
+                    Text(
+                        "Display-only: @mentions still resolve and routines keep running. Synced to every device."
+                    )
+                }
+                Section("Avatar") {
+                    HStack(spacing: 12) {
+                        BotAvatarView(bot: bot, imageData: previewAvatarData)
+                            .frame(width: 44, height: 44)
+                        PhotosPicker(
+                            "Choose Photo…", selection: $pickedAvatar, matching: .images)
+                        if previewAvatarData != nil {
+                            Button("Remove", role: .destructive) {
+                                pickedAvatar = nil
+                                newAvatarJPEG = .some(nil)
+                            }
+                        }
+                    }
+                }
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage).font(.caption).foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Edit \(bot.title)")
+            #if !os(macOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }
+                        .disabled(saving)
+                }
+            }
+            .onChange(of: pickedAvatar) { _, item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                        let jpeg = BotAvatarEncoder.avatarJPEG(from: data)
+                    {
+                        newAvatarJPEG = .some(jpeg)
+                    } else {
+                        errorMessage = "Couldn't read that image."
+                    }
+                }
+            }
+            .interactiveDismissDisabled(saving)
+        }
+    }
+
+    private var previewAvatarData: Data? {
+        switch newAvatarJPEG {
+        case .some(let replacement): return replacement
+        case nil: return model.botAvatars[bot.name]
+        }
+    }
+
+    private func save() async {
+        saving = true
+        defer { saving = false }
+        if case .some(let avatar) = newAvatarJPEG {
+            if let failure = await model.saveBotAvatar(bot, jpegData: avatar) {
+                errorMessage = failure
+                return
+            }
+        }
+        if let failure = await model.saveBotLook(
+            bot,
+            title: title.trimmingCharacters(in: .whitespaces),
+            description: descriptionText.trimmingCharacters(in: .whitespaces),
+            hidden: hidden)
+        {
+            errorMessage = failure
+            return
+        }
+        dismiss()
+    }
+}
+
+/// Downscale a picked image into the avatar wire format: ≤512px JPEG, far
+/// under the gateway's 2MB `set_asset` cap.
+enum BotAvatarEncoder {
+    static let maxPixelSize = 512
+
+    static func avatarJPEG(from data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+            CGImageSourceGetCount(source) > 0
+        else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard
+            let scaled = CGImageSourceCreateThumbnailAtIndex(
+                source, 0, options as CFDictionary)
+        else { return nil }
+        let encoded = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                encoded, UTType.jpeg.identifier as CFString, 1, nil)
+        else { return nil }
+        CGImageDestinationAddImage(
+            destination, scaled,
+            [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return encoded as Data
+    }
+}

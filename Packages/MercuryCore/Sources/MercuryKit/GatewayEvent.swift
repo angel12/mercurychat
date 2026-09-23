@@ -45,6 +45,9 @@ public struct GatewayEvent: Sendable, Equatable {
         public static let sessionInfo = "session.info"
         public static let sessionTitle = "session.title"
         public static let sessionsChanged = "sessions.changed"
+        /// The gateway's cron store changed (job added/removed/paused/fired) —
+        /// empty payload, refetch to see what.
+        public static let cronChanged = "cron.changed"
         public static let notificationShow = "notification.show"
         public static let notificationClear = "notification.clear"
         public static let error = "error"

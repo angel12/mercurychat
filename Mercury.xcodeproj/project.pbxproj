@@ -19,6 +19,7 @@
 		49807DE024DC02E30AFFDBD8 /* ImagePasteboardReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47BAE63C6C10818D90CB6BEA /* ImagePasteboardReaderTests.swift */; };
 		56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5AB9D4B96A47F2A0E24656A /* RootView.swift */; };
 		584BF8743978889C3AD32FC5 /* ImageAttachmentPreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2385853D812F0AEB3C05FE /* ImageAttachmentPreparer.swift */; };
+		6BD6AA9B2CB31BC95C479BB2 /* BotEditViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4F2EB9420A2A5C328AB1CC0 /* BotEditViews.swift */; };
 		6C581D209F0763A1135AEA10 /* ImagePasteboardReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4E5B653456C4152778487 /* ImagePasteboardReader.swift */; };
 		6E5E2D22CA223D4F5EB709F1 /* FileAttachmentWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E7D656F8B884F791BFC64E /* FileAttachmentWireTests.swift */; };
 		8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */; };
@@ -66,6 +67,7 @@
 		90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotChatControllerTests.swift; sourceTree = "<group>"; };
 		94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AF0EF1FA0B2C23FD41721AD9 /* ImageAttachmentPreparerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAttachmentPreparerTests.swift; sourceTree = "<group>"; };
+		B4F2EB9420A2A5C328AB1CC0 /* BotEditViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotEditViews.swift; sourceTree = "<group>"; };
 		BF2385853D812F0AEB3C05FE /* ImageAttachmentPreparer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAttachmentPreparer.swift; sourceTree = "<group>"; };
 		C3F8E655F17AF012AFCEA205 /* MercuryApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MercuryApp.swift; sourceTree = "<group>"; };
 		C5AB9D4B96A47F2A0E24656A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -150,6 +152,7 @@
 		34EF0B497D35DDAC5A3A45EA /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				B4F2EB9420A2A5C328AB1CC0 /* BotEditViews.swift */,
 				FDB791832F7A5EDCF9BCA81C /* BotViews.swift */,
 				CF52417D9BAD3C00374A1420 /* ChatView.swift */,
 				8DF179C9F278DF4C94236661 /* ConnectView.swift */,
@@ -280,6 +283,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8B349087493237E06C15B9FD /* AppModel.swift in Sources */,
+				6BD6AA9B2CB31BC95C479BB2 /* BotEditViews.swift in Sources */,
 				9870DAC2473936640DAA3211 /* BotViews.swift in Sources */,
 				8B5F8EF23C7156F46304EC10 /* ChatController.swift in Sources */,
 				FA95AE9AA589D021659E84B2 /* ChatView.swift in Sources */,
