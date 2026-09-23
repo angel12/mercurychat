@@ -81,7 +81,9 @@ Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-0
 - [x] Create → prompt → stream → tool row (collapse to summary+duration) → complete; end-of-turn on `session.info.running == false`; session auto-title.
 - [x] Approval card: allow-once and deny both exercised; four-choice derivation.
 - [x] Resume with REST hydration; tool rows and reply ordering preserved.
-- [ ] Clarify/sudo/secret sheets built and unit-tested; not yet triggered live.
+- [x] Contract-7 prompts triggered live on 2026-09-23 against `hermes serve` 0.21.4 (#27, M2): clarify answered through `clarify.lock`; approval Allow Once ran the command; sudo Decline let the agent continue; an unanswered approval timed out and its card cleared.
+- [ ] Not triggered live: the secret sheet (the agent has no tool that requests one) and the connection card (the agent installed an MCP server through the terminal instead). Both are unit-tested.
+- [ ] Known gap: a request answered from another client gets no `request.cancel` from upstream, so its card stays until the turn ends. An answer from it then comes back expired, with a notice.
 
 ### Milestones 4–6 — polish + resilience
 - [x] macOS split view, sidebar selection → resume, rename/pin/delete context menus, workspace `+` buttons, keyboard shortcuts.
