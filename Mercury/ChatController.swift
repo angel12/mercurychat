@@ -917,6 +917,15 @@ final class ChatController: Identifiable {
             clear: { self.store.clearClarify(requestID: requestID) })
     }
 
+    /// Skip a whole BATCH clarify. Upstream's contract cancels a batch with
+    /// a result carrying neither `answer` nor `answers`; answers already
+    /// locked with `clarify.lock` are dropped with it.
+    func skipBatchClarify(requestID: String) async -> PromptDeliveryOutcome {
+        await deliver(
+            requestID, ServerRequestResult.clarifyCancelAll, what: "answer",
+            clear: { self.store.clearClarify(requestID: requestID) })
+    }
+
     /// One answered question of a BATCH clarify. The batch resolves when the
     /// last question locks; until then answers stay editable server-side.
     enum BatchClarifyOutcome {

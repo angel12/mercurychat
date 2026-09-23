@@ -1297,8 +1297,7 @@ private struct BatchClarifySheet: View {
         isSubmitting = true
         submitError = nil
         Task {
-            let outcome = await controller.respondClarify(
-                requestID: request.requestID, answer: "")
+            let outcome = await controller.skipBatchClarify(requestID: request.requestID)
             isSubmitting = false
             switch outcome {
             case .delivered, .expired:

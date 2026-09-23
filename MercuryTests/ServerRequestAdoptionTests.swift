@@ -207,6 +207,17 @@ struct ServerRequestAdoptionTests {
                 == ["request_id": "srq-ddddddddddd1", "question_id": "q1", "answer": "dev"])
     }
 
+    /// Upstream's `ClarifyResult`: a batch is cancelled by a result with
+    /// neither `answer` nor `answers`.
+    @Test func skippingABatchClarifySendsCancelAll() async throws {
+        let (model, server, cleanup) = try await connectedModel(GatewayScript(contract: 8))
+        defer { cleanup() }
+        let chat = try await resumedChat(model)
+
+        #expect(await chat.skipBatchClarify(requestID: "srq-fffffffffff1") == .delivered)
+        #expect(last("request.answer", in: server) == ["id": "srq-fffffffffff1", "result": .object([:])])
+    }
+
     @Test func anExpiredAnswerIsReportedAndLeavesANotice() async throws {
         let script = GatewayScript(contract: 8)
         script.setAnswerStatus("expired")
