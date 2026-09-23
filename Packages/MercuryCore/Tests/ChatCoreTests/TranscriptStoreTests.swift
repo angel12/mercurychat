@@ -14,6 +14,19 @@ private func event(_ type: String, _ payload: String = "{}", session: String = "
     GatewayEvent(type: type, sessionID: session, payload: json(payload))
 }
 
+private func serverRequest(_ id: String, _ method: String, _ params: String, session: String = "ab12cd34")
+    -> GatewayEvent
+{
+    var object = json(params).objectValue ?? [:]
+    object["session_id"] = .string(session)
+    return GatewayEvent(serverRequest: ServerRequest(id: id, method: method, params: .object(object)))
+}
+
+private func connectionPayload(op: String, seq: Int, settled: Bool? = nil) -> String {
+    let settledField = settled.map { #", "settled": \#($0)"# } ?? ""
+    return #"{"op_id": "\#(op)", "seq": \#(seq), "deadline_at": 1790000000, "timeout_seconds": 600, "targets": [{"name": "linear", "kind": "mcp", "action": "install", "state": "pending"}]\#(settledField)}"#
+}
+
 @MainActor
 @Suite("TranscriptStore reduction")
 struct TranscriptStoreTests {
@@ -171,79 +184,141 @@ struct TranscriptStoreTests {
         #expect(store.lastError == "provider 500")
     }
 
+    // Contract ≥ 7: blocking prompts arrive as server requests, routed onto
+    // the event stream by MercuryKit (`GatewayEvent(serverRequest:)`), and
+    // are withdrawn by `request.cancel`. Chat requires contract 7 (#27, M2),
+    // so the contract-6 `<kind>.request` events are no longer handled.
+
     @Test func blockingPromptsSurfaceAndClearOnTurnEnd() {
         let store = TranscriptStore()
         store.apply(
-            event(
-                "approval.request",
-                #"{"command": "rm -rf build", "allow_permanent": false}"#))
+            serverRequest(
+                "srq-aaaaaaaaaaa1", "approval",
+                #"{"request_id": "ap1", "command": "rm -rf build", "allow_permanent": false}"#))
         #expect(store.pendingApproval?.command == "rm -rf build")
         #expect(store.pendingApproval?.choices == ["once", "session", "deny"])
+        #expect(store.pendingApproval?.serverRequestID == "srq-aaaaaaaaaaa1")
 
-        store.apply(event("clarify.request", #"{"request_id": "c1", "question": "Which env?"}"#))
+        store.apply(serverRequest("srq-aaaaaaaaaaa2", "clarify", #"{"question": "Which env?"}"#))
         #expect(store.pendingClarify?.question == "Which env?")
+        #expect(store.pendingClarify?.requestID == "srq-aaaaaaaaaaa2")
 
-        store.apply(event("clarify.expire", #"{"request_id": "c1"}"#))
-        #expect(store.pendingClarify == nil)
+        store.apply(serverRequest("srq-aaaaaaaaaaa3", "sudo", #"{"command": "apt install jq"}"#))
+        #expect(store.pendingSudo?.command == "apt install jq")
 
-        store.apply(event("secret.request", #"{"request_id": "s1", "prompt": "API key?"}"#))
-        #expect(store.pendingSecret != nil)
+        store.apply(
+            serverRequest(
+                "srq-aaaaaaaaaaa4", "secret", #"{"env_var": "OPENAI_API_KEY", "prompt": "API key?"}"#))
+        #expect(store.pendingSecret?.envVar == "OPENAI_API_KEY")
 
         store.apply(event("session.info", #"{"running": false}"#))
         #expect(store.pendingApproval == nil)
+        #expect(store.pendingClarify == nil)
+        #expect(store.pendingSudo == nil)
         #expect(store.pendingSecret == nil)
+    }
+
+    @Test func batchClarifyKeepsItsQuestions() {
+        let store = TranscriptStore()
+        store.apply(
+            serverRequest(
+                "srq-bbbbbbbbbbb1", "clarify",
+                #"{"questions": [{"qid": "q1", "question": "Env?", "choices": ["dev", "prod"]}, {"qid": "q2", "question": "Branch?"}]}"#
+            ))
+        #expect(store.pendingClarify?.questions.map(\.qid) == ["q1", "q2"])
+        #expect(store.pendingClarify?.requestID == "srq-bbbbbbbbbbb1")
+    }
+
+    /// A request method Chat doesn't answer never becomes a card, even if
+    /// one reaches the store (MercuryKit leaves those for other clients).
+    @Test func unknownServerRequestMethodsShowNothing() {
+        let store = TranscriptStore()
+        store.apply(serverRequest("srq-ccccccccccc1", "vault.read", #"{"path": "notes"}"#))
+        #expect(store.pendingApproval == nil)
+        #expect(store.pendingClarify == nil)
+        #expect(store.pendingSudo == nil)
+        #expect(store.pendingSecret == nil)
+    }
+
+    @Test func requestCancelClearsOnlyTheMatchingCard() {
+        let store = TranscriptStore()
+        store.apply(serverRequest("srq-ddddddddddd1", "clarify", #"{"question": "A?"}"#))
+        store.apply(
+            serverRequest("srq-ddddddddddd2", "approval", #"{"request_id": "ap1", "command": "ls"}"#))
+
+        store.apply(event("request.cancel", #"{"id": "srq-other0000000", "method": "clarify", "reason": "timeout"}"#))
+        #expect(store.pendingClarify != nil)
+        #expect(store.pendingApproval != nil)
+
+        store.apply(event("request.cancel", #"{"id": "srq-ddddddddddd1", "method": "clarify", "reason": "timeout"}"#))
+        #expect(store.pendingClarify == nil)
+        #expect(store.pendingApproval != nil)
+
+        // Approval is cancelled by its server-request id, not its request_id.
+        store.apply(event("request.cancel", #"{"id": "ap1", "method": "approval", "reason": "resolved"}"#))
+        #expect(store.pendingApproval != nil)
+        store.apply(event("request.cancel", #"{"id": "srq-ddddddddddd2", "method": "approval", "reason": "resolved"}"#))
+        #expect(store.pendingApproval == nil)
     }
 
     @Test func staleResponseCannotClearNewerPrompt() {
         // Actor reentrancy: while response A's RPC is in flight, request B
         // replaces the pending prompt — A's confirmation must not clear B.
         let store = TranscriptStore()
-        store.apply(event("clarify.request", #"{"request_id": "c1", "question": "A?"}"#))
-        store.apply(event("clarify.request", #"{"request_id": "c2", "question": "B?"}"#))
-        store.clearClarify(requestID: "c1")
-        #expect(store.pendingClarify?.requestID == "c2")
-        store.clearClarify(requestID: "c2")
+        store.apply(serverRequest("srq-eeeeeeeeeee1", "clarify", #"{"question": "A?"}"#))
+        store.apply(serverRequest("srq-eeeeeeeeeee2", "clarify", #"{"question": "B?"}"#))
+        store.clearClarify(requestID: "srq-eeeeeeeeeee1")
+        #expect(store.pendingClarify?.requestID == "srq-eeeeeeeeeee2")
+        store.clearClarify(requestID: "srq-eeeeeeeeeee2")
         #expect(store.pendingClarify == nil)
 
-        store.apply(event("approval.request", #"{"command": "rm old"}"#))
+        store.apply(
+            serverRequest("srq-eeeeeeeeeee3", "approval", #"{"request_id": "ap1", "command": "rm old"}"#))
         let first = store.pendingApproval!
-        store.apply(event("approval.request", #"{"command": "rm new"}"#))
+        store.apply(
+            serverRequest("srq-eeeeeeeeeee4", "approval", #"{"request_id": "ap2", "command": "rm new"}"#))
         store.clearApproval(matching: first)
         #expect(store.pendingApproval?.command == "rm new")
         store.clearApproval(matching: store.pendingApproval!)
         #expect(store.pendingApproval == nil)
     }
 
-    @Test func approvalCarriesOptionalRequestID() {
+    @Test func connectionRequestLifecycle() {
         let store = TranscriptStore()
-        store.apply(event("approval.request", #"{"command": "ls", "request_id": "ap1"}"#))
-        #expect(store.pendingApproval?.requestID == "ap1")
-        // Older backends omit it — session-keyed respond still works.
-        store.apply(event("approval.request", #"{"command": "ls"}"#))
-        #expect(store.pendingApproval?.requestID == nil)
-    }
+        store.apply(event("connection.request", connectionPayload(op: "op-1", seq: 1)))
+        #expect(store.pendingConnection?.opID == "op-1")
+        #expect(store.pendingConnection?.targets.map(\.name) == ["linear"])
 
-    @Test func mcpSetupRequestLifecycle() {
-        let store = TranscriptStore()
-        store.apply(
-            event(
-                "mcp.setup.request",
-                #"{"request_id": "m1", "server": "linear", "action": "install", "reason": "To read the ticket you linked"}"#
-            ))
-        #expect(store.pendingMcpSetup?.server == "linear")
-        #expect(store.pendingMcpSetup?.action == "install")
+        // A transition that doesn't settle keeps the card; so does another
+        // operation settling.
+        store.apply(event("connection.update", connectionPayload(op: "op-1", seq: 2, settled: false)))
+        #expect(store.pendingConnection != nil)
+        store.apply(event("connection.update", connectionPayload(op: "op-other", seq: 9, settled: true)))
+        #expect(store.pendingConnection != nil)
 
-        // An expire for a DIFFERENT request must not clear the card.
-        store.apply(event("mcp.setup.expire", #"{"request_id": "other"}"#))
-        #expect(store.pendingMcpSetup != nil)
-        store.apply(event("mcp.setup.expire", #"{"request_id": "m1"}"#))
-        #expect(store.pendingMcpSetup == nil)
+        store.apply(event("connection.update", connectionPayload(op: "op-1", seq: 3, settled: true)))
+        #expect(store.pendingConnection == nil)
 
         // Cleared at end of turn like every blocking prompt.
-        store.apply(
-            event("mcp.setup.request", #"{"request_id": "m2", "server": "notion"}"#))
+        store.apply(event("connection.request", connectionPayload(op: "op-2", seq: 1)))
         store.apply(event("session.info", #"{"running": false}"#))
-        #expect(store.pendingMcpSetup == nil)
+        #expect(store.pendingConnection == nil)
+    }
+
+    @Test func aConnectionRequestMissingRequiredFieldsShowsNothing() {
+        let store = TranscriptStore()
+        store.apply(event("connection.request", #"{"op_id": "op-1", "targets": []}"#))
+        #expect(store.pendingConnection == nil)
+    }
+
+    /// The contract-6 prompt events are no longer handled: a backend that
+    /// still sends them is below Chat's minimum contract.
+    @Test func contract6PromptEventsAreIgnored() {
+        let store = TranscriptStore()
+        store.apply(event("approval.request", #"{"command": "ls", "request_id": "ap1"}"#))
+        store.apply(event("clarify.request", #"{"request_id": "c1", "question": "A?"}"#))
+        #expect(store.pendingApproval == nil)
+        #expect(store.pendingClarify == nil)
     }
 
     @Test func usageSnapshotsReplaceNotSum() {

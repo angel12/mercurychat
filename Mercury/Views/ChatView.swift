@@ -465,8 +465,8 @@ private struct ChatContentView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 4)
         }
-        if let setup = controller.store.pendingMcpSetup {
-            McpSetupCard(controller: controller, request: setup)
+        if let connection = controller.store.pendingConnection {
+            ConnectionCard(controller: controller, request: connection)
                 .padding(.horizontal)
                 .padding(.bottom, 4)
         }
@@ -998,37 +998,41 @@ private struct ApprovalCard: View {
     }
 }
 
-// MARK: - MCP setup card
+// MARK: - Connection card
 
-/// The agent's `setup_mcp` tool blocks (up to 10 minutes) on this consent
-/// card. Mercury can't run the install/OAuth flows in-app yet, so the card
-/// explains the request and offers Decline — which unblocks the agent
-/// immediately and tells it to continue without the server — plus a pointer
-/// to the terminal flow for users who actually want it installed.
-private struct McpSetupCard: View {
+/// A connection operation (install / enable / authorize an MCP server,
+/// connect a connector, a catalog plugin or skill) blocks the agent on this
+/// consent card until it settles or times out. Mercury Chat can't run those
+/// flows in-app yet, so the card explains the request and offers Skip, which
+/// unblocks the agent at once and tells it to continue without them.
+private struct ConnectionCard: View {
     let controller: ChatController
-    let request: McpSetupRequest
+    let request: ConnectionRequest
     @State private var isSubmitting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: "puzzlepiece.extension")
                 .font(.headline)
-            if !request.reason.isEmpty {
-                Text(request.reason)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            ForEach(request.targets) { target in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(verb(target.action)) \(target.kind) “\(target.name)”")
+                        .font(.callout)
+                    if let note = target.instructions ?? target.detail, !note.isEmpty {
+                        Text(note)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-            Text(
-                "Mercury Chat can't run MCP setup flows yet. To add it, run `hermes mcp \(terminalVerb) \(request.server)` in a terminal — or decline and the agent will continue without it."
-            )
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            Button("Decline", role: .destructive) {
+            Text(hint)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button("Skip", role: .destructive) {
                 guard !isSubmitting else { return }
                 isSubmitting = true
                 Task {
-                    _ = await controller.declineMcpSetup(request)
+                    _ = await controller.skipConnection(request)
                     isSubmitting = false
                 }
             }
@@ -1043,15 +1047,28 @@ private struct McpSetupCard: View {
     }
 
     private var title: String {
-        switch request.action {
-        case "enable": return "Agent asks to enable MCP server “\(request.server)”"
-        case "authorize": return "Agent asks to authorize MCP server “\(request.server)”"
-        default: return "Agent asks to install MCP server “\(request.server)”"
+        request.targets.count == 1 ? "The agent asks to set up a connection" : "The agent asks to set up connections"
+    }
+
+    private func verb(_ action: String) -> String {
+        switch action {
+        case "authorize": return "Authorize"
+        case "connect": return "Connect"
+        case "enable": return "Enable"
+        case "reconnect": return "Reconnect"
+        default: return "Install"
         }
     }
 
-    private var terminalVerb: String {
-        request.action == "authorize" ? "login" : request.action
+    /// A terminal command only where there is a known one (MCP servers);
+    /// everything else points at the desktop app.
+    private var hint: String {
+        let mcp = request.targets.filter { $0.kind == "mcp" }
+        if mcp.count == request.targets.count, let first = mcp.first {
+            let command = first.action == "authorize" ? "login" : first.action
+            return "Mercury Chat can't run connection setup yet. To add it, run `hermes mcp \(command) \(first.name)` in a terminal — or skip and the agent will continue without it."
+        }
+        return "Mercury Chat can't run connection setup yet. Set it up from Hermes Desktop — or skip and the agent will continue without it."
     }
 }
 
@@ -1280,8 +1297,7 @@ private struct BatchClarifySheet: View {
         isSubmitting = true
         submitError = nil
         Task {
-            let outcome = await controller.respondClarify(
-                requestID: request.requestID, answer: "")
+            let outcome = await controller.skipBatchClarify(requestID: request.requestID)
             isSubmitting = false
             switch outcome {
             case .delivered, .expired:

@@ -30,12 +30,15 @@ public final class TranscriptStore {
     public private(set) var generatingToolName: String?
 
     /// Blocking prompts. The agent thread is frozen until these are
-    /// answered — surface immediately.
+    /// answered — surface immediately. Contract ≥ 7 server requests
+    /// (`GatewayEvent.Kind.serverRequest`), withdrawn by `request.cancel`.
     public private(set) var pendingApproval: ApprovalRequest?
     public private(set) var pendingClarify: ClarifyRequest?
     public private(set) var pendingSudo: SudoRequest?
     public private(set) var pendingSecret: SecretRequest?
-    public private(set) var pendingMcpSetup: McpSetupRequest?
+    /// A connection operation's consent card (`connection.request`), open
+    /// until a `connection.update` reports the operation settled.
+    public private(set) var pendingConnection: ConnectionRequest?
 
     /// Session metadata from `session.info` / `session.title`.
     public private(set) var title: String?
@@ -529,7 +532,7 @@ public final class TranscriptStore {
         pendingClarify = nil
         pendingSudo = nil
         pendingSecret = nil
-        pendingMcpSetup = nil
+        pendingConnection = nil
     }
 
     // MARK: Local echo
@@ -648,39 +651,27 @@ public final class TranscriptStore {
                 title = newTitle
             }
 
-        case GatewayEvent.Kind.approvalRequest:
-            pendingApproval = ApprovalRequest(event: event)
+        case GatewayEvent.Kind.serverRequest:
+            applyServerRequest(event)
 
-        case GatewayEvent.Kind.clarifyRequest:
-            pendingClarify = ClarifyRequest(event: event)
-
-        case GatewayEvent.Kind.clarifyExpire:
-            if pendingClarify?.requestID == event.payload["request_id"]?.stringValue {
-                pendingClarify = nil
+        case GatewayEvent.Kind.requestCancel:
+            if let cancel = ServerRequestCancel(event: event) {
+                withdrawServerRequest(id: cancel.id)
             }
 
-        case GatewayEvent.Kind.sudoRequest:
-            pendingSudo = SudoRequest(event: event)
-
-        case GatewayEvent.Kind.sudoExpire:
-            if pendingSudo?.requestID == event.payload["request_id"]?.stringValue {
-                pendingSudo = nil
+        case GatewayEvent.Kind.connectionRequest:
+            if let request = ConnectionRequest(event: event) {
+                pendingConnection = request
             }
 
-        case GatewayEvent.Kind.secretRequest:
-            pendingSecret = SecretRequest(event: event)
-
-        case GatewayEvent.Kind.secretExpire:
-            if pendingSecret?.requestID == event.payload["request_id"]?.stringValue {
-                pendingSecret = nil
-            }
-
-        case GatewayEvent.Kind.mcpSetupRequest:
-            pendingMcpSetup = McpSetupRequest(event: event)
-
-        case GatewayEvent.Kind.mcpSetupExpire:
-            if pendingMcpSetup?.requestID == event.payload["request_id"]?.stringValue {
-                pendingMcpSetup = nil
+        case GatewayEvent.Kind.connectionUpdate:
+            // Every frame carries the full snapshot; the card only needs to
+            // know when its operation is over.
+            if let pending = pendingConnection,
+                event.payload["op_id"]?.stringValue == pending.opID,
+                event.payload["settled"]?.boolValue == true
+            {
+                pendingConnection = nil
             }
 
         case GatewayEvent.Kind.sessionUsage:
@@ -732,8 +723,38 @@ public final class TranscriptStore {
         if pendingSecret?.requestID == requestID { pendingSecret = nil }
     }
 
-    public func clearMcpSetup(requestID: String) {
-        if pendingMcpSetup?.requestID == requestID { pendingMcpSetup = nil }
+    public func clearConnection(opID: String) {
+        if pendingConnection?.opID == opID { pendingConnection = nil }
+    }
+
+    // MARK: Server requests
+
+    /// Put a routed server request on its card. MercuryKit only routes the
+    /// methods Chat answers, and only displayable ones; anything else that
+    /// reaches here is ignored rather than guessed at.
+    private func applyServerRequest(_ event: GatewayEvent) {
+        guard let request = ServerRequest(event: event) else { return }
+        switch request.method {
+        case ServerRequest.Method.approval:
+            if let prompt = ApprovalRequest(serverRequest: request) { pendingApproval = prompt }
+        case ServerRequest.Method.clarify:
+            if let prompt = ClarifyRequest(serverRequest: request) { pendingClarify = prompt }
+        case ServerRequest.Method.sudo:
+            if let prompt = SudoRequest(serverRequest: request) { pendingSudo = prompt }
+        case ServerRequest.Method.secret:
+            if let prompt = SecretRequest(serverRequest: request) { pendingSecret = prompt }
+        default:
+            break
+        }
+    }
+
+    /// `request.cancel`: the backend withdrew one request (timeout, answered
+    /// elsewhere, interrupted, …). Clear only the card it names.
+    private func withdrawServerRequest(id: String) {
+        if pendingApproval?.serverRequestID == id { pendingApproval = nil }
+        if pendingClarify?.serverRequestID == id { pendingClarify = nil }
+        if pendingSudo?.serverRequestID == id { pendingSudo = nil }
+        if pendingSecret?.serverRequestID == id { pendingSecret = nil }
     }
 
     // MARK: Assistant bubbles

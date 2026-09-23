@@ -7,7 +7,7 @@ A native SwiftUI client for [Hermes Agent](https://github.com/NousResearch/herme
 
 "Mercury Chat" is the App Store / user-facing name (bundle ID `com.spencermcguire.mercurychat`); the repo, Xcode targets, and `MercuryCore` package keep the short internal name "Mercury".
 
-Built against desktop contract **6** (`DESKTOP_BACKEND_CONTRACT` in `tui_gateway/server.py`).
+Requires desktop contract **7** or newer (`AppModel.contractRequirement`; the backend reports `desktop_contract`). Since contract 7, blocking prompts are server→client requests, and each socket advertises `client.capabilities {server_requests: true}` to receive them. An older backend gets a notice, and its prompts won't appear.
 
 Mercury Chat has no backend of its own — see [PRIVACY.md](PRIVACY.md) for what the app stores and where it sends it.
 
@@ -47,7 +47,9 @@ The runner's capacity is 1, so the two workflows queue and run one after the oth
 
 ## Deviations from the desktop app / spec notes
 
-- `sudo.respond` takes a `password` field and `secret.respond` takes a `value` field (not `text`) — verified against `tui_gateway/methods_prompt.py`. Late responds return `{"status":"expired"}`.
+- Blocking prompts (approval, clarify, sudo, secret) arrive as contract-7 server requests and are answered with `request.answer`: `{choice}`, `{answer}` and `{value}` results. Batch clarify locks each answer with `clarify.lock`. A late answer returns `{"status":"expired"}`, which leaves a transcript notice. A reconnect restores open prompts from `open_requests`.
+- Requests Chat doesn't answer (`vault.*`, `terminal.read`, `tour`, `display.install.sudo`, …) are left open for another attached client, such as Hermes Desktop. If Chat is the only client, the agent waits out that request's deadline.
+- Connection operations (`connection.request`: MCP installs, connector sign-ins, catalog plugins and skills) can only be skipped from Chat, which lets the agent continue without them.
 - Subagent activity (`subagent.start/tool/complete` on the parent session) is flattened to labeled tool rows in v1, not rendered as a nested spawn tree.
 - One socket per connection; profile scoping via the `profile` param (no per-profile socket pooling).
 - Voice (`/api/audio/*`) is out of v1 scope; the transport keeps `speakStreamURL`/`transcribe` available for a later graft.
@@ -79,13 +81,15 @@ Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-0
 - [x] Create → prompt → stream → tool row (collapse to summary+duration) → complete; end-of-turn on `session.info.running == false`; session auto-title.
 - [x] Approval card: allow-once and deny both exercised; four-choice derivation.
 - [x] Resume with REST hydration; tool rows and reply ordering preserved.
-- [ ] Clarify/sudo/secret sheets built and unit-tested; not yet triggered live.
+- [x] Contract-7 prompts triggered live on 2026-09-23 against `hermes serve` 0.21.4 (#27, M2): clarify answered through `clarify.lock`; approval Allow Once ran the command; sudo Decline let the agent continue; an unanswered approval timed out and its card cleared.
+- [ ] Not triggered live: the secret sheet (the agent has no tool that requests one) and the connection card (the agent installed an MCP server through the terminal instead). Both are unit-tested.
+- [ ] Known gap: a request answered from another client gets no `request.cancel` from upstream, so its card stays until the turn ends. An answer from it then comes back expired, with a notice.
 
 ### Milestones 4–6 — polish + resilience
 - [x] macOS split view, sidebar selection → resume, rename/pin/delete context menus, workspace `+` buttons, keyboard shortcuts.
 - [x] Kill backend mid-turn → banner + backoff → restart → auto re-resume by stored id with context intact (verified with a follow-up turn).
 - [x] Revoked token → terminal auth-expired (no retry storm), connect screen with "paste a fresh dashboard URL" message.
 - [x] 4403 Host/Origin guard mapped to a terminal, explanatory disconnect.
-- [x] Contract-drift notice (v5 server vs v6 build) as a transient, hit-transparent toast.
+- [x] Contract-drift notice (v5 server vs v6 build) as a transient, hit-transparent toast. *(Since #27 M2 it warns only below the required contract 7.)*
 - [x] PKCE against a real OAuth provider — native `native_pkce` sign-in exercised end to end (loopback listener → code exchange → authenticated WS dial) on 2026-08-20.
 - [ ] iOS 10-minute background → foreground poke-reconnect (wired via scenePhase; not soak-tested).

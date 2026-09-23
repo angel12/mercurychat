@@ -346,18 +346,30 @@ final class ChatController: Identifiable {
         }
         store.setRunning(result["running"]?.truthy ?? false)
         // Blocking prompts raised while the socket was down are never
-        // re-emitted as events — the resume payload's read-only snapshots
-        // are their only carrier. Replay them through the normal event path
-        // (after setRunning: an idle resume clears pendings). Their embedded
-        // request_id answers via the usual respond methods.
-        for (field, type) in [
-            ("pending_approval", GatewayEvent.Kind.approvalRequest),
-            ("pending_clarify", GatewayEvent.Kind.clarifyRequest),
-        ] {
-            if let snapshot = result[field], snapshot.objectValue != nil {
-                store.apply(
-                    GatewayEvent(type: type, sessionID: runtimeID, payload: snapshot))
-            }
+        // re-sent as request frames: `open_requests` is their only carrier
+        // (contract ≥ 7; it takes priority over the old `pending_*`
+        // snapshots). Apply them after setRunning, since an idle resume
+        // clears pendings. A malformed list is unknown, so nothing is shown
+        // rather than a partial set.
+        restoreOpenRequests(ServerRequest.openRequests(in: result) ?? [])
+        if let snapshot = result["pending_connection"], snapshot.objectValue != nil {
+            store.apply(
+                GatewayEvent(
+                    type: GatewayEvent.Kind.connectionRequest, sessionID: runtimeID,
+                    payload: snapshot))
+        }
+    }
+
+    /// Put restored requests on their cards through the normal event path.
+    /// Only the methods Chat answers, and only displayable ones: the rest
+    /// stay open for another client, exactly as live frames are handled.
+    private func restoreOpenRequests(_ requests: [ServerRequest]) {
+        let answerable = ServerRequestPolicy.chat.answerableMethods
+        for request in requests
+        where answerable.contains(request.method) && request.isDisplayable
+            && (request.sessionID == nil || request.sessionID == runtimeID)
+        {
+            store.apply(GatewayEvent(serverRequest: request))
         }
     }
 
@@ -414,6 +426,8 @@ final class ChatController: Identifiable {
                 return false
             }
             for event in page.events { applyDeduped(event) }
+            // Requests opened while the socket was down aren't in the ring.
+            restoreOpenRequests(page.openRequests)
             // An empty replay can't carry the running transition; take the
             // resume result's word for it then — BEFORE draining live events
             // that arrived during the fetch, which postdate the resume
@@ -544,15 +558,10 @@ final class ChatController: Identifiable {
         GatewayEvent.Kind.sessionsChanged,
         GatewayEvent.Kind.statusUpdate,
         GatewayEvent.Kind.notificationClear,
-        GatewayEvent.Kind.approvalRequest,
-        GatewayEvent.Kind.clarifyRequest,
-        GatewayEvent.Kind.clarifyExpire,
-        GatewayEvent.Kind.sudoRequest,
-        GatewayEvent.Kind.sudoExpire,
-        GatewayEvent.Kind.secretRequest,
-        GatewayEvent.Kind.secretExpire,
-        GatewayEvent.Kind.mcpSetupRequest,
-        GatewayEvent.Kind.mcpSetupExpire,
+        GatewayEvent.Kind.serverRequest,
+        GatewayEvent.Kind.requestCancel,
+        GatewayEvent.Kind.connectionRequest,
+        GatewayEvent.Kind.connectionUpdate,
     ]
 
     private func drainHeldEvents() {
@@ -865,13 +874,15 @@ final class ChatController: Identifiable {
 
     @discardableResult
     func respondApproval(_ request: ApprovalRequest, choice: String) async -> Bool {
-        guard let runtimeID else { return false }
+        guard let id = request.serverRequestID else { return false }
         do {
-            // The server queues approvals and resolves the OLDEST without a
-            // request_id — target the exact card the user answered.
-            try await connection.respondApproval(
-                sessionID: runtimeID, choice: choice, requestID: request.requestID)
-            store.clearApproval(matching: request)
+            // Delivered or expired, the card is done; an expired approval
+            // gets the same transcript notice as any late answer.
+            _ = settlePrompt(
+                try await connection.answerServerRequest(
+                    id: id, result: ServerRequestResult.approval(choice: choice)),
+                what: "choice",
+                clear: { self.store.clearApproval(matching: request) })
             return true
         } catch {
             errorMessage = Self.describe(error)
@@ -879,18 +890,21 @@ final class ChatController: Identifiable {
         }
     }
 
-    /// Decline an MCP setup card. Mercury has no in-app MCP install/OAuth
-    /// flow yet, so decline is the only actionable answer — it unblocks the
-    /// agent immediately (which otherwise waits out a 10-minute timeout) and
-    /// tells it to continue without the server.
-    func declineMcpSetup(_ request: McpSetupRequest) async -> PromptDeliveryOutcome {
+    /// Skip a connection card. Chat has no in-app MCP install, connector
+    /// sign-in or catalog flow yet, so skipping every target and continuing
+    /// is the only actionable answer. It unblocks the agent at once instead
+    /// of leaving it to wait out the operation's deadline.
+    func skipConnection(_ request: ConnectionRequest) async -> PromptDeliveryOutcome {
+        guard let runtimeID else { return .failed }
+        let answer = ConnectionAnswer(
+            targets: request.targets.map { .init(name: $0.name, status: .skipped) },
+            continueOperation: true)
         do {
-            let status = try await connection.respondMcpSetup(
-                requestID: request.requestID, status: "declined", server: request.server,
-                detail: "Declined from Mercury Chat (in-app MCP setup is not supported).")
-            return settlePrompt(
-                status, what: "answer",
-                clear: { self.store.clearMcpSetup(requestID: request.requestID) })
+            try await connection.respondConnection(
+                sessionID: runtimeID, opID: request.opID, answer: answer,
+                desktopContract: handle?.desktopContract)
+            store.clearConnection(opID: request.opID)
+            return .delivered
         } catch {
             errorMessage = Self.describe(error)
             return .failed
@@ -898,16 +912,18 @@ final class ChatController: Identifiable {
     }
 
     func respondClarify(requestID: String, answer: String) async -> PromptDeliveryOutcome {
-        do {
-            let status = try await connection.respondClarify(
-                requestID: requestID, answer: answer)
-            return settlePrompt(
-                status, what: "answer",
-                clear: { self.store.clearClarify(requestID: requestID) })
-        } catch {
-            errorMessage = Self.describe(error)
-            return .failed
-        }
+        await deliver(
+            requestID, ServerRequestResult.clarify(answer: answer), what: "answer",
+            clear: { self.store.clearClarify(requestID: requestID) })
+    }
+
+    /// Skip a whole BATCH clarify. Upstream's contract cancels a batch with
+    /// a result carrying neither `answer` nor `answers`; answers already
+    /// locked with `clarify.lock` are dropped with it.
+    func skipBatchClarify(requestID: String) async -> PromptDeliveryOutcome {
+        await deliver(
+            requestID, ServerRequestResult.clarifyCancelAll, what: "answer",
+            clear: { self.store.clearClarify(requestID: requestID) })
     }
 
     /// One answered question of a BATCH clarify. The batch resolves when the
@@ -926,7 +942,7 @@ final class ChatController: Identifiable {
     ) async -> BatchClarifyOutcome {
         do {
             guard
-                let remaining = try await connection.respondClarifyQuestion(
+                let remaining = try await connection.lockClarifyAnswer(
                     requestID: requestID, questionID: questionID, answer: answer)
             else {
                 _ = settlePrompt(
@@ -946,24 +962,25 @@ final class ChatController: Identifiable {
     }
 
     func respondSudo(requestID: String, password: String) async -> PromptDeliveryOutcome {
-        do {
-            let status = try await connection.respondSudo(
-                requestID: requestID, password: password)
-            return settlePrompt(
-                status, what: "password",
-                clear: { self.store.clearSudo(requestID: requestID) })
-        } catch {
-            errorMessage = Self.describe(error)
-            return .failed
-        }
+        await deliver(
+            requestID, ServerRequestResult.value(password), what: "password",
+            clear: { self.store.clearSudo(requestID: requestID) })
     }
 
     func respondSecret(requestID: String, value: String) async -> PromptDeliveryOutcome {
+        await deliver(
+            requestID, ServerRequestResult.value(value), what: "credential",
+            clear: { self.store.clearSecret(requestID: requestID) })
+    }
+
+    /// `request.answer` for clarify, sudo and secret: their `requestID` is
+    /// the server request's id.
+    private func deliver(
+        _ id: String, _ result: JSONValue, what: String, clear: () -> Void
+    ) async -> PromptDeliveryOutcome {
         do {
-            let status = try await connection.respondSecret(requestID: requestID, value: value)
-            return settlePrompt(
-                status, what: "credential",
-                clear: { self.store.clearSecret(requestID: requestID) })
+            let status = try await connection.answerServerRequest(id: id, result: result)
+            return settlePrompt(status, what: what, clear: clear)
         } catch {
             errorMessage = Self.describe(error)
             return .failed

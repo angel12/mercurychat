@@ -100,8 +100,8 @@ struct ConnectionBannerView: View {
                 Section("Diagnostics") {
                     LabeledContent("Connection phase", value: phaseDescription)
                     LabeledContent(
-                        "Built against contract",
-                        value: "v\(GatewayClient.builtAgainstDesktopContract)")
+                        "Needs contract",
+                        value: "v\(AppModel.contractRequirement.minimum) or newer")
                     LabeledContent("Bot Mode (profiles RPC)", value: botModeDescription)
                 }
             }
