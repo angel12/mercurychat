@@ -87,6 +87,14 @@ struct AppModelKeychainAdoptionTests {
 
             let ready = await eventually { model.phase == .ready(isReconnect: false) }
             #expect(ready, "connection never reached ready: \(model.phase)")
+            // The phase is published before the ready-time save runs (it
+            // awaits the authenticator first), so wait for the save itself:
+            // it adds the server to this model's list right after the write
+            // and the notice. (Not `lastServer`: parallel tests share it.)
+            let saved = await eventually {
+                model.savedServers.contains { $0.urlString == endpoint.key }
+            }
+            #expect(saved, "the ready-time save never ran")
             #expect((model.keychainNotice != nil) == expectNotice)
         }
     }
