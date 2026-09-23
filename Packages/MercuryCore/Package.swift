@@ -17,6 +17,8 @@ let package = Package(
         .target(
             name: "ChatCore",
             dependencies: [.product(name: "MercuryKit", package: "mercurykit")]),
-        .testTarget(name: "ChatCoreTests", dependencies: ["ChatCore"]),
+        .testTarget(
+            name: "ChatCoreTests",
+            dependencies: ["ChatCore", .product(name: "MercuryKit", package: "mercurykit")]),
     ]
 )

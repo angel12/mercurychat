@@ -917,6 +917,13 @@ final class AppModel {
                 let names = outcome.failedSections.map(Self.sectionName).joined(separator: ", ")
                 return .failed("The gateway couldn't save: \(names). Try again.")
             }
+            // A blank pin (empty model or provider) is silently skipped
+            // upstream rather than reported as failed or guarded — catch
+            // that here so a model change never appears to have saved when
+            // it didn't.
+            if changes.model != nil, outcome.applied[.model] == nil, !outcome.confirmationRequired {
+                return .failed("The gateway couldn't save: Model. Try again.")
+            }
             if outcome.confirmationRequired {
                 let message = outcome.confirmationMessage.flatMap { $0.isEmpty ? nil : $0 }
                 return .needsModelConfirmation(message ?? "This model needs confirmation.")

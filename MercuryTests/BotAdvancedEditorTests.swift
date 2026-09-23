@@ -17,6 +17,9 @@ struct BotAdvancedEditorTests {
         /// Answers to `profiles.configure`, consumed in order; once empty,
         /// the default rule (every sent section applied) takes over.
         private var configureReplies: [JSONValue] = []
+        /// When set, every subsequent `profiles.configure` fails with this
+        /// RPC error instead of returning a reply.
+        private var configureError: (code: Int, message: String)?
         private var modelInventoryReply: JSONValue
 
         init(
@@ -64,6 +67,11 @@ struct BotAdvancedEditorTests {
             lock.withLock { configureReplies.append(reply) }
         }
 
+        /// Every subsequent `profiles.configure` fails with this RPC error.
+        func failConfigure(code: Int, message: String) {
+            lock.withLock { configureError = (code, message) }
+        }
+
         /// nil answers `{}`; an error is returned as `.error`.
         func respond(method: String, params: JSONValue) -> JSONValue? {
             lock.withLock {
@@ -102,13 +110,19 @@ struct BotAdvancedEditorTests {
             }
         }
 
-        /// nil unless `describeError` was armed for this request's profile.
+        /// nil unless `describeError` or `configureError` was armed for this
+        /// request.
         func error(method: String, params: JSONValue) -> (Int, String)? {
             lock.withLock {
-                guard method == "profiles.describe",
+                if method == "profiles.describe",
                     let describeError, params["name"]?.stringValue == describeError.name
-                else { return nil }
-                return (describeError.code, describeError.message)
+                {
+                    return (describeError.code, describeError.message)
+                }
+                if method == "profiles.configure", let configureError {
+                    return (configureError.code, configureError.message)
+                }
+                return nil
             }
         }
     }
@@ -160,7 +174,7 @@ struct BotAdvancedEditorTests {
         defer { cleanup() }
 
         let result = await model.loadBotProfile("scout")
-        let profile = try #require(try result.get())
+        let profile = try result.get()
         #expect(profile.name == "scout")
         #expect(profile.soul == "You are Scout, a research bot.")
         #expect(requests("profiles.describe", in: server) == [["name": "scout"]])
@@ -171,7 +185,7 @@ struct BotAdvancedEditorTests {
     /// server.") rather than echoing the backend's raw message — verified
     /// against `HermesError.errorDescription` at the exact pinned tag
     /// (0.3.0). `loadBotProfile` surfaces that mapped copy.
-    @Test func aMissingBotShowsTheBackendsMessage() async throws {
+    @Test func aMissingBotShowsTheUnavailableMessage() async throws {
         let script = GatewayScript()
         script.failDescribe(name: "ghost", code: 4064, message: "Profile 'ghost' not found")
         let (model, _, cleanup) = try await connectedModel(script)
@@ -192,7 +206,7 @@ struct BotAdvancedEditorTests {
         let (model, server, cleanup) = try await connectedModel(GatewayScript())
         defer { cleanup() }
 
-        let profile = try #require(try (await model.loadBotProfile("scout")).get())
+        let profile = try (await model.loadBotProfile("scout")).get()
         var draft = BotProfileDraft(profile)
         draft.soul = "You are Scout, an even better research bot."
 
@@ -207,7 +221,7 @@ struct BotAdvancedEditorTests {
         let (model, server, cleanup) = try await connectedModel(GatewayScript())
         defer { cleanup() }
 
-        let profile = try #require(try (await model.loadBotProfile("scout")).get())
+        let profile = try (await model.loadBotProfile("scout")).get()
         let draft = BotProfileDraft(profile)
 
         let outcome = await model.saveBotProfile("scout", draft: draft)
@@ -222,7 +236,7 @@ struct BotAdvancedEditorTests {
 
         script.enqueueConfigureReply(["ok": true, "applied": ["skills": false]])
 
-        let profile = try #require(try (await model.loadBotProfile("scout")).get())
+        let profile = try (await model.loadBotProfile("scout")).get()
         var draft = BotProfileDraft(profile)
         draft.skills = draft.skills.map { skill in
             var skill = skill
@@ -247,7 +261,7 @@ struct BotAdvancedEditorTests {
             "ok": true, "applied": [:], "confirm_required": true, "confirm_message": "Costly",
         ])
 
-        let profile = try #require(try (await model.loadBotProfile("scout")).get())
+        let profile = try (await model.loadBotProfile("scout")).get()
         var draft = BotProfileDraft(profile)
         let pin = ProfileDescription.ModelPin(provider: "anthropic", model: "claude-3-opus")
         draft.model = pin
@@ -259,12 +273,54 @@ struct BotAdvancedEditorTests {
         #expect(confirmError == nil)
 
         let configureRequests = requests("profiles.configure", in: server)
+        #expect(configureRequests.count == 2)
+        #expect(configureRequests.first?["confirm_expensive_model"] == nil)
         #expect(
             configureRequests.last
                 == [
                     "name": "scout", "model": "claude-3-opus", "provider": "anthropic",
                     "confirm_expensive_model": true,
                 ])
+    }
+
+    @Test func aThrownSaveFails() async throws {
+        let script = GatewayScript()
+        let (model, _, cleanup) = try await connectedModel(script)
+        defer { cleanup() }
+
+        script.failConfigure(code: 5064, message: "boom")
+
+        let profile = try (await model.loadBotProfile("scout")).get()
+        var draft = BotProfileDraft(profile)
+        draft.soul = "You are Scout, an even better research bot."
+
+        let outcome = await model.saveBotProfile("scout", draft: draft)
+        guard case .failed = outcome else {
+            Issue.record("expected .failed, got \(outcome)")
+            return
+        }
+    }
+
+    /// Upstream skips a blank pin (empty model or provider) silently — no
+    /// `applied[.model]` and no `confirm_required`. `saveBotProfile` must not
+    /// read that as success when the draft actually changed the model.
+    @Test func aModelTheGatewaySkippedFails() async throws {
+        let script = GatewayScript()
+        let (model, _, cleanup) = try await connectedModel(script)
+        defer { cleanup() }
+
+        script.enqueueConfigureReply(["ok": true, "applied": [:]])
+
+        let profile = try (await model.loadBotProfile("scout")).get()
+        var draft = BotProfileDraft(profile)
+        draft.model = ProfileDescription.ModelPin(provider: "anthropic", model: "claude-3-opus")
+
+        let outcome = await model.saveBotProfile("scout", draft: draft)
+        guard case .failed(let message) = outcome else {
+            Issue.record("expected .failed, got \(outcome)")
+            return
+        }
+        #expect(message.contains("Model"))
     }
 
     // MARK: Model inventory

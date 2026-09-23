@@ -34,9 +34,18 @@ struct BotAdvancedView: View {
                 .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                #if os(macOS)
+                    // A sheet's pushed view has no system back button on
+                    // macOS, and the only other toolbar button (Save) stays
+                    // disabled until something changes — without this the
+                    // screen would otherwise be a dead end.
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Back") { dismiss() }
+                    }
+                #endif
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }
-                        .disabled((draft?.hasChanges != true) || saving)
+                        .disabled((draft?.hasChanges != true) || saving || loading)
                 }
             }
             .task { await load() }
@@ -68,12 +77,18 @@ struct BotAdvancedView: View {
                 skillsSection(draftBinding)
                 toolsetsSection(draftBinding)
                 mcpSection(draftBinding)
-                if let saveError {
+                if saveError != nil || loading {
                     Section {
                         HStack {
-                            Text(saveError).font(.caption).foregroundStyle(.red)
+                            if let saveError {
+                                Text(saveError).font(.caption).foregroundStyle(.red)
+                            }
                             Spacer()
+                            if loading {
+                                ProgressView().controlSize(.small)
+                            }
                             Button("Reload") { Task { await load() } }
+                                .disabled(loading)
                         }
                     }
                 }
@@ -88,6 +103,10 @@ struct BotAdvancedView: View {
             TextEditor(text: draft.soul)
                 .font(.body.monospaced())
                 .frame(minHeight: 200)
+                .autocorrectionDisabled()
+                #if !os(macOS)
+                    .textInputAutocapitalization(.never)
+                #endif
         }
     }
 
@@ -96,6 +115,9 @@ struct BotAdvancedView: View {
         Section("Model") {
             if let inventory {
                 let providers = inventory.providers.filter { $0.authenticated != false }
+                if let pin = draft.wrappedValue.model, !pinIsVisible(pin, in: providers) {
+                    LabeledContent("Current", value: "\(pin.provider) / \(pin.model)")
+                }
                 Picker("Provider", selection: providerSelection(providers)) {
                     ForEach(providers) { provider in
                         Text(provider.name).tag(Optional(provider.slug))
@@ -127,6 +149,21 @@ struct BotAdvancedView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// Whether `pin` shows up as a selectable row in the pickers built from
+    /// `providers` — false when its provider isn't in the (authenticated)
+    /// list, or its model isn't among that provider's visible models (not
+    /// listed, or in `unavailableModels`). A pin that fails this is shown as
+    /// read-only text instead, since picking any row would silently change it.
+    private func pinIsVisible(
+        _ pin: ProfileDescription.ModelPin, in providers: [ModelInventory.Provider]
+    ) -> Bool {
+        guard let provider = providers.first(where: { $0.slug == pin.provider }) else {
+            return false
+        }
+        return provider.models.contains(pin.model)
+            && !provider.unavailableModels.contains(pin.model)
     }
 
     private func providerSelection(_ providers: [ModelInventory.Provider]) -> Binding<String?> {
@@ -222,7 +259,12 @@ struct BotAdvancedView: View {
 
     private func load() async {
         loading = true
-        saveError = nil
+        // Only clear a stale save failure when there's no draft yet — once a
+        // draft exists, a failed Reload reports into this same slot below,
+        // and clearing it early would blank the row for the whole request.
+        if draft == nil {
+            saveError = nil
+        }
         async let profileResult = model.loadBotProfile(bot.name)
         async let inventoryResult = model.botModelInventory(bot.name)
         let (result, inv) = await (profileResult, inventoryResult)
@@ -239,8 +281,18 @@ struct BotAdvancedView: View {
                 selectedModelName = nil
             }
             loadError = nil
+            saveError = nil
         case .failure(let error):
-            loadError = error.message
+            // With no draft on screen yet, the full-screen error view (keyed
+            // off `loadError`) is what's visible — that's where this belongs.
+            // Once a draft exists, that view never renders again, so a
+            // failed Reload has to surface here instead, in the row the user
+            // can actually see.
+            if draft != nil {
+                saveError = error.message
+            } else {
+                loadError = error.message
+            }
         }
         loading = false
     }
