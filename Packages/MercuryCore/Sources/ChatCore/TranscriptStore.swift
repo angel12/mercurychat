@@ -72,6 +72,12 @@ public final class TranscriptStore {
     private var hydratedCount = 0
     /// Durable row ids currently present (hydration dedupe).
     private var knownRowIDs: Set<Int> = []
+    /// Whether any of the current turn's assistant text reached the
+    /// transcript (a `message.delta`, an interim replacement, or a
+    /// `restoreInflight` snapshot). Reset at `message.start` and at turn end.
+    /// An error completion's `partial: true` only says the BACKEND streamed
+    /// the text; this says whether we actually rendered it (#110).
+    private var turnTextRendered = false
 
     public init() {}
 
@@ -413,6 +419,10 @@ public final class TranscriptStore {
 
         guard !assistant.isEmpty || streaming || error != nil else { return }
         if let error { lastError = error }
+        // Every branch below leaves a non-empty snapshot rendered (appended,
+        // reconciled, or already on screen), so a later partial error
+        // completion must not copy the turn's text again (#110).
+        if !assistant.isEmpty { turnTextRendered = true }
 
         if let index = openBubbleIndex, case .assistant(var bubble) = items[index] {
             // The streaming bubble survived hydration — this is the same
@@ -522,6 +532,9 @@ public final class TranscriptStore {
     /// End-of-turn cleanup shared by `session.info {running: false}` and a
     /// resume result reporting the session idle.
     private func finishTurn() {
+        // The next turn's text hasn't rendered yet — covers a next turn
+        // whose `message.start` is lost along with its deltas (#110).
+        turnTextRendered = false
         if let index = openBubbleIndex, case .assistant(var bubble) = items[index] {
             bubble.isStreaming = false
             items[index] = .assistant(bubble)
@@ -622,6 +635,7 @@ public final class TranscriptStore {
         switch event.type {
         case GatewayEvent.Kind.messageStart:
             running = true
+            turnTextRendered = false
             markQueuedPromptsStarted()
             openBubble()
 
@@ -800,6 +814,7 @@ public final class TranscriptStore {
         bubble.text += text
         bubble.reasoning += reasoning
         items[index] = .assistant(bubble)
+        if !text.isEmpty { turnTextRendered = true }
     }
 
     /// `message.interim {text, already_streamed}` seals the current bubble;
@@ -811,6 +826,7 @@ public final class TranscriptStore {
             let text = payload["text"]?.stringValue, !text.isEmpty
         {
             bubble.text = text
+            turnTextRendered = true
         }
         bubble.isStreaming = false
         bubble.isInterim = true
@@ -832,8 +848,17 @@ public final class TranscriptStore {
         if let index, case .assistant(var bubble) = items[index] {
             if status == "error" {
                 // Keep partial streamed text; surface the error alongside.
+                // `partial: true` means the backend streamed `text` as
+                // deltas — it's the whole turn's text, so when those deltas
+                // landed here it is already on screen, possibly split across
+                // bubbles sealed at tool boundaries, and copying it into this
+                // (often fresh, empty) bubble would duplicate it. But when
+                // none of this turn's text reached the transcript (the deltas
+                // were lost in an unreplayed reconnect gap), `text` is the
+                // only copy of the answer: keep it (#110).
                 let errorText = payload["error"]?.stringValue ?? "The turn failed."
-                if payload["partial"]?.truthy != true, bubble.text.isEmpty, !finalText.isEmpty {
+                let alreadyRendered = payload["partial"]?.truthy == true && turnTextRendered
+                if !alreadyRendered, bubble.text.isEmpty, !finalText.isEmpty {
                     bubble.text = finalText
                 }
                 bubble.error = errorText
