@@ -420,6 +420,11 @@ final class ChatController: Identifiable {
     func connectionBecameReady(isReconnect: Bool) async {
         guard isReconnect, let storedID else { return }
         if await replayAfterReconnect(storedID: storedID) { return }
+        // The full resume re-anchors on its own snapshot, so the pre-drop
+        // watermark is void (#93). `adopt` only clears it for a NEW runtime,
+        // but an evicted ring comes back under the SAME runtime id numbering
+        // from 1 again — a kept watermark would silently drop those events.
+        lastSeenSeq = nil
         Self.logger.info("re-resuming \(storedID, privacy: .public) after reconnect")
         await begin(.resume(sessionSummaryForResume(storedID: storedID)))
     }
@@ -434,6 +439,9 @@ final class ChatController: Identifiable {
         guard let watermark = lastSeenSeq, let previousRuntimeID = runtimeID else {
             return false
         }
+        // No epoch from gateway.ready = nothing proves the ring still numbers
+        // the way it did when the watermark was taken (#93): unsafe, not a pass.
+        guard let knownEpoch = replayEpoch else { return false }
         beginGeneration += 1
         let generation = beginGeneration
         replayGeneration = generation
@@ -456,11 +464,16 @@ final class ChatController: Identifiable {
             let page = try await connection.sessionEventsSince(
                 sessionID: previousRuntimeID, lastSeen: watermark)
             guard generation == beginGeneration else { return true }
-            if page.truncated {
-                Self.logger.info("replay ring truncated past seq \(watermark) — full resume")
-                return false
-            }
-            if let epoch = page.epoch, let known = replayEpoch, epoch != known {
+            // The batch is applied INSTEAD of a re-hydrate, so it must be
+            // provably every event after the watermark (#93): not truncated
+            // or malformed, same epoch, contiguous seqs for this session only,
+            // and `latest_seq` not below the watermark — an evicted ring
+            // answers empty and untruncated with `latest_seq` 0.
+            guard
+                page.isLossless(
+                    under: knownEpoch, forSession: previousRuntimeID, after: watermark)
+            else {
+                Self.logger.info("replay past seq \(watermark) not provably lossless — full resume")
                 return false
             }
             for event in page.events { applyDeduped(event) }

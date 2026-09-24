@@ -64,6 +64,11 @@ struct ReplaySupersessionTests {
 
         // A resumed session with a seq watermark, so a reconnect replays.
         let chat = try #require(model.openChat(profile: nil))
+        // A replay needs a known epoch to replay under (#93).
+        chat.handle(
+            event: GatewayEvent(
+                type: GatewayEvent.Kind.gatewayReady, sessionID: nil,
+                payload: ["replay_epoch": "e1"]))
         let summary = try #require(SessionSummary(json: ["id": "stored-1"]))
         await chat.begin(.resume(summary))
         try #require(chat.runtimeID == "rt-1")
