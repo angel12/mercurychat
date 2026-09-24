@@ -28,7 +28,7 @@ Packages/MercuryCore/
                                  Bot Chat composer rule
 ```
 
-The protocol layer is **MercuryKit** ([angel12/mercurykit](https://github.com/angel12/mercurykit)), the Swift client for Hermes shared with Mercury Voice: endpoints, credentials and Keychain storage, authentication (including native PKCE), the JSON-RPC gateway and its supervisor, REST, session and Bot Mode RPCs, and the wire models. It is pinned exactly to `0.3.0` in two places that must move together: `Packages/MercuryCore/Package.swift` (for ChatCore) and `project.yml` (for the app and `MercuryTests`). Its own tests run in its repository. Chat keeps app UI and composer rules, such as `BotChatPolicy.isCompactCommand`.
+The protocol layer is **MercuryKit** ([angel12/mercurykit](https://github.com/angel12/mercurykit)), the Swift client for Hermes shared with Mercury Voice: endpoints, credentials and Keychain storage, authentication (including native PKCE), the JSON-RPC gateway and its supervisor, REST, session and Bot Mode RPCs, and the wire models. It is pinned exactly to `0.3.1` in two places that must move together: `Packages/MercuryCore/Package.swift` (for ChatCore) and `project.yml` (for the app and `MercuryTests`). Its own tests run in its repository. Chat keeps app UI and composer rules, such as `BotChatPolicy.isCompactCommand`.
 
 Saved credentials live in the Keychain under the service `com.mercury.tokens` (`AppModel.keychainService`). Keep that string: it predates the rename to Mercury Chat, and changing it strands every saved sign-in.
 
