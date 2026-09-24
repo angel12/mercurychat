@@ -15,6 +15,7 @@
 		16C6B3EB63A57219CDBA6293 /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DF179C9F278DF4C94236661 /* ConnectView.swift */; };
 		21A656ABC237B3E540CC7FB3 /* HermesTestServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */; };
 		2E07BC82FD414262CFCE88B3 /* AppModelAuthExpiredTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE84A4573D4C31E09178C736 /* AppModelAuthExpiredTests.swift */; };
+		356B7E4BCBE0D1CC7C5B0F6E /* AppModelTokenEndpointBindingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */; };
 		373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10C155E77B1833A19AAA2F00 /* StatusViews.swift */; };
 		4076301EEC42EF845C3C6445 /* NewBotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */; };
 		4828EC5B01A9727856D87971 /* ImagePasteboardReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4E5B653456C4152778487 /* ImagePasteboardReader.swift */; };
@@ -87,6 +88,7 @@
 		CE84A4573D4C31E09178C736 /* AppModelAuthExpiredTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelAuthExpiredTests.swift; sourceTree = "<group>"; };
 		CF52417D9BAD3C00374A1420 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		D5220C37E1E54AD412B7EC6C /* AppModelChatLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelChatLifecycleTests.swift; sourceTree = "<group>"; };
+		DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTokenEndpointBindingTests.swift; sourceTree = "<group>"; };
 		E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelCredentialPersistenceTests.swift; sourceTree = "<group>"; };
 		FDB791832F7A5EDCF9BCA81C /* BotViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -131,6 +133,7 @@
 				1F9D39A196D74786863013AC /* AppModelConnectGenerationTests.swift */,
 				E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */,
 				1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */,
+				DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */,
 				7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */,
 				90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */,
 				49E79A6A236A9462B5F3B2A2 /* ChatEchoAttachmentTests.swift */,
@@ -327,6 +330,7 @@
 				F5744D3FAE932DFD5180C93D /* AppModelConnectGenerationTests.swift in Sources */,
 				DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */,
 				DA2AA34E4B0CDD6757AE8F28 /* AppModelKeychainAdoptionTests.swift in Sources */,
+				356B7E4BCBE0D1CC7C5B0F6E /* AppModelTokenEndpointBindingTests.swift in Sources */,
 				66BF4F028E62E698A078D2AA /* BotAdvancedEditorTests.swift in Sources */,
 				8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */,
 				C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */,

@@ -1,3 +1,4 @@
+import ChatCore
 import MercuryKit
 import SwiftUI
 
@@ -7,8 +8,9 @@ import SwiftUI
 struct ConnectView: View {
     @Environment(AppModel.self) private var model
 
-    @State private var serverInput = ""
-    @State private var tokenInput = ""
+    /// Server + token, with the token bound to the server it was entered
+    /// for so it can never be sent to a different one (#104).
+    @State private var form = ConnectFormState()
     @State private var username = ""
     @State private var password = ""
     @State private var connecting = false
@@ -68,26 +70,28 @@ struct ConnectView: View {
 
     private var serverForm: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("127.0.0.1:9119 or paste the dashboard URL", text: $serverInput)
+            TextField(
+                "127.0.0.1:9119 or paste the dashboard URL",
+                text: Binding(get: { form.server }, set: { form.setServer($0) }))
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
                 #if !os(macOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                 #endif
-                .onChange(of: serverInput) { _, newValue in
-                    // Pasting a dashboard URL auto-fills the token field.
-                    if let parsed = try? ServerEndpoint.parse(newValue),
-                        let embedded = parsed.embeddedToken
-                    {
-                        tokenInput = embedded
-                    }
-                }
                 .onSubmit(connect)
 
-            SecureField("Session token (from the dashboard URL)", text: $tokenInput)
+            SecureField(
+                "Session token (from the dashboard URL)",
+                text: Binding(get: { form.token }, set: { form.setToken($0) }))
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(connect)
+
+            if form.tokenWasCleared {
+                Text("The token was cleared because the server changed. Paste the token for this server.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
 
             Text("Gated servers with a username & password skip this — just Connect.")
                 .font(.caption)
@@ -105,7 +109,7 @@ struct ConnectView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(serverInput.isEmpty || connecting)
+                .disabled(form.server.isEmpty || connecting)
             }
         }
     }
@@ -231,11 +235,14 @@ struct ConnectView: View {
     }
 
     private func connect() {
-        guard !serverInput.isEmpty, !connecting else { return }
+        guard !form.server.isEmpty, !connecting else { return }
+        form.recordAttempt()
+        let server = form.server
+        let token = form.connectToken
         Task {
             connecting = true
             defer { connecting = false }
-            await model.connect(input: serverInput, token: tokenInput)
+            await model.connect(input: server, token: token)
         }
     }
 
