@@ -47,6 +47,7 @@
 		C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB97969196F04F2B48FCB03E /* ChatController.swift */; };
 		CED739D997A85C49B4F77C2A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */; };
 		D5245B27591F8A6DDB021053 /* FileAttachmentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C7D11718D49275BD388B653 /* FileAttachmentWire.swift */; };
+		D86E59AA62A689A4F8074046 /* AppModelBrowseScopingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8398CDBDA28D2F1ACE4FE082 /* AppModelBrowseScopingTests.swift */; };
 		DA2AA34E4B0CDD6757AE8F28 /* AppModelKeychainAdoptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */; };
 		DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */; };
 		DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */; };
@@ -85,6 +86,7 @@
 		7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAdvancedEditorTests.swift; sourceTree = "<group>"; };
 		7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewBotTests.swift; sourceTree = "<group>"; };
 		7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesTestServer.swift; sourceTree = "<group>"; };
+		8398CDBDA28D2F1ACE4FE082 /* AppModelBrowseScopingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelBrowseScopingTests.swift; sourceTree = "<group>"; };
 		8DF179C9F278DF4C94236661 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotChatControllerTests.swift; sourceTree = "<group>"; };
 		94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -145,6 +147,7 @@
 			isa = PBXGroup;
 			children = (
 				CE84A4573D4C31E09178C736 /* AppModelAuthExpiredTests.swift */,
+				8398CDBDA28D2F1ACE4FE082 /* AppModelBrowseScopingTests.swift */,
 				D5220C37E1E54AD412B7EC6C /* AppModelChatLifecycleTests.swift */,
 				1F9D39A196D74786863013AC /* AppModelConnectGenerationTests.swift */,
 				E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */,
@@ -351,6 +354,7 @@
 			files = (
 				BEA88BE18475FE4759E2506B /* AppModel.swift in Sources */,
 				2E07BC82FD414262CFCE88B3 /* AppModelAuthExpiredTests.swift in Sources */,
+				D86E59AA62A689A4F8074046 /* AppModelBrowseScopingTests.swift in Sources */,
 				A13AC4FAFCA7F638095C7F77 /* AppModelChatLifecycleTests.swift in Sources */,
 				F5744D3FAE932DFD5180C93D /* AppModelConnectGenerationTests.swift in Sources */,
 				DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */,
