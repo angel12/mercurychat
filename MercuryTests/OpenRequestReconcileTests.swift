@@ -7,8 +7,9 @@ import Testing
 /// still waits on, but Chat only ever APPLIED it — a card whose request was
 /// answered, cancelled or timed out while the socket was down (its
 /// `request.cancel` is never re-sent) survived every later snapshot. MercuryKit
-/// reads an absent field as `[]`, so only a snapshot that carries the field is
-/// authority to withdraw cards; an absent or malformed one keeps them.
+/// reads an absent field as `[]`, so a list is authority to withdraw cards only
+/// when it is present, or the backend is contract >= 7 (whose resume omits an
+/// empty list and whose replay always sends one). A malformed list keeps them.
 @Suite("Open-request reconciliation", .timeLimit(.minutes(1)))
 @MainActor
 struct OpenRequestReconcileTests {
@@ -18,8 +19,12 @@ struct OpenRequestReconcileTests {
         private var resumeExtras: [String: JSONValue]
         private var replay: JSONValue = .object([:])
         private var runtime = "rt-1"
+        private let contract: Int?
 
-        init(resumeExtras: [String: JSONValue]) { self.resumeExtras = resumeExtras }
+        init(resumeExtras: [String: JSONValue], contract: Int?) {
+            self.resumeExtras = resumeExtras
+            self.contract = contract
+        }
 
         func setResumeExtras(_ extras: [String: JSONValue]) { lock.withLock { resumeExtras = extras } }
         func setReplay(_ result: JSONValue) { lock.withLock { replay = result } }
@@ -27,7 +32,8 @@ struct OpenRequestReconcileTests {
 
         func respond(method: String) -> JSONValue? {
             lock.withLock {
-                let info: JSONValue = ["desktop_contract": 8]
+                let info: JSONValue =
+                    contract.map { ["desktop_contract": .number(Double($0))] } ?? .object([:])
                 switch method {
                 case "session.create":
                     return ["session_id": "rt-probe", "info": info]
@@ -85,8 +91,8 @@ struct OpenRequestReconcileTests {
 
     /// Connect and resume "stored-1" with `firstResume`, which must leave
     /// the old approval on its card.
-    private func open(firstResume: [String: JSONValue]) async throws -> Harness {
-        let script = Script(resumeExtras: firstResume)
+    private func open(firstResume: [String: JSONValue], contract: Int?) async throws -> Harness {
+        let script = Script(resumeExtras: firstResume, contract: contract)
         let gate = HistoryGate()
         let server = try await HermesTestServer.start(
             rpc: { method, _ in script.respond(method: method) },
@@ -131,27 +137,40 @@ struct OpenRequestReconcileTests {
         return Harness(chat: chat, script: script, gate: gate, summary: summary, cleanup: cleanup)
     }
 
-    private func openWithOldCard() async throws -> Harness {
-        try await open(firstResume: ["running": true, "open_requests": [Self.request(Self.oldID)]])
+    private func openWithOldCard(contract: Int? = 8) async throws -> Harness {
+        try await open(
+            firstResume: ["running": true, "open_requests": [Self.request(Self.oldID)]],
+            contract: contract)
     }
 
     // MARK: Resume snapshot
 
-    @Test func anEmptySnapshotWithdrawsAStaleCard() async throws {
-        let harness = try await openWithOldCard()
+    /// An explicit list is authority on its own, whatever the contract.
+    @Test(arguments: [8, nil] as [Int?])
+    func anEmptySnapshotWithdrawsAStaleCard(contract: Int?) async throws {
+        let harness = try await openWithOldCard(contract: contract)
         defer { harness.cleanup() }
         harness.script.setResumeExtras(["running": true, "open_requests": []])
         await harness.chat.begin(.resume(harness.summary))
         #expect(harness.chat.store.pendingApproval == nil, "a resolved approval survived the snapshot")
     }
 
-    /// A backend that doesn't send the field says nothing about open requests.
-    @Test func aSnapshotWithoutTheFieldKeepsTheCard() async throws {
-        let harness = try await openWithOldCard()
+    /// The real wire shape: a contract-7 gateway omits `open_requests` when
+    /// nothing is open (`_live_session_payload` drops empty keys), so there
+    /// its absence means empty. A backend below contract 7 — or one that
+    /// reports none — doesn't replay requests at all, so absence says
+    /// nothing and the card stays.
+    @Test(arguments: [(8, true), (7, true), (6, false), (nil, false)] as [(Int?, Bool)])
+    func aSnapshotWithoutTheField(contract: Int?, withdraws: Bool) async throws {
+        let harness = try await openWithOldCard(contract: contract)
         defer { harness.cleanup() }
         harness.script.setResumeExtras(["running": true])
         await harness.chat.begin(.resume(harness.summary))
-        #expect(harness.chat.store.pendingApproval?.serverRequestID == Self.oldID)
+        if withdraws {
+            #expect(harness.chat.store.pendingApproval == nil, "a resolved approval survived the snapshot")
+        } else {
+            #expect(harness.chat.store.pendingApproval?.serverRequestID == Self.oldID)
+        }
     }
 
     /// A malformed list is unknown, not empty.
@@ -189,7 +208,8 @@ struct OpenRequestReconcileTests {
     @Test func aRequestOpenedLiveAfterTheSnapshotSurvives() async throws {
         let harness = try await openWithOldCard()
         defer { harness.cleanup() }
-        harness.script.setResumeExtras(["running": true, "open_requests": []])
+        // Nothing open: the contract-8 gateway omits the field.
+        harness.script.setResumeExtras(["running": true])
         // A new runtime id makes adoption observable, as in
         // ResumeSnapshotOrderingTests.
         harness.script.setRuntime("rt-2")
@@ -212,8 +232,10 @@ struct OpenRequestReconcileTests {
     // MARK: Replay page
 
     /// Reach watermark 10 with the old card still open.
-    private func openAtWatermark(resume: [String: JSONValue]) async throws -> Harness {
-        let harness = try await openWithOldCard()
+    private func openAtWatermark(
+        resume: [String: JSONValue], contract: Int? = 8
+    ) async throws -> Harness {
+        let harness = try await openWithOldCard(contract: contract)
         harness.chat.handle(
             event: GatewayEvent(
                 type: GatewayEvent.Kind.sessionInfo, sessionID: "rt-1", payload: ["running": true],
@@ -238,7 +260,7 @@ struct OpenRequestReconcileTests {
     }
 
     @Test func aLosslessReplayWithdrawsCardsItDoesNotList() async throws {
-        let harness = try await openAtWatermark(resume: ["running": true, "open_requests": []])
+        let harness = try await openAtWatermark(resume: ["running": true])
         defer { harness.cleanup() }
         harness.script.setReplay(Self.page(openRequests: [Self.request(Self.newID, command: "make")]))
         await harness.chat.connectionBecameReady(isReconnect: true)
@@ -255,16 +277,20 @@ struct OpenRequestReconcileTests {
         #expect(harness.chat.store.pendingApproval == nil, "a resolved approval survived the replay")
     }
 
-    /// The typed replay page can't tell an absent field from an empty one;
-    /// a backend whose resume doesn't send `open_requests` isn't reporting
-    /// them at all, so its replay can't withdraw anything either.
-    @Test func aReplayFromABackendWithoutTheFieldKeepsTheCard() async throws {
-        let harness = try await openAtWatermark(resume: ["running": true])
+    /// `session.events.since` always sends `open_requests` from contract 7,
+    /// and the typed page reads an absent field as `[]`: only the contract
+    /// makes an empty page's list authoritative. The resume just before
+    /// omits the field (nothing open), as the real gateway does.
+    @Test(arguments: [(8, true), (6, false), (nil, false)] as [(Int?, Bool)])
+    func anEmptyLosslessReplay(contract: Int?, withdraws: Bool) async throws {
+        let harness = try await openAtWatermark(resume: ["running": true], contract: contract)
         defer { harness.cleanup() }
-        var page = Self.page(openRequests: []).objectValue ?? [:]
-        page["open_requests"] = nil
-        harness.script.setReplay(.object(page))
+        harness.script.setReplay(Self.page(openRequests: []))
         await harness.chat.connectionBecameReady(isReconnect: true)
-        #expect(harness.chat.store.pendingApproval?.serverRequestID == Self.oldID)
+        if withdraws {
+            #expect(harness.chat.store.pendingApproval == nil, "a resolved approval survived the replay")
+        } else {
+            #expect(harness.chat.store.pendingApproval?.serverRequestID == Self.oldID)
+        }
     }
 }
