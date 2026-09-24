@@ -278,8 +278,8 @@ struct EditBotSheet: View {
     @State private var descriptionText: String
     @State private var hidden: Bool
     @State private var pickedAvatar: PhotosPickerItem?
-    /// nil = untouched; .some(nil) = clear; .some(data) = replace.
-    @State private var newAvatarJPEG: Data??
+    /// The avatar change, with each picker load owned by its pick (#107).
+    @State private var avatar = AvatarSelection()
     @State private var saving = false
     @State private var errorMessage: String?
 
@@ -311,10 +311,14 @@ struct EditBotSheet: View {
                             .frame(width: 44, height: 44)
                         PhotosPicker(
                             "Choose Photo…", selection: $pickedAvatar, matching: .images)
+                        if !avatar.canSave {
+                            ProgressView().controlSize(.small)
+                        }
                         if previewAvatarData != nil {
                             Button("Remove", role: .destructive) {
+                                // Retires any load still running for the pick.
+                                avatar.remove()
                                 pickedAvatar = nil
-                                newAvatarJPEG = .some(nil)
                             }
                         }
                     }
@@ -324,9 +328,11 @@ struct EditBotSheet: View {
                 } footer: {
                     Text("Soul, model, skills, toolsets and MCP servers.")
                 }
-                if let errorMessage {
+                if let message = errorMessage
+                    ?? (avatar.loadFailed ? "Couldn't read that image." : nil)
+                {
                     Section {
-                        Text(errorMessage).font(.caption).foregroundStyle(.red)
+                        Text(message).font(.caption).foregroundStyle(.red)
                     }
                 }
             }
@@ -344,27 +350,29 @@ struct EditBotSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }
-                        .disabled(saving)
+                        // Saving mid-load would drop the chosen photo (#107).
+                        .disabled(saving || !avatar.canSave)
                 }
             }
-            .onChange(of: pickedAvatar) { _, item in
-                guard let item else { return }
-                Task {
-                    if let data = try? await item.loadTransferable(type: Data.self),
-                        let jpeg = BotAvatarEncoder.avatarJPEG(from: data)
-                    {
-                        newAvatarJPEG = .some(jpeg)
-                    } else {
-                        errorMessage = "Couldn't read that image."
-                    }
+            // Keyed on the selection so SwiftUI cancels the previous load when
+            // the pick changes or is removed; the token drops a load that
+            // finishes anyway after a newer pick or Remove (#107).
+            .task(id: pickedAvatar) {
+                guard let item = pickedAvatar else {
+                    avatar.cancelPending()
+                    return
                 }
+                let token = avatar.pick()
+                let data = try? await item.loadTransferable(type: Data.self)
+                guard !Task.isCancelled else { return }
+                avatar.loadFinished(token, jpeg: data.flatMap(BotAvatarEncoder.avatarJPEG(from:)))
             }
             .interactiveDismissDisabled(saving)
         }
     }
 
     private var previewAvatarData: Data? {
-        switch newAvatarJPEG {
+        switch avatar.change {
         case .some(let replacement): return replacement
         case nil: return model.botAvatars[bot.name]
         }
@@ -373,8 +381,8 @@ struct EditBotSheet: View {
     private func save() async {
         saving = true
         defer { saving = false }
-        if case .some(let avatar) = newAvatarJPEG {
-            if let failure = await model.saveBotAvatar(bot, jpegData: avatar) {
+        if case .some(let jpeg) = avatar.change {
+            if let failure = await model.saveBotAvatar(bot, jpegData: jpeg) {
                 errorMessage = failure
                 return
             }
