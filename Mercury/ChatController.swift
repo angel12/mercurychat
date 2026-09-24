@@ -271,7 +271,7 @@ final class ChatController: Identifiable {
                     historyError =
                         "Couldn't load this session's history: \(Self.describe(error))"
                 }
-                applyResumeExtras(handle.raw)
+                applyResumeExtras(handle)
                 releaseResumeBarrier()
     }
 
@@ -377,7 +377,8 @@ final class ChatController: Identifiable {
     /// Inflight restoration must run BEFORE the running flag: `setRunning(
     /// false)` seals any surviving live bubble, and sealing first would rob
     /// `restoreInflight` of the open bubble it reconciles against.
-    private func applyResumeExtras(_ result: JSONValue) {
+    private func applyResumeExtras(_ handle: SessionHandle) {
+        let result = handle.raw
         if let inflight = result["inflight"], inflight.objectValue != nil {
             store.restoreInflight(
                 user: inflight["user"]?.stringValue ?? "",
@@ -400,13 +401,41 @@ final class ChatController: Identifiable {
         // snapshots). Apply them after setRunning, since an idle resume
         // clears pendings. A malformed list is unknown, so nothing is shown
         // rather than a partial set.
-        restoreOpenRequests(ServerRequest.openRequests(in: result) ?? [])
+        let openRequests = ServerRequest.openRequests(in: result)
+        // A readable list is the whole open set: withdraw cards it no longer
+        // names (#94) — their `request.cancel` went out while we weren't
+        // listening. MercuryKit reads an ABSENT field as `[]` too; that is
+        // "nothing open" only from a contract ≥ 7 gateway, whose resume
+        // drops the key when empty. Older or unreported: absence says
+        // nothing. Live events after this snapshot are still parked (#109),
+        // so a request opened since can't be withdrawn here.
+        if let openRequests,
+            result["open_requests"] != nil || Self.replaysOpenRequests(handle)
+        {
+            reconcileOpenRequests(openRequests)
+        }
+        restoreOpenRequests(openRequests ?? [])
         if let snapshot = result["pending_connection"], snapshot.objectValue != nil {
             store.apply(
                 GatewayEvent(
                     type: GatewayEvent.Kind.connectionRequest, sessionID: runtimeID,
                     payload: snapshot))
         }
+    }
+
+    /// Whether the backend replays open server requests (#94): from contract
+    /// 7 a resume omits `open_requests` only when none is open, and
+    /// `session.events.since` always sends it.
+    private static func replaysOpenRequests(_ handle: SessionHandle) -> Bool {
+        if case .satisfied = DesktopContractRequirement.serverRequests.assess(handle.desktopContract) {
+            return true
+        }
+        return false
+    }
+
+    /// Clear every card whose request an authoritative snapshot omits.
+    private func reconcileOpenRequests(_ requests: [ServerRequest]) {
+        store.reconcileServerRequests(keeping: Set(requests.map(\.id)))
     }
 
     /// Put restored requests on their cards through the normal event path.
@@ -489,6 +518,13 @@ final class ChatController: Identifiable {
             }
             for event in page.events { applyDeduped(event) }
             // Requests opened while the socket was down aren't in the ring.
+            // A lossless page's list is readable, but the typed batch reads
+            // an absent field as `[]` (#94): it is the whole open set only
+            // from a contract ≥ 7 gateway, which always sends it. Live
+            // frames since are parked in the replay buffer.
+            if Self.replaysOpenRequests(handle) {
+                reconcileOpenRequests(page.openRequests)
+            }
             restoreOpenRequests(page.openRequests)
             // An empty replay can't carry the running transition; take the
             // resume result's word for it then — BEFORE draining live events
@@ -496,7 +532,7 @@ final class ChatController: Identifiable {
             // snapshot. (A non-empty replay carries its own session.info
             // frames — the resume flag predates them, so it is skipped.)
             if page.events.isEmpty {
-                applyResumeExtras(handle.raw)
+                applyResumeExtras(handle)
             }
             drainReplayBuffer()
             Self.logger.info(
