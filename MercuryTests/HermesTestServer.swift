@@ -75,7 +75,16 @@ final class HermesTestServer: @unchecked Sendable {
     private let rpcHoldHandler: (@Sendable (String, JSONValue) -> TestReplyGate?)?
     private var connections: [Connection] = []
     private var capturedRPCs: [TestRPCRequest] = []
+    private var readyEpoch: String?
     private(set) var port: UInt16 = 0
+
+    /// `replay_epoch` carried by the `gateway.ready` sent on each upgrade
+    /// (nil = the historical empty payload). Changing it models a gateway
+    /// restart for the NEXT socket.
+    var replayEpoch: String? {
+        get { lock.withLock { readyEpoch } }
+        set { lock.withLock { readyEpoch = newValue } }
+    }
 
     /// The JSON-RPC requests received over the WebSocket, in arrival order.
     var rpcRequests: [TestRPCRequest] {
@@ -86,6 +95,7 @@ final class HermesTestServer: @unchecked Sendable {
         rpc: (@Sendable (String, JSONValue) -> JSONValue?)? = nil,
         rpcError: (@Sendable (String, JSONValue) -> (Int, String)?)? = nil,
         rpcHold: (@Sendable (String, JSONValue) -> TestReplyGate?)? = nil,
+        replayEpoch: String? = nil,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) async throws -> HermesTestServer {
         let parameters = NWParameters.tcp
@@ -94,6 +104,7 @@ final class HermesTestServer: @unchecked Sendable {
         let server = HermesTestServer(
             listener: listener, rpcHandler: rpc, rpcErrorHandler: rpcError,
             rpcHoldHandler: rpcHold, handler: handler)
+        server.replayEpoch = replayEpoch
         try await server.waitUntilReady()
         return server
     }
@@ -115,7 +126,8 @@ final class HermesTestServer: @unchecked Sendable {
         listener.newConnectionHandler = { [weak self] nwConnection in
             guard let self else { return }
             let connection = Connection(
-                nwConnection, handler: self.handler
+                nwConnection, handler: self.handler,
+                readyEpoch: { [weak self] in self?.replayEpoch }
             ) { [weak self] method, params in
                 guard let self else { return .result(.object([:])) }
                 self.lock.withLock {
@@ -168,12 +180,22 @@ final class HermesTestServer: @unchecked Sendable {
         listener.cancel()
     }
 
+    /// Drop every open socket but keep listening, so the client's supervisor
+    /// redials this same server — a network blip, not a shutdown.
+    func dropSockets() {
+        lock.withLock {
+            for connection in connections { connection.cancel() }
+            connections = []
+        }
+    }
+
     /// One accepted socket with its own buffer — HTTP requests arrive on
     /// fresh connections (responses are `Connection: close`), while an
     /// upgraded WebSocket stays open.
     private final class Connection: @unchecked Sendable {
         private let nwConnection: NWConnection
         private let handler: @Sendable (TestHTTPRequest) -> TestHTTPResponse
+        private let readyEpoch: @Sendable () -> String?
         /// Captures each WS JSON-RPC request and yields its scripted reply.
         private let rpcSink: @Sendable (String, JSONValue) -> TestRPCReply
         private var buffer = Data()
@@ -182,10 +204,12 @@ final class HermesTestServer: @unchecked Sendable {
         init(
             _ nwConnection: NWConnection,
             handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse,
+            readyEpoch: @escaping @Sendable () -> String?,
             rpcSink: @escaping @Sendable (String, JSONValue) -> TestRPCReply
         ) {
             self.nwConnection = nwConnection
             self.handler = handler
+            self.readyEpoch = readyEpoch
             self.rpcSink = rpcSink
         }
 
@@ -263,9 +287,10 @@ final class HermesTestServer: @unchecked Sendable {
                     nwConnection.send(
                         content: Self.handshakeResponse(head: head),
                         isComplete: true, completion: .idempotent)
+                    let payload = readyEpoch().map { #"{"replay_epoch": "\#($0)"}"# } ?? "{}"
                     sendText(
-                        #"{"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": {}}}"#
-                    )
+                        #"{"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": "#
+                            + payload + "}}")
                     // Frames pipelined behind the upgrade head are already
                     // in the buffer — drain them now, not on the next read.
                     drainRPCFrames()
