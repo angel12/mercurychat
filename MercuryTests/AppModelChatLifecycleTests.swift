@@ -103,6 +103,62 @@ struct AppModelChatLifecycleTests {
         model.disconnect()
     }
 
+    // MARK: New Session request identity (#97)
+
+    // The route stays `.newSession` after the view creates the session, and
+    // RootView keys the ChatView's `.id`/`.task(id:)` off the route. If two
+    // requests for the same workspace produced equal routes, the second ⌘N /
+    // "+" would change nothing and silently leave the old conversation open.
+
+    @Test func repeatedNewSessionRequestsForTheSameCWDAreDistinct() async throws {
+        let (model, _, cleanup) = try await openedChat()
+        defer { cleanup() }
+        // requestNewSession is a no-op off the browse screen.
+        try #require(await eventually { model.isConnected })
+
+        model.requestNewSession(cwd: "/work/repo")
+        let first = try #require(model.route)
+        model.requestNewSession(cwd: "/work/repo")
+        let second = try #require(model.route)
+        #expect(first != second)
+    }
+
+    @Test func repeatedNewSessionRequestsWithNoCWDAreDistinct() async throws {
+        let (model, _, cleanup) = try await openedChat()
+        defer { cleanup() }
+        // requestNewSession is a no-op off the browse screen.
+        try #require(await eventually { model.isConnected })
+
+        model.requestNewSession()
+        let first = try #require(model.route)
+        model.requestNewSession()
+        let second = try #require(model.route)
+        #expect(first != second)
+    }
+
+    @Test func newSessionAfterSelectingASessionOpensTheNewSessionFlow() async throws {
+        let (model, _, cleanup) = try await openedChat()
+        defer { cleanup() }
+        // requestNewSession is a no-op off the browse screen.
+        try #require(await eventually { model.isConnected })
+
+        model.requestNewSession(cwd: "/work/repo")
+        let first = try #require(model.route)
+        let session = try #require(
+            SessionSummary(json: .object(["session_id": .string("stored-1")])))
+        model.route = .session(session)
+
+        model.requestNewSession(cwd: "/work/repo")
+        let again = try #require(model.route)
+        #expect(again != .session(session))
+        #expect(again != first)
+        guard case .newSession(let cwd, _) = again else {
+            Issue.record("expected a new-session route, got \(again)")
+            return
+        }
+        #expect(cwd == "/work/repo")
+    }
+
     /// Connect to a scripted open server and open a chat — the shared setup
     /// of every begin-vs-teardown race test. The returned cleanup stops the
     /// server and disconnects (both idempotent).

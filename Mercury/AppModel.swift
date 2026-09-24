@@ -96,9 +96,13 @@ final class AppModel {
     }
 
     /// Sidebar selection → detail. `newSession` opens the new-session flow.
+    /// Each request carries its own `request` ID (#97): the route stays
+    /// `.newSession` after the view creates the session, so without it a
+    /// second New Session for the same cwd would be an equal route — same
+    /// view `.id`, same `.task(id:)` — and nothing would open.
     enum Route: Hashable {
         case session(SessionSummary)
-        case newSession(cwd: String?)
+        case newSession(cwd: String?, request: UUID)
         case botChat(BotChatTarget)
     }
     var route: Route?
@@ -561,7 +565,7 @@ final class AppModel {
 
     func requestNewSession(cwd: String? = nil) {
         guard isConnected else { return }
-        route = .newSession(cwd: cwd)
+        route = .newSession(cwd: cwd, request: UUID())
     }
 
     // MARK: Session management (stored sessions, no resume needed)
