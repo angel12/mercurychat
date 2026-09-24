@@ -222,28 +222,29 @@ private struct ChatContentView: View {
                 } else {
                     // Pre-18 has no scroll-geometry source for List (the old
                     // preference trick measured the LazyVStack's frame, which
-                    // List doesn't expose). Degraded but functional: the drag
-                    // gesture still unpins; with bottomDistance stuck at its
-                    // last value the drag-end repin is approximate.
-                    base
+                    // List doesn't expose), so `bottomDistance` is NEVER
+                    // written here — it is not "stuck at its last value", it
+                    // is the initial 0, which used to re-pin every drag the
+                    // moment it ended (#105). The scroll state knows it has
+                    // no geometry and falls back to coarse signals instead:
+                    // the bottom anchor row's appear/disappear (see
+                    // `transcriptItems`), the drag gesture below, and on
+                    // macOS 14 the wheel monitor — trackpad / mouse-wheel
+                    // scrolling there produces no DragGesture at all.
+                    #if os(macOS)
+                        base.background(LegacyWheelUnpinner(scroll: scroll))
+                    #else
+                        base
+                    #endif
                 }
             }
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 1)
                         .onChanged { [scroll] _ in
-                            // Unpin the instant a drag starts. Waiting for the
-                            // geometry callback loses the race against a queued
-                            // auto-scroll, which snaps back to the bottom and
-                            // re-pins before the "scrolled away" reading lands.
-                            scroll.isDragging = true
-                            scroll.isAutoScrolling = false
-                            scroll.setPinned(false)
+                            scroll.dragBegan()
                         }
                         .onEnded { [scroll] _ in
-                            scroll.isDragging = false
-                            if scroll.bottomDistance < TranscriptScrollState.repinDistance {
-                                scroll.setPinned(true)
-                            }
+                            scroll.dragEnded()
                         }
                 )
                 .overlay(alignment: .bottom) {
@@ -333,8 +334,22 @@ private struct ChatContentView: View {
                     .foregroundStyle(.red)
                     .padding(.horizontal)
             }
-            // Scroll anchor.
+            // Scroll anchor. On iOS 17 / macOS 14 also the coarse
+            // "at the bottom" sentinel (#105): with no scroll geometry, this
+            // last row being on screen is the only near-bottom signal. The
+            // availability gate keeps it inert on the geometry path, where
+            // the state would ignore it anyway once geometry arrives.
             Color.clear.frame(height: 1).id("bottom")
+                .onAppear { [scroll] in
+                    if #unavailable(iOS 18.0, macOS 15.0, visionOS 2.0) {
+                        scroll.bottomSentinelVisibilityChanged(true)
+                    }
+                }
+                .onDisappear { [scroll] in
+                    if #unavailable(iOS 18.0, macOS 15.0, visionOS 2.0) {
+                        scroll.bottomSentinelVisibilityChanged(false)
+                    }
+                }
         }
     }
 
@@ -825,6 +840,63 @@ private struct ComposerView: View {
 }
 
 #if os(macOS)
+    /// macOS 14 only (#105): trackpad / mouse-wheel scrolling produces no
+    /// DragGesture, and without scroll geometry (macOS 15+) nothing else can
+    /// tell the pin that the user scrolled away — streaming kept yanking the
+    /// reader back to the bottom. This invisible view sits behind the
+    /// transcript List and watches scroll-wheel events through a local
+    /// monitor, acting only on events that land inside its own frame in its
+    /// own window and move toward older content (positive `scrollingDeltaY`
+    /// is "reveal what's above" under both scroll-direction settings). It
+    /// never re-pins: that stays with the bottom sentinel and the explicit
+    /// paths. Installed only on the pre-geometry branch, so macOS 15+ never
+    /// sees it.
+    private struct LegacyWheelUnpinner: NSViewRepresentable {
+        let scroll: TranscriptScrollState
+
+        final class View: NSView {
+            var scroll: TranscriptScrollState?
+            private var monitor: Any?
+
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                if let monitor { NSEvent.removeMonitor(monitor) }
+                monitor = nil
+                guard window != nil else { return }
+                monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) {
+                    [weak self] event in
+                    MainActor.assumeIsolated { self?.observe(event) }
+                    return event  // observe only; the List still scrolls
+                }
+            }
+
+            private func observe(_ event: NSEvent) {
+                guard event.scrollingDeltaY > 0,
+                    let window, event.window === window,
+                    bounds.contains(convert(event.locationInWindow, from: nil))
+                else { return }
+                scroll?.userScrolledTowardOlder()
+            }
+
+            // Hit-testing transparent: a background must never eat clicks.
+            override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        }
+
+        func makeNSView(context: Context) -> View {
+            let view = View()
+            view.scroll = scroll
+            return view
+        }
+
+        func updateNSView(_ view: View, context: Context) {
+            view.scroll = scroll
+        }
+
+        static func dismantleNSView(_ view: View, coordinator: ()) {
+            view.scroll = nil
+        }
+    }
+
     /// Gives the composer first refusal on ⌘V, ahead of Edit ▸ Paste.
     ///
     /// `NSWindow` offers a key equivalent to its content view hierarchy
@@ -1541,76 +1613,6 @@ private struct SubmitErrorSection: View {
             }
         }
     }
-}
-
-/// Whether the transcript follows streaming output: scrolling away from the
-/// bottom releases the pin, scrolling back (or sending a message, or tapping
-/// the jump-to-latest button) restores it.
-///
-/// Only `isPinnedToBottom` is observable — the body reads it for the
-/// jump-to-latest button, and its writes are equality-guarded so the view
-/// invalidates only on real pin/unpin transitions. Everything else is
-/// `@ObservationIgnored` on purpose: those fields are written on every
-/// scrolled point / touch move, and observable per-frame writes would
-/// invalidate the whole transcript body 120×/s (measured as app-wide lag).
-@MainActor @Observable
-private final class TranscriptScrollState {
-    /// Hysteresis band for the pin: drifting past `unpinDistance` releases it,
-    /// but only returning to (nearly) the exact bottom re-engages it. A single
-    /// threshold re-pins anyone the auto-scroll just yanked down, which made
-    /// the pin impossible to escape mid-stream.
-    @ObservationIgnored static let unpinDistance: CGFloat = 80
-    /// "At the bottom" must clear the transcript content's 12pt bottom
-    /// padding: the scroll anchor sits INSIDE the padded LazyVStack, so a
-    /// perfect `scrollTo("bottom", anchor: .bottom)` landing reads ~12pt of
-    /// remaining distance, never 0.
-    @ObservationIgnored static let repinDistance: CGFloat = 16
-
-    private(set) var isPinnedToBottom = true
-    /// True while a deferred scroll is queued so extra requests coalesce.
-    @ObservationIgnored var scrollQueued = false
-    /// True while a settle chain (post-scrollTo landing correction) runs so
-    /// concurrent requests don't stack duplicate chains.
-    @ObservationIgnored var settleActive = false
-    /// Latest scroll-geometry reading, kept so gesture callbacks (which
-    /// can't see geometry) can decide whether the drag ended at the bottom.
-    @ObservationIgnored var bottomDistance: CGFloat = 0
-    @ObservationIgnored var isDragging = false
-    /// True while an animated programmatic scroll is in flight. Geometry
-    /// reports "far from bottom" mid-animation, which must not unpin —
-    /// cleared by the animation's completion or by the user grabbing the view.
-    @ObservationIgnored var isAutoScrolling = false
-
-    func setPinned(_ pinned: Bool) {
-        guard pinned != isPinnedToBottom else { return }
-        isPinnedToBottom = pinned
-    }
-
-    func update(bottomDistance distance: CGFloat, contentGrew: Bool = false) {
-        if contentGrew { lastContentGrowth = CACurrentMediaTime() }
-        bottomDistance = distance
-        if distance > Self.unpinDistance {
-            // Only a reading the USER caused may release the pin: while a
-            // programmatic scroll is in flight (isAutoScrolling) the geometry
-            // reports mid-seek positions, and while content is growing the
-            // lazy layout re-estimates produce far readings out of thin air.
-            // The growth flag alone is not enough — appends re-layout in
-            // multiple passes, and a second pass reports a jumped distance
-            // with the contentHeight UNCHANGED (verified: tool-row appends
-            // unpinned the follow mid-stream) — so any reading within a short
-            // cool-down of a growth is still treated as content-driven. A
-            // real drag unpins synchronously via the gesture, never here.
-            guard !isAutoScrolling, !contentGrew,
-                CACurrentMediaTime() - lastContentGrowth > 0.15
-            else { return }
-            setPinned(false)
-        } else if distance < Self.repinDistance, !isDragging {
-            isAutoScrolling = false
-            setPinned(true)
-        }
-    }
-
-    @ObservationIgnored private var lastContentGrowth: CFTimeInterval = 0
 }
 
 /// Scroll reading pairing the bottom distance with the content height, so
