@@ -350,6 +350,7 @@ final class AppModel {
     /// connect with the minted tokens.
     func signIn(username: String, password: String) async {
         guard let pending = pendingPasswordLogin else { return }
+        let generation = passwordLoginGeneration
         connectError = nil
         do {
             let session = try await HermesAuthenticator.logIn(
@@ -357,15 +358,24 @@ final class AppModel {
                 provider: pending.providerName,
                 username: username,
                 password: password)
+            guard generation == passwordLoginGeneration else { return }
             await connect(endpoint: pending.endpoint, credentials: .password(session))
-        } catch let error as HermesError {
-            connectError = error.errorDescription
         } catch {
-            connectError = error.localizedDescription
+            guard generation == passwordLoginGeneration else { return }
+            connectError = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
         }
     }
 
+    /// Guard for the password-login POST, which `signIn` awaits before
+    /// `connect()` owns anything: Back, or a connect/disconnect (a Recent
+    /// servers tap, another sign-in's connect), can land meanwhile, and the
+    /// abandoned login's answer — session or error — must not connect, save,
+    /// or paint (#99).
+    private var passwordLoginGeneration = 0
+
     func cancelPasswordLogin() {
+        passwordLoginGeneration += 1
         pendingPasswordLogin = nil
         pendingOAuthLogin = nil
         cancelOAuthFlow()
@@ -490,6 +500,7 @@ final class AppModel {
 
     func disconnect() {
         connectGeneration += 1  // invalidate any in-flight connect()
+        passwordLoginGeneration += 1  // and any in-flight password login
         cancelOAuthFlow()
         stopPathMonitor()
         updatePump?.cancel()
