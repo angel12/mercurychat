@@ -159,7 +159,7 @@ struct ConnectView: View {
     private func oauthForm(_ pending: AppModel.PendingOAuthLogin) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(
-                "This server uses \(pending.providerDisplayName) sign-in. Mercury Chat opens your browser; after you approve, it finishes automatically."
+                "\(pending.endpoint.displayName) uses \(pending.providerDisplayName) sign-in. Mercury Chat opens your browser; after you approve, it finishes automatically."
             )
             .font(.callout)
 
