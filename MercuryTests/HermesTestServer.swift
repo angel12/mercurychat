@@ -189,6 +189,24 @@ final class HermesTestServer: @unchecked Sendable {
         }
     }
 
+    /// Send one server→client frame — an `event`, or a server request — on
+    /// every open WebSocket. It rides the socket's queue, so it lands after
+    /// any frame already sent.
+    func push(_ frame: JSONValue) {
+        guard let data = try? JSONEncoder().encode(frame),
+            let text = String(data: data, encoding: .utf8)
+        else { return }
+        let open = lock.withLock { connections }
+        for connection in open { connection.push(text) }
+    }
+
+    /// Push one gateway event (`{type, session_id, payload}`).
+    func pushEvent(_ type: String, sessionID: String?, payload: JSONValue = [:]) {
+        var params: [String: JSONValue] = ["type": .string(type), "payload": payload]
+        if let sessionID { params["session_id"] = .string(sessionID) }
+        push(["jsonrpc": "2.0", "method": "event", "params": .object(params)])
+    }
+
     /// One accepted socket with its own buffer — HTTP requests arrive on
     /// fresh connections (responses are `Connection: close`), while an
     /// upgraded WebSocket stays open.
@@ -218,9 +236,19 @@ final class HermesTestServer: @unchecked Sendable {
             self.rpcSink = rpcSink
         }
 
+        private let queue = DispatchQueue(label: "test.hermes-connection")
+
         func begin() {
-            nwConnection.start(queue: DispatchQueue(label: "test.hermes-connection"))
+            nwConnection.start(queue: queue)
             receiveNext()
+        }
+
+        /// A server-initiated frame; dropped unless this is an upgraded
+        /// WebSocket (plain HTTP sockets share the list).
+        func push(_ text: String) {
+            queue.async { [self] in
+                if upgraded { sendText(text) }
+            }
         }
 
         func cancel() {

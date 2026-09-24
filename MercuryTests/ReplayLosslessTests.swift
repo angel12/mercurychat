@@ -241,7 +241,7 @@ struct ReplayLosslessTests {
     }
 
     /// The app's order of events: the socket's `gateway.ready` lands before
-    /// any chat exists (AppModel forwards events to the active chat only),
+    /// any chat exists (AppModel forwards events to open chats only),
     /// so the chat must learn the epoch its seqs are stamped under from the
     /// connection. A real drop then redials the same gateway, same epoch:
     /// the replay proves the gap and no re-hydrate is needed.

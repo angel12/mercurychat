@@ -15,10 +15,10 @@ struct AppModelChatLifecycleTests {
             tokenStore: KeychainTokenStore(service: "com.mercury.tokens.tests"))
         let chat: ChatController? = model.openChat(profile: nil)
         #expect(chat == nil)
-        #expect(model.activeChat == nil)
+        #expect(model.openChats.isEmpty)
     }
 
-    @Test func disconnectClearsActiveChat() async throws {
+    @Test func disconnectClearsOpenChats() async throws {
         // An open, ungated server: the probe passes and connect() installs
         // the connection, which is all openChat needs.
         let server = try await HermesTestServer.start { request in
@@ -44,12 +44,12 @@ struct AppModelChatLifecycleTests {
 
         let chat = model.openChat(profile: nil)
         #expect(chat != nil)
-        #expect(model.activeChat === chat)
+        #expect(model.openChats.count == 1 && model.openChats.first === chat)
 
-        // disconnect() must drop the registration too — a stale activeChat
-        // would keep routing the next connection's events into a dead chat.
+        // disconnect() must drop the registration too — a stale registered
+        // chat would keep routing the next connection's events into a dead chat.
         model.disconnect()
-        #expect(model.activeChat == nil)
+        #expect(model.openChats.isEmpty)
     }
 
     // MARK: begin() racing a disconnect (#48 follow-up)
@@ -60,8 +60,8 @@ struct AppModelChatLifecycleTests {
     // already discarded: depending on timing it would surface a spurious
     // "Not connected" error, or worse, the RPC still wins the race against
     // the async connection.stop() and creates/resumes a server-side runtime
-    // session that nothing ever tears down (activeChat is nil, so closeChat's
-    // identity guard skips teardown).
+    // session that nothing ever tears down (the chat is unregistered, so
+    // closeChat's registry guard skips teardown).
 
     @Test func beginCreateAfterDisconnectIsInert() async throws {
         let (model, chat, cleanup) = try await openedChat()
@@ -115,11 +115,12 @@ struct AppModelChatLifecycleTests {
         defer { cleanup() }
         // requestNewSession is a no-op off the browse screen.
         try #require(await eventually { model.isConnected })
+        let window = WindowNavigation()
 
-        model.requestNewSession(cwd: "/work/repo")
-        let first = try #require(model.route)
-        model.requestNewSession(cwd: "/work/repo")
-        let second = try #require(model.route)
+        model.requestNewSession(cwd: "/work/repo", in: window)
+        let first = try #require(window.route)
+        model.requestNewSession(cwd: "/work/repo", in: window)
+        let second = try #require(window.route)
         #expect(first != second)
     }
 
@@ -128,11 +129,12 @@ struct AppModelChatLifecycleTests {
         defer { cleanup() }
         // requestNewSession is a no-op off the browse screen.
         try #require(await eventually { model.isConnected })
+        let window = WindowNavigation()
 
-        model.requestNewSession()
-        let first = try #require(model.route)
-        model.requestNewSession()
-        let second = try #require(model.route)
+        model.requestNewSession(in: window)
+        let first = try #require(window.route)
+        model.requestNewSession(in: window)
+        let second = try #require(window.route)
         #expect(first != second)
     }
 
@@ -141,15 +143,16 @@ struct AppModelChatLifecycleTests {
         defer { cleanup() }
         // requestNewSession is a no-op off the browse screen.
         try #require(await eventually { model.isConnected })
+        let window = WindowNavigation()
 
-        model.requestNewSession(cwd: "/work/repo")
-        let first = try #require(model.route)
+        model.requestNewSession(cwd: "/work/repo", in: window)
+        let first = try #require(window.route)
         let session = try #require(
             SessionSummary(json: .object(["session_id": .string("stored-1")])))
-        model.route = .session(session)
+        window.route = .session(session)
 
-        model.requestNewSession(cwd: "/work/repo")
-        let again = try #require(model.route)
+        model.requestNewSession(cwd: "/work/repo", in: window)
+        let again = try #require(window.route)
         #expect(again != .session(session))
         #expect(again != first)
         guard case .newSession(let cwd, _) = again else {

@@ -1,15 +1,38 @@
 import MercuryKit
 import SwiftUI
 
+/// One window's root. Each window owns its navigation (#112): the route
+/// lives here, per scene, not on the app-wide model — so opening a session
+/// in one window leaves every other window's conversation where it was.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var navigation = WindowNavigation()
 
     var body: some View {
-        if model.isConnected {
-            ConnectedView()
-        } else {
-            ConnectView()
+        Group {
+            if model.isConnected {
+                ConnectedView()
+            } else {
+                ConnectView()
+            }
         }
+        .environment(navigation)
+        // The menu bar's New Session acts on the focused window's
+        // navigation; nil (no key window) disables it.
+        .focusedSceneValue(\.windowNavigation, navigation)
+        .onAppear { model.register(navigation) }
+    }
+}
+
+extension FocusedValues {
+    /// The focused window's navigation, for scene-targeted menu commands.
+    var windowNavigation: WindowNavigation? {
+        get { self[WindowNavigationKey.self] }
+        set { self[WindowNavigationKey.self] = newValue }
+    }
+
+    private struct WindowNavigationKey: FocusedValueKey {
+        typealias Value = WindowNavigation
     }
 }
 
@@ -17,6 +40,7 @@ struct RootView: View {
 /// drill-in stack on iPhone.
 struct ConnectedView: View {
     @Environment(AppModel.self) private var model
+    @Environment(WindowNavigation.self) private var navigation
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
@@ -28,7 +52,7 @@ struct ConnectedView: View {
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300)
                 #endif
         } detail: {
-            switch model.route {
+            switch navigation.route {
             case .session(let session):
                 ChatView(mode: .resume(session), sessionKey: session.storedID)
                     .id(session.storedID)

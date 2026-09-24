@@ -97,6 +97,9 @@ final class AppModel {
     /// it and refetch (the event carries no payload).
     private(set) var cronEpoch = 0
 
+    /// Set by the first `autoConnectOnLaunch`.
+    private var didAutoConnect = false
+
     // MARK: Navigation
 
     /// A bot roster row's click target: the profile plus its server-resolved
@@ -122,7 +125,29 @@ final class AppModel {
         case newSession(cwd: String?, request: UUID)
         case botChat(BotChatTarget)
     }
-    var route: Route?
+
+    /// Every live window's navigation (#112). The route is per window — each
+    /// scene owns its `WindowNavigation` — but a few app-wide operations
+    /// must reach all of them: a disconnect empties every detail pane, and a
+    /// deleted session closes wherever it is shown. Weak: a closed window's
+    /// navigation dies with its scene and simply drops out.
+    private var windows: [WeakWindowNavigation] = []
+
+    private struct WeakWindowNavigation {
+        weak var navigation: WindowNavigation?
+    }
+
+    /// Enroll a window's navigation in the app-wide operations above.
+    /// Idempotent — the scene root calls it on every appearance.
+    func register(_ navigation: WindowNavigation) {
+        windows.removeAll { $0.navigation == nil }
+        guard !windows.contains(where: { $0.navigation === navigation }) else { return }
+        windows.append(WeakWindowNavigation(navigation: navigation))
+    }
+
+    private var liveWindows: [WindowNavigation] {
+        windows.compactMap(\.navigation)
+    }
 
     /// `saveBotProfile`'s outcome. `.failed` keeps the caller's draft (no
     /// reload) — the Advanced screen resends every changed section on retry.
@@ -138,8 +163,11 @@ final class AppModel {
         let message: String
     }
 
-    /// The chat currently on screen; receives the event stream.
-    private(set) var activeChat: ChatController?
+    /// Every chat on screen, in any window, in open order; each receives the
+    /// event stream (#112). One slot used to hold "the" chat: a second
+    /// window's open silently took the first window's events, and closing
+    /// either cleared the slot for both.
+    private(set) var openChats: [ChatController] = []
 
     /// Create (and register) the controller for a route. The view owns the
     /// begin() call; registration here is what routes gateway events.
@@ -150,14 +178,35 @@ final class AppModel {
         guard let connection else { return nil }
         let controller = ChatController(
             connection: connection, profile: profile ?? selectedProfile)
-        activeChat = controller
+        // The backend hands a second resume of a live stored session the
+        // SAME runtime, and `session.close` kills it with no viewer check —
+        // so a chat may only close what no other open chat holds (#112).
+        controller.isHeldElsewhere = { [weak self, weak controller] claims in
+            guard let self else { return false }
+            return self.openChats.contains {
+                $0 !== controller && !$0.sessionClaims.isDisjoint(with: claims)
+            }
+        }
+        // One socket carries each server request once, and answering it
+        // emits nothing: tell the other chats on that runtime it's settled.
+        controller.serverRequestSettled = { [weak self, weak controller] requestID, runtimeID in
+            guard let self else { return }
+            for chat in self.openChats where chat !== controller && chat.runtimeID == runtimeID {
+                chat.withdrawSettledRequest(requestID)
+            }
+        }
+        openChats.append(controller)
         return controller
     }
 
+    /// Unregister one chat — never another window's (#112). Its runtime is
+    /// closed only if no chat still open holds or is opening the same
+    /// session; that check runs inside `teardown`, on a later hop, so a
+    /// successor whose `.task` registered in between counts too.
     func closeChat(_ controller: ChatController) {
-        guard activeChat === controller else { return }
+        guard let index = openChats.firstIndex(where: { $0 === controller }) else { return }
+        openChats.remove(at: index)
         controller.invalidate()
-        activeChat = nil
         Task {
             await controller.teardown()
             await refreshProjects()
@@ -264,6 +313,12 @@ final class AppModel {
     private(set) var pendingPasswordLogin: PendingPasswordLogin?
 
     func autoConnectOnLaunch() async {
+        // Once per launch, not per window (#112): every new window's root
+        // runs this `.task`, and a second run would re-dial the last server
+        // after a deliberate disconnect — or, mid-connect (connection still
+        // nil), restart the first window's connect from scratch.
+        guard !didAutoConnect else { return }
+        didAutoConnect = true
         guard connection == nil,
             let last = UserDefaults.standard.string(forKey: "lastServer"),
             let parsed = try? ServerEndpoint.parse(last),
@@ -536,12 +591,13 @@ final class AppModel {
             Task { await connection.stop() }
         }
         phase = .stopped
-        route = nil
+        for window in liveWindows { window.route = nil }
         // Invalidate, don't just drop: ChatView's `.task` may still be on
         // its way to begin(), which must become a no-op rather than dial
-        // RPCs against the stopped connection (#48's surviving race).
-        activeChat?.invalidate()
-        activeChat = nil
+        // RPCs against the stopped connection (#48's surviving race). Every
+        // window's chat, not just the newest (#112).
+        for chat in openChats { chat.invalidate() }
+        openChats = []
         profiles = []
         profilesLoading = false
         projectTree = nil
@@ -605,9 +661,10 @@ final class AppModel {
         pathMonitor = nil
     }
 
-    func requestNewSession(cwd: String? = nil) {
+    /// Open the new-session flow in `navigation`'s window only (#112).
+    func requestNewSession(cwd: String? = nil, in navigation: WindowNavigation) {
         guard isConnected else { return }
-        route = .newSession(cwd: cwd, request: UUID())
+        navigation.route = .newSession(cwd: cwd, request: UUID())
     }
 
     // MARK: Session management (stored sessions, no resume needed)
@@ -646,8 +703,13 @@ final class AppModel {
         do {
             try await connection.rest.deleteSession(
                 storedID: session.storedID, profile: session.profile)
-            if case .session(let selected) = route, selected.storedID == session.storedID {
-                route = nil
+            // Close it wherever it's shown — and only there (#112).
+            for window in liveWindows {
+                if case .session(let selected) = window.route,
+                    selected.storedID == session.storedID
+                {
+                    window.route = nil
+                }
             }
             await refreshProjects()
         } catch {
@@ -693,8 +755,17 @@ final class AppModel {
                             await self.loadBrowseData()
                             guard generation == self.connectGeneration else { return }
                         }
-                        await self.activeChat?.connectionBecameReady(
-                            isReconnect: isReconnect)
+                        // Every open chat re-binds (#112) — concurrently, so
+                        // one window's resume + replay doesn't queue the
+                        // rest behind it. The pump still waits for all.
+                        let chats = self.openChats
+                        await withTaskGroup(of: Void.self) { group in
+                            for chat in chats {
+                                group.addTask {
+                                    await chat.connectionBecameReady(isReconnect: isReconnect)
+                                }
+                            }
+                        }
                     }
                     if case .authExpired = phase {
                         // Credentials are dead. Token mode: the ephemeral
@@ -719,7 +790,9 @@ final class AppModel {
                         return
                     }
                 case .event(let event):
-                    self.activeChat?.handle(event: event)
+                    // Fan out (#112): each chat keeps only its runtime's
+                    // events, and two windows on one session both get them.
+                    for chat in self.openChats { chat.handle(event: event) }
                     self.handleGlobalEvent(event)
                 }
             }
@@ -1107,7 +1180,8 @@ final class AppModel {
     /// self-introduction. Returns nil on success, else a user-facing failure
     /// message; nothing is created on a refusal.
     func createBot(
-        name: String, title: String, description: String, cloneFrom: String? = "default"
+        name: String, title: String, description: String, cloneFrom: String? = "default",
+        openIn navigation: WindowNavigation? = nil
     ) async -> String? {
         guard let connection else { return "Not connected." }
         let generation = connectGeneration
@@ -1143,7 +1217,8 @@ final class AppModel {
         // The user moved to another server meanwhile: the bot exists on the
         // one that made it, but its chat must not open on this one (#95).
         guard generation == connectGeneration else { return nil }
-        route = .botChat(
+        // The Bot Chat opens in the window that asked for the bot (#112).
+        navigation?.route = .botChat(
             BotChatTarget(
                 profile: slug,
                 displayTitle: BotCreation.displayName(slug: slug, title: identity.title),
@@ -1181,5 +1256,19 @@ final class AppModel {
             contractNotice =
                 "This server speaks desktop contract v\(reported); Mercury Chat needs v\(Self.contractRequirement.minimum) or newer. Approval, clarify, sudo and secret prompts won't appear until the backend is updated."
         }
+    }
+}
+
+/// One window's navigation (#112): which route its detail pane shows. Owned
+/// by the scene's root view, so every window navigates independently; the
+/// app-wide operations that must reach every window go through
+/// `AppModel.register(_:)`.
+@MainActor
+@Observable
+final class WindowNavigation {
+    var route: AppModel.Route?
+
+    init(route: AppModel.Route? = nil) {
+        self.route = route
     }
 }
