@@ -573,7 +573,7 @@ final class AppModel {
         // that exact name, so renaming severs the bot relationship and the
         // next open mints a replacement. The sidebar hides Rename for these
         // rows; this covers any other caller.
-        guard session.title != BotChatPolicy.canonicalTitle else {
+        guard !BotChatPolicy.isCanonicalRow(rootTitle: nil, title: session.title) else {
             browseError =
                 "That's a bot's canonical Bot Chat — its title is its identity and can't change."
             return

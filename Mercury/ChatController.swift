@@ -212,6 +212,14 @@ final class ChatController: Identifiable {
     private func performResume(_ session: SessionSummary, generation: Int) async throws {
                 let profile = session.profile ?? self.profile
                 effectiveProfile = profile
+                // Canonical-ness is the session's identity, not the route it
+                // was opened by (#92): a "Bot Chat" row opened from Sessions
+                // has no bot context, yet renaming it still severs the bot's
+                // forever-chat and `/compact` still must compress. One-way —
+                // the Bots path sets it before begin and nothing clears it.
+                if BotChatPolicy.isCanonicalRow(rootTitle: nil, title: session.title) {
+                    isCanonicalBotChat = true
+                }
                 // Resume (omit_messages) and REST hydration run in parallel —
                 // that is exactly why omit_messages exists. `order` must be
                 // explicit: with a limit but no order the server anchors at
