@@ -32,9 +32,12 @@ struct ConnectedView: View {
             case .session(let session):
                 ChatView(mode: .resume(session), sessionKey: session.storedID)
                     .id(session.storedID)
-            case .newSession(let cwd):
-                ChatView(mode: .create(cwd: cwd, title: nil), sessionKey: "new-\(cwd ?? "")")
-                    .id("new-session-\(cwd ?? "")")
+            case .newSession(let cwd, let request):
+                // Keyed by the request, not the cwd (#97): every New Session
+                // action gets a fresh ChatView and create task, while view
+                // refreshes of the same request never create twice.
+                ChatView(mode: .create(cwd: cwd, title: nil), sessionKey: "new-\(request)")
+                    .id("new-session-\(request)")
             case .botChat(let target):
                 // The canonical chat is resolved inside begin(.bot) by the
                 // exact-title registry lookup — never from the roster row,
