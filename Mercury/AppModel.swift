@@ -614,6 +614,12 @@ final class AppModel {
         _ connection: HermesConnection, credentialsToSave: ServerCredentials?
     ) {
         var pendingSave = credentialsToSave
+        // The pump belongs to this connect. Its branches suspend (keychain
+        // read, browse load, provider lookup), and a connect to another
+        // server can supersede it meanwhile — cancelling the pump doesn't
+        // stop a branch already past the loop-entry check, so each one
+        // re-checks ownership after every await before publishing (#90).
+        let generation = connectGeneration
         updatePump = Task { [weak self] in
             for await update in await connection.updates() {
                 guard let self, !Task.isCancelled else { return }
@@ -632,12 +638,14 @@ final class AppModel {
                             // — Nous reuse-detection then revokes the whole
                             // session, forcing a browser sign-in (#37).
                             let live = await connection.authenticator.credentials
+                            guard generation == self.connectGeneration else { return }
                             self.persistValidatedServer(
                                 endpoint: endpoint, credentials: live ?? credentials)
                             pendingSave = nil
                         }
                         if !isReconnect {
                             await self.loadBrowseData()
+                            guard generation == self.connectGeneration else { return }
                         }
                         await self.activeChat?.connectionBecameReady(
                             isReconnect: isReconnect)
@@ -652,7 +660,12 @@ final class AppModel {
                         {
                             await self.presentGatedLogin(
                                 endpoint: endpoint,
-                                note: HermesError.sessionExpired.errorDescription)
+                                note: HermesError.sessionExpired.errorDescription,
+                                generation: generation)
+                            // Superseded while the lookup was out: the
+                            // teardown belongs to a connection already gone,
+                            // and running it would kill its replacement.
+                            guard generation == self.connectGeneration else { return }
                         } else {
                             self.connectError = HermesError.unauthorized.errorDescription
                         }

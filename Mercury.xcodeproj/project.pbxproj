@@ -55,9 +55,11 @@
 		F5744D3FAE932DFD5180C93D /* AppModelConnectGenerationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F9D39A196D74786863013AC /* AppModelConnectGenerationTests.swift */; };
 		FA95AE9AA589D021659E84B2 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF52417D9BAD3C00374A1420 /* ChatView.swift */; };
 		FC75FD144E1934CFF4688F19 /* ComposerAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCF33D27D469556ECE9B0BE /* ComposerAttachments.swift */; };
+		FE3C1CFB757F32DC16E31280 /* AppModelExpiredPumpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04889686DBD2B442B100A913 /* AppModelExpiredPumpTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		04889686DBD2B442B100A913 /* AppModelExpiredPumpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelExpiredPumpTests.swift; sourceTree = "<group>"; };
 		0C99AB79C63CE492D73E34BE /* MercuryTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MercuryTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelKeychainAdoptionTests.swift; sourceTree = "<group>"; };
 		10C155E77B1833A19AAA2F00 /* StatusViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusViews.swift; sourceTree = "<group>"; };
@@ -142,6 +144,7 @@
 				D5220C37E1E54AD412B7EC6C /* AppModelChatLifecycleTests.swift */,
 				1F9D39A196D74786863013AC /* AppModelConnectGenerationTests.swift */,
 				E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */,
+				04889686DBD2B442B100A913 /* AppModelExpiredPumpTests.swift */,
 				1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */,
 				DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */,
 				7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */,
@@ -345,6 +348,7 @@
 				A13AC4FAFCA7F638095C7F77 /* AppModelChatLifecycleTests.swift in Sources */,
 				F5744D3FAE932DFD5180C93D /* AppModelConnectGenerationTests.swift in Sources */,
 				DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */,
+				FE3C1CFB757F32DC16E31280 /* AppModelExpiredPumpTests.swift in Sources */,
 				DA2AA34E4B0CDD6757AE8F28 /* AppModelKeychainAdoptionTests.swift in Sources */,
 				356B7E4BCBE0D1CC7C5B0F6E /* AppModelTokenEndpointBindingTests.swift in Sources */,
 				66BF4F028E62E698A078D2AA /* BotAdvancedEditorTests.swift in Sources */,
