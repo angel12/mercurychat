@@ -145,6 +145,17 @@ final class ChatController: Identifiable {
         replayBuffer = []
         isLoading = true
         defer { if generation == beginGeneration { isLoading = false } }
+        // Learn the epoch this session's seqs are stamped under (#93). The
+        // socket's gateway.ready landed before this chat existed (AppModel
+        // forwards events only to the active chat), so without this a chat
+        // opened after connect never knows its watermark's numbering — and
+        // a reconnect could neither replay nor spot a gateway restart.
+        if replayEpoch == nil {
+            let epoch = await connection.replayEpoch
+            // Invalidated or superseded while the read was out: no RPCs.
+            guard generation == beginGeneration else { return }
+            if replayEpoch == nil { replayEpoch = epoch }
+        }
         do {
             switch mode {
             case .create(let cwd, let title):

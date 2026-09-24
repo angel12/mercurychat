@@ -122,10 +122,23 @@ struct ReplayLosslessTests {
 
     /// Resume "stored-1", reach watermark 10, then reconnect against `replay`.
     private func reconnect(replay: JSONValue, knownEpoch: String?) async throws -> Harness {
+        let harness = try await prepare(replay: replay, knownEpoch: knownEpoch)
+        await harness.chat.connectionBecameReady(isReconnect: true)
+        return harness
+    }
+
+    /// Connect, open a chat, resume "stored-1" and reach watermark 10.
+    /// `knownEpoch` hands the chat a `gateway.ready` directly; `serverEpoch`
+    /// is what the server's own `gateway.ready` carries on each socket —
+    /// which, as in the app, lands before any chat exists.
+    private func prepare(
+        replay: JSONValue, knownEpoch: String?, serverEpoch: String? = nil
+    ) async throws -> Harness {
         let script = Script(replay: replay)
         let historyFetches = Counter()
         let server = try await HermesTestServer.start(
-            rpc: { method, _ in script.respond(method: method) }
+            rpc: { method, _ in script.respond(method: method) },
+            replayEpoch: serverEpoch
         ) { request in
             switch (request.method, request.path) {
             case ("GET", "/api/status"):
@@ -170,8 +183,6 @@ struct ReplayLosslessTests {
         try #require(harness.fetchesBeforeDrop >= 1)
         harness.deliverTurn("before the drop", from: 7)
         try #require(await eventually(within: 2) { harness.replies() == ["before the drop"] })
-
-        await chat.connectionBecameReady(isReconnect: true)
         return harness
     }
 
@@ -217,5 +228,65 @@ struct ReplayLosslessTests {
         harness.deliverTurn("duplicate", from: 11)
         try? await Task.sleep(for: .milliseconds(200))
         #expect(!harness.replies().contains("duplicate"))
+    }
+
+    /// The seqs 11…14 of a turn replayed while away, under `epoch`.
+    nonisolated private static func awayTurn(epoch: String) -> JSONValue {
+        let text: JSONValue = ["text": "while away"]
+        return batch(
+            [
+                frame(11, GatewayEvent.Kind.messageStart, [:]),
+                frame(12, GatewayEvent.Kind.messageDelta, text),
+                frame(13, GatewayEvent.Kind.messageComplete, text),
+                frame(14),
+            ], latest: 14, epoch: epoch)
+    }
+
+    /// The app's order of events: the socket's `gateway.ready` lands before
+    /// any chat exists (AppModel forwards events to the active chat only),
+    /// so the chat must learn the epoch its seqs are stamped under from the
+    /// connection. A real drop then redials the same gateway, same epoch:
+    /// the replay proves the gap and no re-hydrate is needed.
+    @Test func aChatOpenedAfterConnectReplaysUnderTheSameEpoch() async throws {
+        let harness = try await prepare(
+            replay: Self.awayTurn(epoch: "e1"), knownEpoch: nil, serverEpoch: "e1")
+        defer { harness.cleanup() }
+
+        harness.server.dropSockets()
+        let landed = await eventually(within: 5) {
+            harness.replies() == ["before the drop", "while away"]
+        }
+        #expect(landed, "the replay was not used: \(harness.replies())")
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(harness.resumes == 2, "expected only the replay's rebind")
+        #expect(!harness.refetchedHistory, "a same-epoch reconnect re-hydrated")
+    }
+
+    /// Same, but the gateway restarted while we were away: the new socket's
+    /// epoch differs from the one the watermark was taken under. That voids
+    /// the watermark — even though the new gateway answers a replay under
+    /// its OWN epoch — and later renumbered events still land.
+    @Test func aChatOpenedAfterConnectFallsBackOnANewEpoch() async throws {
+        let harness = try await prepare(
+            replay: Self.awayTurn(epoch: "e2"), knownEpoch: nil, serverEpoch: "e1")
+        defer { harness.cleanup() }
+
+        harness.server.replayEpoch = "e2"
+        harness.server.dropSockets()
+        // AppModel runs connectionBecameReady before it forwards the new
+        // socket's gateway.ready, so the replay may still be attempted (and
+        // refused on the batch's epoch) before the watermark is voided —
+        // hence "at least" the fallback resume, not an exact count.
+        let fellBack = await eventually(within: 5) {
+            harness.resumes >= 2 && harness.refetchedHistory && !harness.chat.isLoading
+        }
+        #expect(fellBack, "no full resume after a gateway restart")
+        #expect(!harness.replies().contains("while away"), "replayed across a gateway restart")
+
+        harness.deliverTurn("after the restart", from: 1)
+        let landed = await eventually(within: 2) {
+            harness.replies().contains("after the restart")
+        }
+        #expect(landed, "a low-seq event after the restart was dropped: \(harness.replies())")
     }
 }
