@@ -78,6 +78,16 @@ final class ChatController: Identifiable {
     /// events apply first (seq dedupe drops any overlap on drain).
     private var replayBuffer: [GatewayEvent] = []
     private var isReplaying = false
+    /// The resume snapshot/event barrier (#109). A resume adopts its runtime
+    /// as soon as `session.resume` answers, but its snapshot (`running`,
+    /// `inflight`, `queued`, `open_requests`) is applied only after the REST
+    /// history page — so live events arriving in between are NEWER than the
+    /// snapshot and park here, then drain after it. The resume result has no
+    /// seq to split on; arrival after adoption is the ordering. Owned by one
+    /// begin generation: once superseded it stops buffering, and the newer
+    /// resume's own snapshot covers whatever was parked.
+    private var resumeBarrierGeneration: Int?
+    private var resumeBarrierBuffer: [GatewayEvent] = []
 
     /// Attachments for echoes still in flight or failed, keyed by echo id, so
     /// a retry re-uploads the same bytes. The failure path always detaches
@@ -204,6 +214,8 @@ final class ChatController: Identifiable {
                     storedID: session.storedID, profile: profile)
                 guard generation == beginGeneration else { return }
                 adopt(handle)
+                resumeBarrierGeneration = generation
+                resumeBarrierBuffer = []
                 var page = await hydration
                 guard generation == beginGeneration else { return }
                 // Resume can re-anchor to a continuation session's durable
@@ -233,6 +245,16 @@ final class ChatController: Identifiable {
                         "Couldn't load this session's history: \(Self.describe(error))"
                 }
                 applyResumeExtras(handle.raw)
+                releaseResumeBarrier()
+    }
+
+    /// Apply the events that arrived after the resume snapshot, in arrival
+    /// order, now that the snapshot has landed.
+    private func releaseResumeBarrier() {
+        resumeBarrierGeneration = nil
+        let buffered = resumeBarrierBuffer
+        resumeBarrierBuffer = []
+        for event in buffered { applyDeduped(event) }
     }
 
     /// `session.resume` with a bounded retry on the two transient refusals
@@ -521,6 +543,12 @@ final class ChatController: Identifiable {
         }
         guard let runtimeID else { return }
         guard event.sessionID == nil || event.sessionID == runtimeID else { return }
+        if resumeBarrierGeneration == beginGeneration {
+            // A resume snapshot is still to be applied, and this event
+            // postdates it: it drains right after the snapshot (#109).
+            resumeBarrierBuffer.append(event)
+            return
+        }
         if isReplaying, event.seq != nil {
             // A replay fetch is in flight: gap events must land first. This
             // live frame drains right after them (seq dedupe drops it if the
