@@ -956,19 +956,19 @@ private struct ApprovalCard: View {
     let controller: ChatController
     let request: ApprovalRequest
     @State private var isSubmitting = false
+    @State private var showsFullCommand = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Approval needed", systemImage: "exclamationmark.shield")
                 .font(.headline)
+            if let description = request.description, !description.isEmpty {
+                Text(description)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
             if let command = request.command {
-                Text(command)
-                    .font(.callout.monospaced())
-                    .lineLimit(6)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                commandView(command)
             }
             HStack {
                 ForEach(request.choices, id: \.self) { choice in
@@ -990,6 +990,41 @@ private struct ApprovalCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(.yellow.opacity(0.5)))
+    }
+
+    /// The whole command is always reachable before a choice is made (#103):
+    /// a short one renders in full; a long one scrolls inside a bounded box
+    /// (the card is pinned above the composer, so it can't grow unbounded),
+    /// says how long it is, and can expand to a taller box.
+    @ViewBuilder
+    private func commandView(_ command: String) -> some View {
+        let preview = ApprovalCommandPreview(command: command)
+        let text = Text(command)
+            .font(.callout.monospaced())
+            .textSelection(.enabled)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        if preview.needsExpansion {
+            ScrollView(.vertical) { text }
+                .scrollIndicators(.visible)
+                .frame(maxHeight: showsFullCommand ? 360 : 130)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            HStack {
+                Text(preview.lineCount == 1
+                    ? "Long command — scroll to review all of it"
+                    : "\(preview.lineCount) lines — scroll to review all of them")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(showsFullCommand ? "Show Less" : "Show Full Command") {
+                    showsFullCommand.toggle()
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+            }
+        } else {
+            text.background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+        }
     }
 
     private func choiceLabel(_ choice: String) -> String {
