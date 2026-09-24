@@ -150,7 +150,10 @@ final class ChatController: Identifiable {
             case .create(let cwd, let title):
                 let handle = try await connection.createSession(
                     cwd: cwd, profile: profile, title: title)
-                guard generation == beginGeneration else { return }
+                guard generation == beginGeneration else {
+                    await relinquishAbandoned(handle)
+                    return
+                }
                 adopt(handle)
 
             case .bot(let profile, let expectCanonical):
@@ -167,7 +170,10 @@ final class ChatController: Identifiable {
                     // canonical in the gateway's registry.
                     let handle = try await connection.createSession(
                         cwd: nil, profile: profile, title: BotChatPolicy.canonicalTitle)
-                    guard generation == beginGeneration else { return }
+                    guard generation == beginGeneration else {
+                        await relinquishAbandoned(handle)
+                        return
+                    }
                     effectiveProfile = profile
                     adopt(handle)
                     return
@@ -188,6 +194,17 @@ final class ChatController: Identifiable {
             guard generation == beginGeneration else { return }
             errorMessage = Self.describe(error)
         }
+    }
+
+    /// A create superseded mid-flight (closeChat, or a newer begin) minted a
+    /// runtime nobody will adopt — closeChat's teardown ran while it was in
+    /// flight and found no runtime to close — so close it here rather than
+    /// leak it until the socket drops (#111).
+    /// Safe only for creates: a fresh session has no other owner. A stale
+    /// RESUME handle must never come here — it can alias a runtime a
+    /// successor also holds (#60).
+    private func relinquishAbandoned(_ handle: SessionHandle) async {
+        await connection.closeSession(sessionID: handle.runtimeID)
     }
 
     /// The open-time canonical registry lookup (`session.list` exact-title
