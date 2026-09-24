@@ -57,6 +57,9 @@ final class AppModel {
     private(set) var recentSessions: [SessionSummary] = []
     private(set) var browseLoading = false
     var browseError: String?
+    /// Bumped by every `refreshProjects` (and by disconnect): only the
+    /// newest refresh may publish its tree/recents or end the spinner (#95).
+    private var browseRequest = 0
 
     // MARK: Bot Mode roster
 
@@ -507,8 +510,11 @@ final class AppModel {
         activeChat?.invalidate()
         activeChat = nil
         profiles = []
+        profilesLoading = false
         projectTree = nil
         recentSessions = []
+        browseRequest += 1  // orphan any in-flight refresh (#95)
+        browseLoading = false
         selectedProfile = nil
         contractNotice = nil
         keychainNotice = nil
@@ -718,19 +724,28 @@ final class AppModel {
     func loadBrowseData() async {
         guard let connection else { return }
         browseError = nil
+        // These tasks outlive a switch to another server (disconnect can't
+        // cancel them, and the REST profile list survives the socket), so
+        // each re-checks that its connection is still the current one (#95).
+        let generation = connectGeneration
 
         // Profiles are slow (walks skill trees) — load independently so they
         // never block the sessions list.
         if profiles.isEmpty {
             profilesLoading = true
             Task {
-                defer { profilesLoading = false }
-                if let loaded = try? await connection.rest.profiles() {
-                    profiles = loaded
-                    if selectedProfile == nil {
-                        selectedProfile =
-                            loaded.first(where: \.isDefault)?.name ?? loaded.first?.name
-                    }
+                let loaded = try? await connection.rest.profiles()
+                guard generation == connectGeneration else { return }
+                profilesLoading = false
+                guard let loaded else { return }
+                profiles = loaded
+                if selectedProfile == nil {
+                    selectedProfile =
+                        loaded.first(where: \.isDefault)?.name ?? loaded.first?.name
+                    // The first refresh went out before the list landed
+                    // (unscoped: every profile's sessions) — re-fetch for the
+                    // profile the picker now shows (#95).
+                    if selectedProfile != nil { await refreshProjects() }
                 }
             }
         }
@@ -738,7 +753,9 @@ final class AppModel {
         // transport-shaped failure leaves nil so the next connect re-probes).
         if botModeSupported == nil {
             Task {
-                if let supported = await connection.probeBotModeSupport() {
+                if let supported = await connection.probeBotModeSupport(),
+                    generation == connectGeneration
+                {
                     botModeSupported = supported
                 }
             }
@@ -749,32 +766,45 @@ final class AppModel {
 
     func refreshProjects() async {
         guard let connection else { return }
+        // One profile for the whole refresh, and a token: a newer refresh
+        // (profile switch, sessions.changed) or a disconnect supersedes this
+        // one, which then publishes nothing — not its tree, not recents
+        // fetched for another profile, not the end of the newer spinner (#95).
+        browseRequest += 1
+        let request = browseRequest
+        let profile = selectedProfile
+        let isCurrent = { request == self.browseRequest }
         browseLoading = true
-        defer { browseLoading = false }
+        defer { if request == browseRequest { browseLoading = false } }
         do {
-            projectTree = try await connection.projectsTree(profile: selectedProfile)
-            let profile = selectedProfile ?? "all"
-            recentSessions = try await connection.rest.profileSessions(
-                profile: profile, limit: 30)
+            let tree = try await connection.projectsTree(profile: profile)
+            let recents = try await connection.rest.profileSessions(
+                profile: profile ?? "all", limit: 30)
+            guard isCurrent() else { return }
+            projectTree = tree
+            recentSessions = recents
             browseError = nil
         } catch let error as HermesError {
             if case .rpcError(HermesError.RPCCode.methodNotFound, _, _) = error {
                 // Older backend without projects.* — degrade to grouping the
                 // flat list by repo root / cwd.
-                await degradeToFlatSessions()
-            } else {
+                await degradeToFlatSessions(profile: profile, isCurrent: isCurrent)
+            } else if isCurrent() {
                 browseError = error.errorDescription
             }
         } catch {
-            browseError = error.localizedDescription
+            if isCurrent() { browseError = error.localizedDescription }
         }
     }
 
-    private func degradeToFlatSessions() async {
+    private func degradeToFlatSessions(
+        profile: String?, isCurrent: () -> Bool
+    ) async {
         guard let connection else { return }
         guard
             let sessions = try? await connection.rest.profileSessions(
-                profile: selectedProfile ?? "all", limit: 50)
+                profile: profile ?? "all", limit: 50),
+            isCurrent()
         else { return }
         var groups: [String: [SessionSummary]] = [:]
         for session in sessions {
@@ -819,11 +849,17 @@ final class AppModel {
         if botsLoading { return }
         botsLoading = true
         defer { botsLoading = false }
+        // A listing outliving a server switch belongs to the old roster —
+        // neither its bots nor its failure are the new server's (#95).
+        let generation = connectGeneration
         lastBotsRefresh = Date()
         do {
-            bots = try await connection.listBots()
+            let listed = try await connection.listBots()
+            guard generation == connectGeneration else { return }
+            bots = listed
             botsError = nil
         } catch {
+            guard generation == connectGeneration else { return }
             // Keep the stale roster visible; surface the failure alongside.
             botsError = (error as? HermesError)?.errorDescription
                 ?? error.localizedDescription
@@ -839,11 +875,15 @@ final class AppModel {
             let connection
         else { return }
         botAvatarFetchesInFlight.insert(bot.name)
+        // Profile names ("default") repeat across servers: a fetch finishing
+        // after a switch must not cache its image for, or clear the in-flight
+        // mark of, the new server's same-named bot (#95).
+        let generation = connectGeneration
         Task {
-            defer { botAvatarFetchesInFlight.remove(bot.name) }
-            if let asset = try? await connection.profileAvatar(name: bot.name) {
-                botAvatars[bot.name] = asset.data
-            }
+            let asset = try? await connection.profileAvatar(name: bot.name)
+            guard generation == connectGeneration else { return }
+            botAvatarFetchesInFlight.remove(bot.name)
+            if let asset { botAvatars[bot.name] = asset.data }
         }
     }
 
@@ -982,6 +1022,7 @@ final class AppModel {
         name: String, title: String, description: String, cloneFrom: String? = "default"
     ) async -> String? {
         guard let connection else { return "Not connected." }
+        let generation = connectGeneration
         let identity = BotCreation.identity(name: name, title: title)
         let slug = identity.slug
         guard BotCreation.isValidProfileID(slug) else {
@@ -1011,6 +1052,9 @@ final class AppModel {
         _ = try? await connection.configureBotMeta(
             name: slug, meta: .object(look), expectedRevision: nil)
         await loadBots(force: true)
+        // The user moved to another server meanwhile: the bot exists on the
+        // one that made it, but its chat must not open on this one (#95).
+        guard generation == connectGeneration else { return nil }
         route = .botChat(
             BotChatTarget(
                 profile: slug,
@@ -1041,7 +1085,10 @@ final class AppModel {
     /// probe can't leave a ghost session in the sidebar (issue #49).
     private func checkContractVersion() async {
         guard let connection, contractNotice == nil else { return }
-        guard let contract = try? await connection.probeDesktopContract() else { return }
+        let generation = connectGeneration
+        guard let contract = try? await connection.probeDesktopContract(),
+            generation == connectGeneration  // not another server's verdict (#95)
+        else { return }
         if case .older(let reported) = Self.contractRequirement.assess(contract) {
             contractNotice =
                 "This server speaks desktop contract v\(reported); Mercury Chat needs v\(Self.contractRequirement.minimum) or newer. Approval, clarify, sudo and secret prompts won't appear until the backend is updated."
