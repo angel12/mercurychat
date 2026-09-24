@@ -10,9 +10,23 @@ struct TestRPCRequest: Sendable {
 }
 
 /// A scripted answer to one WS JSON-RPC request.
-enum TestRPCReply: Sendable {
+indirect enum TestRPCReply: Sendable {
     case result(JSONValue)
     case error(code: Int, message: String)
+    /// Send the reply only once the gate opens. The hold happens off the
+    /// socket's queue, so later requests on the same WebSocket are still
+    /// answered while this one waits.
+    case held(TestRPCReply, TestReplyGate)
+}
+
+/// Holds one scripted reply until the test opens it. `reached` is signalled
+/// when the held request arrives, so a test can act while it is in flight.
+final class TestReplyGate: @unchecked Sendable {
+    let reached = TestLatch()
+    private let opened = DispatchSemaphore(value: 0)
+
+    func open() { opened.signal() }
+    fileprivate func waitUntilOpen() { _ = opened.wait(timeout: .now() + 10) }
 }
 
 /// The request/response pair for the scripted REST surface.
@@ -52,6 +66,8 @@ final class HermesTestServer: @unchecked Sendable {
     /// Scripted JSON-RPC errors: return `(code, message)` to answer a request
     /// with an error instead of a result.
     private let rpcErrorHandler: (@Sendable (String, JSONValue) -> (Int, String)?)?
+    /// Scripted holds: return a gate to delay that request's reply.
+    private let rpcHoldHandler: (@Sendable (String, JSONValue) -> TestReplyGate?)?
     private var connections: [Connection] = []
     private var capturedRPCs: [TestRPCRequest] = []
     private(set) var port: UInt16 = 0
@@ -64,13 +80,15 @@ final class HermesTestServer: @unchecked Sendable {
     static func start(
         rpc: (@Sendable (String, JSONValue) -> JSONValue?)? = nil,
         rpcError: (@Sendable (String, JSONValue) -> (Int, String)?)? = nil,
+        rpcHold: (@Sendable (String, JSONValue) -> TestReplyGate?)? = nil,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) async throws -> HermesTestServer {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
         let server = HermesTestServer(
-            listener: listener, rpcHandler: rpc, rpcErrorHandler: rpcError, handler: handler)
+            listener: listener, rpcHandler: rpc, rpcErrorHandler: rpcError,
+            rpcHoldHandler: rpcHold, handler: handler)
         try await server.waitUntilReady()
         return server
     }
@@ -79,11 +97,13 @@ final class HermesTestServer: @unchecked Sendable {
         listener: NWListener,
         rpcHandler: (@Sendable (String, JSONValue) -> JSONValue?)?,
         rpcErrorHandler: (@Sendable (String, JSONValue) -> (Int, String)?)?,
+        rpcHoldHandler: (@Sendable (String, JSONValue) -> TestReplyGate?)?,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) {
         self.listener = listener
         self.rpcHandler = rpcHandler
         self.rpcErrorHandler = rpcErrorHandler
+        self.rpcHoldHandler = rpcHoldHandler
         self.handler = handler
         // Installed BEFORE start(): a started NWListener without a
         // newConnectionHandler fails with EINVAL.
@@ -96,10 +116,16 @@ final class HermesTestServer: @unchecked Sendable {
                 self.lock.withLock {
                     self.capturedRPCs.append(TestRPCRequest(method: method, params: params))
                 }
+                let reply: TestRPCReply
                 if let (code, message) = self.rpcErrorHandler?(method, params) {
-                    return .error(code: code, message: message)
+                    reply = .error(code: code, message: message)
+                } else {
+                    reply = .result(self.rpcHandler?(method, params) ?? .object([:]))
                 }
-                return .result(self.rpcHandler?(method, params) ?? .object([:]))
+                if let gate = self.rpcHoldHandler?(method, params) {
+                    return .held(reply, gate)
+                }
+                return reply
             }
             self.lock.withLock { self.connections.append(connection) }
             connection.begin()
@@ -305,16 +331,31 @@ final class HermesTestServer: @unchecked Sendable {
                 let method = frame["method"]?.stringValue,
                 let id = frame["id"]?.intValue
             else { return }
+            var reply = rpcSink(method, frame["params"] ?? .null)
+            var gate: TestReplyGate?
+            if case .held(let inner, let hold) = reply {
+                reply = inner
+                gate = hold
+            }
             var response: [String: JSONValue] = ["jsonrpc": "2.0", "id": .number(Double(id))]
-            switch rpcSink(method, frame["params"] ?? .null) {
+            switch reply {
             case .result(let result):
                 response["result"] = result
             case .error(let code, let message):
                 response["error"] = ["code": .number(Double(code)), "message": .string(message)]
+            case .held:
+                return  // Holds don't nest.
             }
-            if let data = try? JSONEncoder().encode(JSONValue.object(response)),
+            guard let data = try? JSONEncoder().encode(JSONValue.object(response)),
                 let text = String(data: data, encoding: .utf8)
-            {
+            else { return }
+            guard let gate else {
+                sendText(text)
+                return
+            }
+            gate.reached.signal()
+            DispatchQueue.global().async { [self] in
+                gate.waitUntilOpen()
                 sendText(text)
             }
         }
