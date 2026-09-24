@@ -185,4 +185,74 @@ struct BotChatControllerTests {
 
         #expect(!rpcMethods(server).contains("session.title"))
     }
+
+    // MARK: Entry point independence (#92)
+
+    /// The Sessions sidebar opens a "Bot Chat" row as an ordinary session:
+    /// ChatView has no bot context, so it leaves the flag false. The chat is
+    /// still the canonical one, and the controller must know it from the
+    /// session itself.
+    private func openedFromSessions(
+        title: String, _ model: AppModel
+    ) async throws -> ChatController {
+        let chat = try #require(model.openChat(profile: "researcher"))
+        chat.isCanonicalBotChat = false  // What ChatView sets for a .session route.
+        let summary = try #require(
+            SessionSummary(
+                json: [
+                    "id": "stored-canonical", "title": .string(title), "profile": "researcher",
+                ]))
+        await chat.begin(.resume(summary))
+        try #require(chat.runtimeID == "rt-resumed")
+        return chat
+    }
+
+    @Test(arguments: ["Bot Chat", "  Bot Chat "])
+    func aBotChatOpenedFromSessionsRefusesRename(title: String) async throws {
+        let (model, server, cleanup) = try await connectedModel(GatewayScript())
+        defer { cleanup() }
+
+        let chat = try await openedFromSessions(title: title, model)
+        #expect(chat.isCanonicalBotChat)
+        await chat.rename("Notes")
+
+        #expect(!rpcMethods(server).contains("session.title"))
+    }
+
+    @Test func aBotChatOpenedFromSessionsRunsRealCompression() async throws {
+        let (model, server, cleanup) = try await connectedModel(GatewayScript())
+        defer { cleanup() }
+
+        let chat = try await openedFromSessions(title: "Bot Chat", model)
+        await chat.submit("/compact")
+
+        let methods = rpcMethods(server)
+        #expect(methods.contains("session.compress"))
+        #expect(!methods.contains("prompt.submit"))
+    }
+
+    /// The sidebar's rename path uses the same rule, so a padded title the
+    /// chat treats as canonical can't be renamed from the row either.
+    @Test func aPaddedBotChatTitleRefusesSidebarRename() async throws {
+        let (model, _, cleanup) = try await connectedModel(GatewayScript())
+        defer { cleanup() }
+
+        let row = try #require(
+            SessionSummary(json: ["id": "stored-canonical", "title": "  Bot Chat ", "profile": "researcher"]))
+        await model.renameSession(row, to: "Notes")
+
+        #expect(model.browseError?.contains("canonical Bot Chat") == true)
+    }
+
+    @Test func anOrdinarySessionStaysRenameable() async throws {
+        let (model, server, cleanup) = try await connectedModel(GatewayScript())
+        defer { cleanup() }
+
+        let chat = try await openedFromSessions(title: "Bot Chat notes", model)
+        #expect(!chat.isCanonicalBotChat)
+        await chat.rename("Notes")
+
+        let title = server.rpcRequests.last { $0.method == "session.title" }
+        #expect(title?.params["title"]?.stringValue == "Notes")
+    }
 }

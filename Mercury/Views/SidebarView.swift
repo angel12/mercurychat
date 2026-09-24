@@ -293,7 +293,7 @@ struct SidebarView: View {
             // Canonical Bot Chats resolve by their exact title — renaming one
             // severs its bot's forever-chat (AppModel.renameSession refuses
             // too; hiding the item explains less but confuses least).
-            if session.title != BotChatPolicy.canonicalTitle {
+            if !BotChatPolicy.isCanonicalRow(rootTitle: nil, title: session.title) {
                 Button {
                     renameText = session.title ?? ""
                     renameTarget = session
