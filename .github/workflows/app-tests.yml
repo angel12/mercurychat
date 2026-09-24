@@ -40,4 +40,24 @@ jobs:
               print(f'::error::{path} is missing from Mercury.xcodeproj; regenerate with XcodeGen')
           raise SystemExit(bool(missing))
       - name: Run MercuryTests
-        run: xcodebuild -project Mercury.xcodeproj -scheme MercuryTests -destination 'platform=macOS' test
+        # A healthy build + test takes ~2 minutes. One run (PR #128) froze
+        # right after every test had started and sat silent until the job
+        # timeout, leaving nothing to diagnose: if the tests are still going
+        # after 12 minutes, print each xctest thread's stack so the next hang
+        # names its cause, and fail the step soon after.
+        timeout-minutes: 15
+        run: |
+          set +e
+          (
+            sleep 720
+            for pid in $(pgrep -x xctest); do
+              echo "::warning::MercuryTests still running after 12 minutes; sampling xctest ($pid)"
+              sample "$pid" 5 -file "$RUNNER_TEMP/xctest-$pid.sample.txt" >/dev/null 2>&1
+              cat "$RUNNER_TEMP/xctest-$pid.sample.txt"
+            done
+          ) &
+          watchdog=$!
+          xcodebuild -project Mercury.xcodeproj -scheme MercuryTests -destination 'platform=macOS' test
+          status=$?
+          kill "$watchdog" 2>/dev/null
+          exit $status
