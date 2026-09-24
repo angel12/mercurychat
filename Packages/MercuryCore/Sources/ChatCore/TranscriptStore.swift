@@ -784,6 +784,18 @@ public final class TranscriptStore {
         if pendingSecret?.serverRequestID == id { pendingSecret = nil }
     }
 
+    /// An authoritative `open_requests` snapshot (#94): every card whose
+    /// request the backend no longer lists was resolved while we weren't
+    /// listening — its `request.cancel` is never re-sent — so clear it.
+    /// The connection card is `pending_connection`'s, not this list's.
+    public func reconcileServerRequests(keeping openIDs: Set<String>) {
+        func stale(_ id: String?) -> Bool { id.map { !openIDs.contains($0) } ?? false }
+        if stale(pendingApproval?.serverRequestID) { pendingApproval = nil }
+        if stale(pendingClarify?.serverRequestID) { pendingClarify = nil }
+        if stale(pendingSudo?.serverRequestID) { pendingSudo = nil }
+        if stale(pendingSecret?.serverRequestID) { pendingSecret = nil }
+    }
+
     // MARK: Assistant bubbles
 
     @discardableResult

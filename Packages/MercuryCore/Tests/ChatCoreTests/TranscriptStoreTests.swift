@@ -319,6 +319,70 @@ struct TranscriptStoreTests {
         #expect(store.pendingApproval == nil)
     }
 
+    /// #94: an authoritative `open_requests` snapshot is the whole set the
+    /// backend still waits on — a card it doesn't list was resolved while
+    /// we weren't listening and must go, per kind, by server-request id.
+    @Test func reconcilingKeepsListedCardsAndClearsTheRest() {
+        let store = TranscriptStore()
+        store.apply(
+            serverRequest("srq-fffffffffff1", "approval", #"{"request_id": "ap1", "command": "ls"}"#))
+        store.apply(serverRequest("srq-fffffffffff2", "clarify", #"{"question": "A?"}"#))
+        store.apply(serverRequest("srq-fffffffffff3", "sudo", #"{"command": "apt install jq"}"#))
+        store.apply(
+            serverRequest("srq-fffffffffff4", "secret", #"{"env_var": "KEY", "prompt": "Key?"}"#))
+
+        store.reconcileServerRequests(keeping: ["srq-fffffffffff1", "srq-fffffffffff3"])
+        #expect(store.pendingApproval?.serverRequestID == "srq-fffffffffff1")
+        #expect(store.pendingClarify == nil)
+        #expect(store.pendingSudo?.serverRequestID == "srq-fffffffffff3")
+        #expect(store.pendingSecret == nil)
+
+        store.reconcileServerRequests(keeping: ["srq-fffffffffff2", "srq-fffffffffff4"])
+        #expect(store.pendingApproval == nil)
+        #expect(store.pendingSudo == nil)
+    }
+
+    @Test(arguments: ["approval", "clarify", "sudo", "secret"])
+    func reconcilingAnEmptySnapshotClearsEachKind(_ method: String) {
+        let store = TranscriptStore()
+        let params =
+            switch method {
+            case "approval": #"{"request_id": "ap1", "command": "ls"}"#
+            case "clarify": #"{"question": "A?"}"#
+            case "sudo": #"{"command": "ls"}"#
+            default: #"{"env_var": "KEY", "prompt": "Key?"}"#
+            }
+        store.apply(serverRequest("srq-ggggggggggg1", method, params))
+        let shown = [
+            store.pendingApproval?.serverRequestID, store.pendingClarify?.requestID,
+            store.pendingSudo?.serverRequestID, store.pendingSecret?.serverRequestID,
+        ].compactMap { $0 }
+        #expect(shown == ["srq-ggggggggggg1"])
+
+        store.reconcileServerRequests(keeping: ["srq-ggggggggggg1"])
+        #expect(store.pendingApproval != nil || store.pendingClarify != nil
+            || store.pendingSudo != nil || store.pendingSecret != nil)
+
+        store.reconcileServerRequests(keeping: [])
+        #expect(store.pendingApproval == nil)
+        #expect(store.pendingClarify == nil)
+        #expect(store.pendingSudo == nil)
+        #expect(store.pendingSecret == nil)
+    }
+
+    /// Nothing pending: reconciling is a no-op, and it never touches the
+    /// connection card, which `pending_connection` owns, not `open_requests`.
+    @Test func reconcilingLeavesNothingPendingAndTheConnectionCardAlone() {
+        let store = TranscriptStore()
+        store.reconcileServerRequests(keeping: [])
+        #expect(store.pendingApproval == nil)
+        #expect(store.pendingClarify == nil)
+
+        store.apply(event("connection.request", connectionPayload(op: "op-1", seq: 1)))
+        store.reconcileServerRequests(keeping: [])
+        #expect(store.pendingConnection?.opID == "op-1")
+    }
+
     @Test func staleResponseCannotClearNewerPrompt() {
         // Actor reentrancy: while response A's RPC is in flight, request B
         // replaces the pending prompt — A's confirmation must not clear B.

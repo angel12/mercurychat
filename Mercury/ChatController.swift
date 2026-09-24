@@ -400,13 +400,33 @@ final class ChatController: Identifiable {
         // snapshots). Apply them after setRunning, since an idle resume
         // clears pendings. A malformed list is unknown, so nothing is shown
         // rather than a partial set.
-        restoreOpenRequests(ServerRequest.openRequests(in: result) ?? [])
+        let openRequests = ServerRequest.openRequests(in: result)
+        // A present, readable list is the whole open set: withdraw cards it
+        // no longer names (#94) — their `request.cancel` went out while we
+        // weren't listening. MercuryKit reads an ABSENT field as `[]` too,
+        // and a backend that doesn't send it hasn't said nothing is open.
+        // Live events after this snapshot are still parked (#109), so a
+        // request opened since can't be withdrawn here.
+        if let openRequests, Self.reportsOpenRequests(result) {
+            reconcileOpenRequests(openRequests)
+        }
+        restoreOpenRequests(openRequests ?? [])
         if let snapshot = result["pending_connection"], snapshot.objectValue != nil {
             store.apply(
                 GatewayEvent(
                     type: GatewayEvent.Kind.connectionRequest, sessionID: runtimeID,
                     payload: snapshot))
         }
+    }
+
+    /// Whether a resume result carries `open_requests` at all (#94).
+    private static func reportsOpenRequests(_ result: JSONValue) -> Bool {
+        result["open_requests"] != nil
+    }
+
+    /// Clear every card whose request an authoritative snapshot omits.
+    private func reconcileOpenRequests(_ requests: [ServerRequest]) {
+        store.reconcileServerRequests(keeping: Set(requests.map(\.id)))
     }
 
     /// Put restored requests on their cards through the normal event path.
@@ -489,6 +509,13 @@ final class ChatController: Identifiable {
             }
             for event in page.events { applyDeduped(event) }
             // Requests opened while the socket was down aren't in the ring.
+            // A lossless page's list is readable, but the typed batch reads
+            // an absent field as `[]` (#94); the resume just answered by the
+            // same backend says whether it reports open requests at all.
+            // Live frames since are parked in the replay buffer.
+            if Self.reportsOpenRequests(handle.raw) {
+                reconcileOpenRequests(page.openRequests)
+            }
             restoreOpenRequests(page.openRequests)
             // An empty replay can't carry the running transition; take the
             // resume result's word for it then — BEFORE draining live events
