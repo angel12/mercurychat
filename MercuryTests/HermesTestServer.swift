@@ -43,10 +43,13 @@ struct TestHTTPRequest: Sendable {
 struct TestHTTPResponse: Sendable {
     var status: Int
     var body: String
+    /// Extra response headers (e.g. a login's `Set-Cookie`).
+    var headers: [String: String]
 
-    init(_ status: Int, _ body: String = "{}") {
+    init(_ status: Int, _ body: String = "{}", headers: [String: String] = [:]) {
         self.status = status
         self.body = body
+        self.headers = headers
     }
 }
 
@@ -274,6 +277,7 @@ final class HermesTestServer: @unchecked Sendable {
             let text =
                 "HTTP/1.1 \(response.status) \(reason)\r\n"
                 + "Content-Type: application/json\r\n"
+                + response.headers.map { "\($0.key): \($0.value)\r\n" }.joined()
                 + "Content-Length: \(response.body.utf8.count)\r\n"
                 + "Connection: close\r\n\r\n\(response.body)"
             nwConnection.send(
