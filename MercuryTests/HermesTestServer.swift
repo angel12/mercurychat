@@ -36,6 +36,8 @@ struct TestHTTPRequest: Sendable {
     /// Header names lowercased.
     var headers: [String: String]
     var body: Data
+    /// The raw query string, without the `?` ("" when there is none).
+    var query: String = ""
 }
 
 struct TestHTTPResponse: Sendable {
@@ -235,14 +237,16 @@ final class HermesTestServer: @unchecked Sendable {
             let body = buffer[headEnd.upperBound...]
             guard body.count >= contentLength else { return }
 
-            // Strip any query string — the scripts match bare paths.
-            let path = requestParts[1].components(separatedBy: "?")[0]
+            // Strip any query string — the scripts match bare paths; the
+            // query rides along separately for scripts that need it.
+            let target = requestParts[1].split(separator: "?", maxSplits: 1)
             let response = handler(
                 TestHTTPRequest(
                     method: requestParts[0],
-                    path: path,
+                    path: String(target.first ?? ""),
                     headers: headers,
-                    body: Data(body.prefix(contentLength))))
+                    body: Data(body.prefix(contentLength)),
+                    query: target.count > 1 ? String(target[1]) : ""))
 
             if head.lowercased().contains("upgrade: websocket") {
                 // Only an explicit 401 refuses the upgrade: GatewayClient
