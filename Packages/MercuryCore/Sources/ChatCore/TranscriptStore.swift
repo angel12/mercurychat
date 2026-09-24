@@ -88,6 +88,9 @@ public final class TranscriptStore {
     public func hydrate(_ messages: [TranscriptMessage]) {
         let liveSuffix = Array(items.dropFirst(hydratedCount))
         var hydrated: [TranscriptItem] = []
+        // Rows already on screen before this page (#89): a live echo was
+        // sent after them, so none of them can be what it became.
+        let previouslyKnownRowIDs = knownRowIDs
         knownRowIDs.removeAll(keepingCapacity: true)
 
         // Stored transcripts keep call arguments on the ASSISTANT row's
@@ -128,6 +131,12 @@ public final class TranscriptStore {
         // any extra live echo survives — see `droppedUserIndices` below for
         // WHICH echo a row consumes.
         //
+        // Only rows NEW since the last hydration count (#89). A row that was
+        // already on screen predates every echo in the live suffix, so it
+        // can't be an acknowledgement — counting it let an old "repeat" row
+        // consume a newer failed or still-sending "repeat", taking its bubble
+        // and retry control with it. A row without an id counts as new.
+        //
         // PDF echoes can't be keyed on the count at all — a `.pdf` echo
         // hydrates as K page chips — so they are EXCLUDED from the count-keyed
         // passes entirely and claim only in the text-only fallback below.
@@ -144,6 +153,7 @@ public final class TranscriptStore {
         let hydratedTexts = Set(hydrated.compactMap { item -> String? in
             switch item {
             case .user(let m):
+                if let rowID = m.rowID, previouslyKnownRowIDs.contains(rowID) { return nil }
                 let key = "u:" + m.text + "#\(m.attachments.count)"
                 hydratedUserKeys[key, default: 0] += 1
                 hydratedUserRows.append((m.text, key, m.attachments.count))
