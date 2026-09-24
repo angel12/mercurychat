@@ -858,11 +858,17 @@ final class ChatController: Identifiable {
 
     func loadOlderMessages() async {
         guard canLoadOlder || historyError != nil, let storedID, !isLoading else { return }
+        // Same discipline as first-page hydration and retryHistory (#96): a
+        // resume can supersede this fetch — and re-anchor to a continuation
+        // session — while it is in flight, and the late page belongs to the
+        // session it was fetched for, not to the one now on screen.
+        let generation = beginGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == beginGeneration { isLoading = false } }
         let result = await Self.fetchPage(
             connection, storedID: storedID, offset: loadedOffset,
             profile: effectiveProfile ?? profile)
+        guard generation == beginGeneration, storedID == self.storedID else { return }
         switch result {
         case .success(let page):
             store.prependOlder(page.messages)
