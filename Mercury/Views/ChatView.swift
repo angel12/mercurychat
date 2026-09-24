@@ -956,21 +956,43 @@ private struct ApprovalCard: View {
     let controller: ChatController
     let request: ApprovalRequest
     @State private var isSubmitting = false
+    @State private var showsFullCommand = false
+    /// About six rows of callout monospaced text, tracking Dynamic Type.
+    @ScaledMetric(relativeTo: .callout) private var scaledCommandHeight: CGFloat = 130
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// Capped so the choices stay on screen at accessibility text sizes.
+    private var collapsedCommandHeight: CGFloat { min(scaledCommandHeight, 200) }
+
+    /// At accessibility sizes the four choices can't share one row: an HStack
+    /// squeezes them into one-letter-wide columns.
+    private var choiceLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout())
+    }
 
     var body: some View {
+        // Should the card still outgrow its space (the largest text sizes on a
+        // small phone), it scrolls rather than pushing Deny off screen.
+        ViewThatFits(in: .vertical) {
+            card
+            ScrollView(.vertical) { card }
+        }
+    }
+
+    private var card: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Approval needed", systemImage: "exclamationmark.shield")
                 .font(.headline)
-            if let command = request.command {
-                Text(command)
-                    .font(.callout.monospaced())
-                    .lineLimit(6)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            if let description = request.description, !description.isEmpty {
+                Text(description)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
-            HStack {
+            if let command = request.command {
+                commandView(command)
+            }
+            choiceLayout {
                 ForEach(request.choices, id: \.self) { choice in
                     Button(choiceLabel(choice), role: choice == "deny" ? .destructive : nil) {
                         guard !isSubmitting else { return }
@@ -984,12 +1006,67 @@ private struct ApprovalCard: View {
                     .disabled(isSubmitting)
                 }
             }
+            // Never let the fixed-height command box squeeze the choices into
+            // truncated one-line labels ("Alway…").
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)
         .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(.yellow.opacity(0.5)))
+    }
+
+    /// The whole command is always reachable before a choice is made (#103):
+    /// a short one renders in full; a long one scrolls inside a bounded box
+    /// (the card is pinned above the composer, so it can't grow unbounded),
+    /// says how long it is, and can expand to a taller box.
+    @ViewBuilder
+    private func commandView(_ command: String) -> some View {
+        let preview = ApprovalCommandPreview(command: command)
+        let text = Text(command)
+            .font(.callout.monospaced())
+            .textSelection(.enabled)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        if preview.needsExpansion {
+            ScrollView(.vertical) { text }
+                .scrollIndicators(.visible)
+                // Fixed, not max, heights: the transcript List above is also
+                // flexible, and a max-only frame loses most of the space to
+                // it, so expanding barely grew the box on iPhone.
+                .frame(height: showsFullCommand ? max(320, collapsedCommandHeight) : collapsedCommandHeight)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    commandLengthNote(preview)
+                    Spacer()
+                    fullCommandToggle
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    commandLengthNote(preview)
+                    fullCommandToggle
+                }
+            }
+        } else {
+            text.background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    private func commandLengthNote(_ preview: ApprovalCommandPreview) -> some View {
+        Text(preview.lineCount == 1
+            ? "Long command — scroll to review all of it"
+            : "\(preview.lineCount) lines — scroll to review all of them")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private var fullCommandToggle: some View {
+        Button(showsFullCommand ? "Show Less" : "Show Full Command") {
+            showsFullCommand.toggle()
+        }
+        .font(.caption)
+        .buttonStyle(.borderless)
     }
 
     private func choiceLabel(_ choice: String) -> String {
