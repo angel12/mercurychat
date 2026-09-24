@@ -13,6 +13,7 @@
 		07140644954FBAF77D83161E /* ComposerAttachmentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 401441B5559E261DC51F2AA5 /* ComposerAttachmentsTests.swift */; };
 		134F636CE764DFBE5B811451 /* ComposerAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCF33D27D469556ECE9B0BE /* ComposerAttachments.swift */; };
 		16C6B3EB63A57219CDBA6293 /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DF179C9F278DF4C94236661 /* ConnectView.swift */; };
+		1A9E4F4EF4638278B612882B /* AppModelOAuthFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */; };
 		21A656ABC237B3E540CC7FB3 /* HermesTestServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */; };
 		2E07BC82FD414262CFCE88B3 /* AppModelAuthExpiredTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE84A4573D4C31E09178C736 /* AppModelAuthExpiredTests.swift */; };
 		356B7E4BCBE0D1CC7C5B0F6E /* AppModelTokenEndpointBindingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */; };
@@ -116,6 +117,7 @@
 		DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTokenEndpointBindingTests.swift; sourceTree = "<group>"; };
 		E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelCredentialPersistenceTests.swift; sourceTree = "<group>"; };
 		ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplaySupersessionTests.swift; sourceTree = "<group>"; };
+		F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelOAuthFormTests.swift; sourceTree = "<group>"; };
 		FBDB93486105B7024469A675 /* AbandonedCreateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbandonedCreateTests.swift; sourceTree = "<group>"; };
 		FDB791832F7A5EDCF9BCA81C /* BotViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -164,6 +166,7 @@
 				E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */,
 				04889686DBD2B442B100A913 /* AppModelExpiredPumpTests.swift */,
 				1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */,
+				F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */,
 				95372298CE4EB18C2FDACD29 /* AppModelPasswordSignInTests.swift */,
 				DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */,
 				7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */,
@@ -377,6 +380,7 @@
 				DA96A249BB9D8A0CCCE005A4 /* AppModelCredentialPersistenceTests.swift in Sources */,
 				FE3C1CFB757F32DC16E31280 /* AppModelExpiredPumpTests.swift in Sources */,
 				DA2AA34E4B0CDD6757AE8F28 /* AppModelKeychainAdoptionTests.swift in Sources */,
+				1A9E4F4EF4638278B612882B /* AppModelOAuthFormTests.swift in Sources */,
 				9CB010695A73DB41BE1CE5E6 /* AppModelPasswordSignInTests.swift in Sources */,
 				356B7E4BCBE0D1CC7C5B0F6E /* AppModelTokenEndpointBindingTests.swift in Sources */,
 				66BF4F028E62E698A078D2AA /* BotAdvancedEditorTests.swift in Sources */,

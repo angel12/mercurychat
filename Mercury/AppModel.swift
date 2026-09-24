@@ -279,7 +279,11 @@ final class AppModel {
         connectGeneration += 1
         let generation = connectGeneration
         connectError = nil
+        // A sign-in form belongs to the server that presented it; a connect
+        // to any server replaces it (#108). Not in disconnect(): auth expiry
+        // presents sign-in first and disconnects after.
         pendingPasswordLogin = nil
+        pendingOAuthLogin = nil
         pendingInsecureConnect = nil
 
         if endpoint.isPlaintextNonLoopback,
