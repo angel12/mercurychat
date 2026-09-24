@@ -200,6 +200,11 @@ final class HermesTestServer: @unchecked Sendable {
         private let rpcSink: @Sendable (String, JSONValue) -> TestRPCReply
         private var buffer = Data()
         private var upgraded = false
+        /// Set once a non-upgrade request has been answered. The reply is
+        /// `Connection: close`, so nothing more is read — otherwise a later
+        /// receive (the client's half-close, say) re-parses the request
+        /// still in the buffer and runs the handler twice.
+        private var answered = false
 
         init(
             _ nwConnection: NWConnection,
@@ -225,14 +230,14 @@ final class HermesTestServer: @unchecked Sendable {
         private func receiveNext() {
             nwConnection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
                 [weak self] data, _, isComplete, error in
-                guard let self, error == nil else { return }
+                guard let self, error == nil, !self.answered else { return }
                 if let data { self.buffer.append(data) }
                 if !self.upgraded {
                     self.tryHandleHTTP(isComplete: isComplete)
                 } else {
                     self.drainRPCFrames()
                 }
-                if !isComplete { self.receiveNext() }
+                if !isComplete && !self.answered { self.receiveNext() }
             }
         }
 
@@ -298,6 +303,8 @@ final class HermesTestServer: @unchecked Sendable {
                 }
             }
 
+            answered = true
+            buffer.removeAll()
             let reason = response.status == 200 ? "OK" : "Error"
             let text =
                 "HTTP/1.1 \(response.status) \(reason)\r\n"

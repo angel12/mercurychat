@@ -91,9 +91,7 @@ struct ReplayLosslessTests {
         var chat: ChatController
         var server: HermesTestServer
         var historyFetches: Counter
-        /// History-handler hits from the initial resume. A baseline, not 1:
-        /// the scripted server can run its HTTP handler more than once per
-        /// request (it re-parses the kept buffer on a later receive).
+        /// History-handler hits from the initial resume (exactly one).
         var fetchesBeforeDrop = 0
         var cleanup: () -> Void
 
@@ -180,7 +178,7 @@ struct ReplayLosslessTests {
         try #require(chat.runtimeID == "rt-1")
         try #require(harness.resumes == 1)
         harness.fetchesBeforeDrop = historyFetches.count
-        try #require(harness.fetchesBeforeDrop >= 1)
+        try #require(harness.fetchesBeforeDrop == 1)
         harness.deliverTurn("before the drop", from: 7)
         try #require(await eventually(within: 2) { harness.replies() == ["before the drop"] })
         return harness
