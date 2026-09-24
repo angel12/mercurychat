@@ -28,9 +28,9 @@ struct AppModelOAuthFormTests {
         }
     }
 
-    private static func withDefaultsRestored<T>(
-        _ body: () async throws -> T
-    ) async rethrows -> T {
+    private static func withDefaultsRestored(
+        _ body: () async throws -> Void
+    ) async rethrows {
         let prior = ["lastServer", "savedServers"].map {
             ($0, UserDefaults.standard.object(forKey: $0))
         }
@@ -43,7 +43,7 @@ struct AppModelOAuthFormTests {
                 }
             }
         }
-        return try await body()
+        try await body()
     }
 
     @Test func aFailedConnectToAnotherServerDropsTheOAuthForm() async throws {
