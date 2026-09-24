@@ -77,7 +77,11 @@ final class ChatController: Identifiable {
     /// While a replay is being fetched, live events park here so the gap
     /// events apply first (seq dedupe drops any overlap on drain).
     private var replayBuffer: [GatewayEvent] = []
-    private var isReplaying = false
+    /// The begin generation of the replay that owns `replayBuffer`, while
+    /// its fetch is in flight. Ownership, not a flag (#91): a newer `begin`
+    /// supersedes the replay without the replay's cleanup running, and a
+    /// bare Bool left buffering on forever with nothing left to drain it.
+    private var replayGeneration: Int?
     /// The resume snapshot/event barrier (#109). A resume adopts its runtime
     /// as soon as `session.resume` answers, but its snapshot (`running`,
     /// `inflight`, `queued`, `open_requests`) is applied only after the REST
@@ -135,6 +139,10 @@ final class ChatController: Identifiable {
         pendingReasoningText = ""
         heldEvents = []
         transcriptHoldActive = false
+        // Events a superseded replay parked are covered by this resume's
+        // snapshot, like the held events above.
+        replayGeneration = nil
+        replayBuffer = []
         isLoading = true
         defer { if generation == beginGeneration { isLoading = false } }
         do {
@@ -420,10 +428,10 @@ final class ChatController: Identifiable {
         }
         beginGeneration += 1
         let generation = beginGeneration
-        isReplaying = true
+        replayGeneration = generation
         defer {
-            if generation == beginGeneration {
-                isReplaying = false
+            if replayGeneration == generation {
+                replayGeneration = nil
                 replayBuffer.removeAll()
             }
         }
@@ -549,7 +557,7 @@ final class ChatController: Identifiable {
             resumeBarrierBuffer.append(event)
             return
         }
-        if isReplaying, event.seq != nil {
+        if replayGeneration == beginGeneration, event.seq != nil {
             // A replay fetch is in flight: gap events must land first. This
             // live frame drains right after them (seq dedupe drops it if the
             // replay page already carried it).
