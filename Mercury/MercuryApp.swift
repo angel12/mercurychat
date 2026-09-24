@@ -16,8 +16,11 @@ struct MercuryApp: App {
         #endif
     }
 
+    /// The chat window group's id, for New Window (`openWindow`).
+    static let mainWindowID = "main"
+
     private var mainScene: some Scene {
-        WindowGroup {
+        WindowGroup(id: Self.mainWindowID) {
             RootView()
                 .environment(model)
                 .task { await model.autoConnectOnLaunch() }
@@ -27,12 +30,33 @@ struct MercuryApp: App {
             if phase == .active { model.appBecameActive() }
         }
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("New Session") {
-                    model.requestNewSession()
+            MercuryCommands(model: model)
+        }
+    }
+}
+
+/// File-menu commands (#112). The WindowGroup's default New Window also
+/// claims ⌘N, so the group is replaced: New Session keeps ⌘N and acts on the
+/// focused window only (the hermes desktop mapping), New Window moves to ⇧⌘N.
+struct MercuryCommands: Commands {
+    let model: AppModel
+    @FocusedValue(\.windowNavigation) private var navigation
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.supportsMultipleWindows) private var supportsMultipleWindows
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Session") {
+                if let navigation { model.requestNewSession(in: navigation) }
+            }
+            .keyboardShortcut("n")
+            .disabled(navigation == nil || !model.isConnected)
+
+            if supportsMultipleWindows {
+                Button("New Window") {
+                    openWindow(id: MercuryApp.mainWindowID)
                 }
-                .keyboardShortcut("n")
-                .disabled(!model.isConnected)
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             }
         }
     }

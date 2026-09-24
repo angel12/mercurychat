@@ -6,6 +6,7 @@ import SwiftUI
 /// fallback) → sessions, plus recents and a new-session button.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(WindowNavigation.self) private var navigation
     @State private var renameTarget: SessionSummary?
     @State private var renameText = ""
     @State private var deleteTarget: SessionSummary?
@@ -15,7 +16,8 @@ struct SidebarView: View {
 
     var body: some View {
         @Bindable var model = model
-        List(selection: $model.route) {
+        @Bindable var navigation = navigation
+        List(selection: $navigation.route) {
             if model.botModeSupported == true {
                 tabSection
             }
@@ -87,12 +89,13 @@ struct SidebarView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                // ⌘N lives on the menu command, which targets the focused
+                // window (#112) — a shortcut here too would collide with it.
                 Button {
-                    model.requestNewSession()
+                    model.requestNewSession(in: navigation)
                 } label: {
                     Label("New Session", systemImage: "square.and.pencil")
                 }
-                .keyboardShortcut("n")
             }
             ToolbarItem(placement: .cancellationAction) {
                 Menu {
@@ -229,7 +232,7 @@ struct SidebarView: View {
                 Spacer()
                 if project.primaryPath != nil || project.isHomeBucket {
                     Button {
-                        model.requestNewSession(cwd: project.primaryPath)
+                        model.requestNewSession(cwd: project.primaryPath, in: navigation)
                     } label: {
                         Image(systemName: "plus.circle")
                             .font(.caption)

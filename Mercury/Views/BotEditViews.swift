@@ -167,6 +167,8 @@ struct RoutinesSheet: View {
 /// (`AppModel.createBot`), then its Bot Chat opens and it introduces itself.
 struct NewBotSheet: View {
     @Environment(AppModel.self) private var model
+    /// The presenting window's: the new bot's chat opens there (#112).
+    @Environment(WindowNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
@@ -253,7 +255,8 @@ struct NewBotSheet: View {
         creating = true
         errorMessage = nil
         let failure = await model.createBot(
-            name: name, title: title, description: descriptionText, cloneFrom: cloneFrom)
+            name: name, title: title, description: descriptionText, cloneFrom: cloneFrom,
+            openIn: navigation)
         creating = false
         if let failure {
             errorMessage = failure

@@ -98,9 +98,10 @@ struct NewBotTests {
     @Test func createsTheProfileTheWayTheDesktopDoes() async throws {
         let (model, server, cleanup) = try await connectedModel(GatewayScript())
         defer { cleanup() }
+        let window = WindowNavigation()
 
         let error = await model.createBot(
-            name: "Scout", title: "Researcher", description: "Finds things out")
+            name: "Scout", title: "Researcher", description: "Finds things out", openIn: window)
         #expect(error == nil)
 
         #expect(
@@ -131,16 +132,17 @@ struct NewBotTests {
         // self-introduction armed.
         #expect(model.bots.contains { $0.name == "scout" })
         #expect(
-            model.route
+            window.route
                 == .botChat(.init(profile: "scout", displayTitle: "Researcher", storedID: nil, kickoff: true)))
     }
 
     @Test func cloningAnotherBotSendsItsName() async throws {
         let (model, server, cleanup) = try await connectedModel(GatewayScript(existing: ["default", "scout"]))
         defer { cleanup() }
+        let window = WindowNavigation()
 
         let error = await model.createBot(
-            name: "Scout Two", title: "", description: "", cloneFrom: "scout")
+            name: "Scout Two", title: "", description: "", cloneFrom: "scout", openIn: window)
         #expect(error == nil)
 
         let create = try #require(requests("profiles.create", in: server).last)
@@ -154,9 +156,10 @@ struct NewBotTests {
     @Test func aFreshProfileSendsNoCloneSource() async throws {
         let (model, server, cleanup) = try await connectedModel(GatewayScript(existing: ["default", "scout"]))
         defer { cleanup() }
+        let window = WindowNavigation()
 
         let error = await model.createBot(
-            name: "Scout Three", title: "", description: "", cloneFrom: nil)
+            name: "Scout Three", title: "", description: "", cloneFrom: nil, openIn: window)
         #expect(error == nil)
 
         let create = try #require(requests("profiles.create", in: server).last)
@@ -170,16 +173,37 @@ struct NewBotTests {
     @Test func aNameOnlyBotHasNoTitleInItsLook() async throws {
         let (model, server, cleanup) = try await connectedModel(GatewayScript())
         defer { cleanup() }
+        let window = WindowNavigation()
 
-        #expect(await model.createBot(name: "Inbox Triage", title: "", description: "") == nil)
+        #expect(await model.createBot(name: "Inbox Triage", title: "", description: "", openIn: window) == nil)
         let create = try #require(requests("profiles.create", in: server).last)
         #expect(create["name"] == "inbox-triage")
         #expect(create["description"] == nil)
         let meta = try #require(requests("profiles.configure", in: server).last?["ui_meta"]?["hermes-bots"]?.objectValue)
         #expect(meta.keys.sorted() == ["created"])
         #expect(
-            model.route
+            window.route
                 == .botChat(.init(profile: "inbox-triage", displayTitle: "Inbox Triage", storedID: nil, kickoff: true)))
+    }
+
+    /// The Bot Chat opens in the window whose sheet created the bot, and
+    /// nowhere else (#112).
+    @Test func theBotChatOpensOnlyInTheAskingWindow() async throws {
+        let (model, _, cleanup) = try await connectedModel(GatewayScript())
+        defer { cleanup() }
+        let shown = try #require(SessionSummary(json: .object(["session_id": "stored-a"])))
+        let other = WindowNavigation(route: .session(shown))
+        let asking = WindowNavigation()
+        model.register(other)
+        model.register(asking)
+
+        #expect(await model.createBot(name: "Scout", title: "", description: "", openIn: asking) == nil)
+        guard case .botChat(let target) = asking.route else {
+            Issue.record("expected the bot's chat, got \(String(describing: asking.route))")
+            return
+        }
+        #expect(target.profile == "scout")
+        #expect(other.route == .session(shown))
     }
 
     // MARK: Refusals
@@ -187,18 +211,20 @@ struct NewBotTests {
     @Test func aNameWithNothingUsableIsRefusedBeforeAnyCall() async throws {
         let (model, server, cleanup) = try await connectedModel(GatewayScript())
         defer { cleanup() }
+        let window = WindowNavigation()
 
-        let error = await model.createBot(name: "🤖", title: "", description: "")
+        let error = await model.createBot(name: "🤖", title: "", description: "", openIn: window)
         #expect(error?.contains("letters or numbers") == true)
         #expect(requests("profiles.create", in: server).isEmpty)
-        #expect(model.route == nil)
+        #expect(window.route == nil)
     }
 
     @Test func aTakenNameIsRefusedBeforeAnyCall() async throws {
         let (model, server, cleanup) = try await connectedModel(GatewayScript(existing: ["default", "scout"]))
         defer { cleanup() }
+        let window = WindowNavigation()
 
-        let error = await model.createBot(name: "Scout", title: "", description: "")
+        let error = await model.createBot(name: "Scout", title: "", description: "", openIn: window)
         #expect(error?.contains("scout") == true)
         #expect(requests("profiles.create", in: server).isEmpty)
     }
@@ -209,11 +235,12 @@ struct NewBotTests {
         script.failCreate(code: 4062, message: "Profile name 'test' is reserved")
         let (model, server, cleanup) = try await connectedModel(script)
         defer { cleanup() }
+        let window = WindowNavigation()
 
-        let error = await model.createBot(name: "Test", title: "", description: "")
+        let error = await model.createBot(name: "Test", title: "", description: "", openIn: window)
         #expect(error?.contains("Profile name 'test' is reserved") == true)
         #expect(requests("profiles.configure", in: server).isEmpty)
-        #expect(model.route == nil)
+        #expect(window.route == nil)
     }
 
     // MARK: Kickoff

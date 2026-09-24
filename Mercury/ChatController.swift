@@ -30,6 +30,36 @@ final class ChatController: Identifiable {
     private(set) var runtimeID: String?
     /// Durable id — what resume/hydration take; re-anchored on every resume.
     private(set) var storedID: String?
+    /// The stored session a resume was asked for — set before the RPC goes
+    /// out, so a chat still opening a session already claims it (#112).
+    private var requestedStoredID: String?
+
+    /// What identifies the server session this chat holds or is opening.
+    /// Two windows on one stored session share one runtime: the backend's
+    /// live fast path answers the second `session.resume` with the first
+    /// one's runtime id. A stored id covers a resume still in flight.
+    enum SessionClaim: Hashable {
+        case runtime(String)
+        case stored(String)
+    }
+
+    var sessionClaims: Set<SessionClaim> {
+        var claims: Set<SessionClaim> = []
+        if let runtimeID { claims.insert(.runtime(runtimeID)) }
+        if let storedID { claims.insert(.stored(storedID)) }
+        if let requestedStoredID { claims.insert(.stored(requestedStoredID)) }
+        return claims
+    }
+
+    /// Set by AppModel (#112): whether another open chat holds or is opening
+    /// any of these claims. `session.close` has no viewer check server-side,
+    /// so closing a shared runtime would kill another window's live session.
+    @ObservationIgnored var isHeldElsewhere: ((Set<SessionClaim>) -> Bool)?
+    /// Set by AppModel (#112): this chat settled server request `requestID`
+    /// on runtime `runtimeID`. The backend emits nothing when a request is
+    /// answered (only `request.cancel` on timeout/cancel), so the other
+    /// chats on that runtime are told here.
+    @ObservationIgnored var serverRequestSettled: ((_ requestID: String, _ runtimeID: String) -> Void)?
     private(set) var handle: SessionHandle?
     private(set) var isLoading = false
     private(set) var canLoadOlder = false
@@ -132,6 +162,10 @@ final class ChatController: Identifiable {
         guard !isInvalidated else { return }
         beginGeneration += 1
         let generation = beginGeneration
+        // Claim the session synchronously, before the first suspension: the
+        // `.task` that opened this chat reaches here in the same hop, so a
+        // window closing the same session meanwhile sees it opening (#112).
+        if case .resume(let session) = mode { requestedStoredID = session.storedID }
         // A resume supersedes any text buffered or held from the previous
         // socket — the resume payload's inflight snapshot carries the whole
         // turn, so replaying stale events after it would duplicate content.
@@ -147,7 +181,7 @@ final class ChatController: Identifiable {
         defer { if generation == beginGeneration { isLoading = false } }
         // Learn the epoch this session's seqs are stamped under (#93). The
         // socket's gateway.ready landed before this chat existed (AppModel
-        // forwards events only to the active chat), so without this a chat
+        // forwards events only to chats already open), so without this a chat
         // opened after connect never knows its watermark's numbering — and
         // a reconnect could neither replay nor spot a gateway restart.
         if replayEpoch == nil {
@@ -190,6 +224,7 @@ final class ChatController: Identifiable {
                     return
                 }
                 guard generation == beginGeneration else { return }
+                requestedStoredID = existing.resolvedID ?? existing.storedID
                 try await performResume(
                     SessionSummary(
                         json: .object([
@@ -213,8 +248,13 @@ final class ChatController: Identifiable {
     /// leak it until the socket drops (#111).
     /// Safe only for creates: a fresh session has no other owner. A stale
     /// RESUME handle must never come here — it can alias a runtime a
-    /// successor also holds (#60).
+    /// successor also holds (#60). Even a create's runtime is left alone if
+    /// another open chat has already picked it up (#112): once the session
+    /// shows in the sidebar, another window can resume it onto this runtime.
     private func relinquishAbandoned(_ handle: SessionHandle) async {
+        var claims: Set<SessionClaim> = [.runtime(handle.runtimeID)]
+        if let stored = handle.storedID { claims.insert(.stored(stored)) }
+        guard isHeldElsewhere?(claims) != true else { return }
         await connection.closeSession(sessionID: handle.runtimeID)
     }
 
@@ -604,10 +644,24 @@ final class ChatController: Identifiable {
             ]))!
     }
 
-    /// Politely close the runtime session when the view goes away.
+    /// Politely close the runtime session when the view goes away — unless
+    /// another open chat holds or is opening the same session (#112): the
+    /// backend's `session.close` would kill that window's runtime too. The
+    /// last chat to leave closes it.
     func teardown() async {
         guard let runtimeID else { return }
+        guard isHeldElsewhere?(sessionClaims) != true else { return }
         await connection.closeSession(sessionID: runtimeID)
+    }
+
+    /// Another chat on this runtime answered request `requestID` (#112):
+    /// drop its card here too, through the normal event path so a pending
+    /// resume snapshot can't resurrect it afterwards.
+    func withdrawSettledRequest(_ requestID: String) {
+        handle(
+            event: GatewayEvent(
+                type: GatewayEvent.Kind.requestCancel, sessionID: runtimeID,
+                payload: ["id": .string(requestID), "reason": "answered"]))
     }
 
     // MARK: Events
@@ -1016,7 +1070,7 @@ final class ChatController: Identifiable {
             _ = settlePrompt(
                 try await connection.answerServerRequest(
                     id: id, result: ServerRequestResult.approval(choice: choice)),
-                what: "choice",
+                requestID: id, what: "choice",
                 clear: { self.store.clearApproval(matching: request) })
             return true
         } catch {
@@ -1081,12 +1135,13 @@ final class ChatController: Identifiable {
                     requestID: requestID, questionID: questionID, answer: answer)
             else {
                 _ = settlePrompt(
-                    .expired, what: "answer",
+                    .expired, requestID: requestID, what: "answer",
                     clear: { self.store.clearClarify(requestID: requestID) })
                 return .expired
             }
             if remaining.isEmpty {
                 store.clearClarify(requestID: requestID)
+                announceSettled(requestID)
                 return .completed
             }
             return .progress(remaining: remaining)
@@ -1115,7 +1170,7 @@ final class ChatController: Identifiable {
     ) async -> PromptDeliveryOutcome {
         do {
             let status = try await connection.answerServerRequest(id: id, result: result)
-            return settlePrompt(status, what: what, clear: clear)
+            return settlePrompt(status, requestID: id, what: what, clear: clear)
         } catch {
             errorMessage = Self.describe(error)
             return .failed
@@ -1123,9 +1178,10 @@ final class ChatController: Identifiable {
     }
 
     private func settlePrompt(
-        _ status: PromptResponseStatus, what: String, clear: () -> Void
+        _ status: PromptResponseStatus, requestID: String, what: String, clear: () -> Void
     ) -> PromptDeliveryOutcome {
         clear()
+        announceSettled(requestID)
         switch status {
         case .accepted:
             return .delivered
@@ -1135,6 +1191,12 @@ final class ChatController: Identifiable {
                 level: .error)
             return .expired
         }
+    }
+
+    /// Delivered or expired, the request is over for every window (#112).
+    private func announceSettled(_ requestID: String) {
+        guard let runtimeID else { return }
+        serverRequestSettled?(requestID, runtimeID)
     }
 
     private static func describe(_ error: Error) -> String {

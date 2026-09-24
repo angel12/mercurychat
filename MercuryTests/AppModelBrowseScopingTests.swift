@@ -237,13 +237,18 @@ struct AppModelBrowseScopingTests {
         try await connectAndWaitReady(model, endpointA)
         try #require(await eventually { model.botModeSupported == true })
 
-        let creating = Task { await model.createBot(name: "Scout", title: "", description: "") }
+        // Unregistered, so the connect to B (which empties registered windows)
+        // can't mask a missing generation guard.
+        let window = WindowNavigation()
+        let creating = Task {
+            await model.createBot(name: "Scout", title: "", description: "", openIn: window)
+        }
         #expect(await configureGate.reached.wait(), "createBot never sent \(heldMethod)")
 
         try await connectAndWaitReady(model, endpointB)
         configureGate.open()
         _ = await creating.value
-        #expect(model.route == nil, "A's new bot opened a Bot Chat on B")
+        #expect(window.route == nil, "A's new bot opened a Bot Chat on B")
         // A's roster listing died with A's socket; that failure isn't B's.
         #expect(model.botsError == nil, "A's roster failure showed on B")
     }
