@@ -79,6 +79,20 @@ final class AppModel {
     /// every profile's state.db, so sessions.changed bursts (one per turn
     /// end) must not stack listing calls.
     private var lastBotsRefresh: Date?
+    private let botsRefreshThrottle: TimeInterval = 5
+    /// Roster reads run one at a time on this task; a refresh asked for
+    /// while one is in flight sets `botsRefreshPending` and the task runs
+    /// exactly one more read instead of the request being dropped (#106).
+    private var botsRefreshTask: Task<Void, Never>?
+    private var botsRefreshPending = false
+    /// Reads started / finished (published or failed), counting up. A caller
+    /// waits for read `botsReadsStarted + 1` as of its call — one that began
+    /// after it, so a post-write caller never sees pre-write rows (#106).
+    private var botsReadsStarted = 0
+    private var botsReadsFinished = 0
+    /// At most one trailing read for events that landed inside the throttle
+    /// window, so the last one isn't simply lost (#106).
+    private var botsTrailingRefresh: Task<Void, Never>?
     /// Bumped on every `cron.changed` gateway event — routine views observe
     /// it and refetch (the event carries no payload).
     private(set) var cronEpoch = 0
@@ -545,6 +559,13 @@ final class AppModel {
         botAvatars = [:]
         botAvatarFetchesInFlight = []
         lastBotsRefresh = nil
+        // The generation bump above already stops the old read loop from
+        // publishing or clearing state; forget it so the next server starts
+        // its own (#106).
+        botsRefreshTask = nil
+        botsRefreshPending = false
+        botsTrailingRefresh?.cancel()
+        botsTrailingRefresh = nil
     }
 
     /// Immediate re-dial on foreground (backoff skip).
@@ -858,30 +879,78 @@ final class AppModel {
     // MARK: Bot Mode roster
 
     /// Refresh the Bots roster. The full listing walks every profile's
-    /// state.db, so refreshes within 5s of the last are dropped unless
-    /// forced (pull-to-refresh).
+    /// state.db, so unforced refreshes within `botsRefreshThrottle` of the
+    /// last read are deferred to one trailing read at the window's end;
+    /// forced ones (pull-to-refresh, post-write) skip the throttle.
+    ///
+    /// Returns once a read that STARTED after this call has finished, so
+    /// callers awaiting a post-write refresh see post-write rows. Reads never
+    /// overlap: a request during an in-flight read coalesces into exactly one
+    /// follow-up read rather than being dropped, and an older read can never
+    /// publish over a newer one (#106).
     func loadBots(force: Bool = false) async {
         guard let connection, botModeSupported == true else { return }
-        if !force, let last = lastBotsRefresh, Date().timeIntervalSince(last) < 5 {
-            return
+        if !force, let last = lastBotsRefresh {
+            let remaining = botsRefreshThrottle - Date().timeIntervalSince(last)
+            if remaining > 0 {
+                scheduleTrailingBotsRefresh(after: remaining)
+                return
+            }
         }
-        if botsLoading { return }
-        botsLoading = true
-        defer { botsLoading = false }
+        let generation = connectGeneration
+        let needed = botsReadsStarted + 1
+        if botsRefreshTask != nil {
+            botsRefreshPending = true
+        } else {
+            botsRefreshTask = Task { await runBotReads(on: connection) }
+        }
+        while botsReadsFinished < needed, generation == connectGeneration,
+            let task = botsRefreshTask
+        {
+            await task.value
+        }
+    }
+
+    /// The single roster read loop: one `profiles.list` per pass, another
+    /// pass while a request arrived meanwhile. Only this generation's loop
+    /// publishes, owns `botsLoading`, or clears the task slot (#95, #106).
+    private func runBotReads(on connection: HermesConnection) async {
         // A listing outliving a server switch belongs to the old roster —
         // neither its bots nor its failure are the new server's (#95).
         let generation = connectGeneration
-        lastBotsRefresh = Date()
-        do {
-            let listed = try await connection.listBots()
-            guard generation == connectGeneration else { return }
-            bots = listed
-            botsError = nil
-        } catch {
-            guard generation == connectGeneration else { return }
-            // Keep the stale roster visible; surface the failure alongside.
-            botsError = (error as? HermesError)?.errorDescription
-                ?? error.localizedDescription
+        botsLoading = true
+        repeat {
+            botsRefreshPending = false
+            botsReadsStarted += 1
+            let read = botsReadsStarted
+            lastBotsRefresh = Date()
+            do {
+                let listed = try await connection.listBots()
+                guard generation == connectGeneration else { return }
+                bots = listed
+                botsError = nil
+            } catch {
+                guard generation == connectGeneration else { return }
+                // Keep the stale roster visible; surface the failure alongside.
+                botsError = (error as? HermesError)?.errorDescription
+                    ?? error.localizedDescription
+            }
+            botsReadsFinished = read
+        } while botsRefreshPending
+        botsLoading = false
+        botsRefreshTask = nil
+    }
+
+    /// Arm one trailing refresh for when the throttle window closes; further
+    /// throttled requests ride on it.
+    private func scheduleTrailingBotsRefresh(after delay: TimeInterval) {
+        guard botsTrailingRefresh == nil else { return }
+        let generation = connectGeneration
+        botsTrailingRefresh = Task {
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, generation == connectGeneration else { return }
+            botsTrailingRefresh = nil
+            await loadBots(force: true)
         }
     }
 
