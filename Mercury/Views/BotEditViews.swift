@@ -330,6 +330,9 @@ struct EditBotSheet: View {
                     }
                 }
             }
+            // `save()` sends the fields as they stood when it started, then
+            // dismisses: an edit made meanwhile would be silently lost (#98).
+            .disabled(saving)
             .navigationTitle("Edit \(bot.title)")
             #if !os(macOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -337,6 +340,7 @@ struct EditBotSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .disabled(saving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }

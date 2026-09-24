@@ -14,7 +14,9 @@ struct BotAdvancedView: View {
     @State private var inventory: ModelInventory?
     @State private var loading = true
     @State private var loadError: String?
-    @State private var saving = false
+    /// The pending save, if any. It locks the form, Reload and Back until
+    /// it lands (#98), and holds the draft a model warning is about.
+    @State private var submission = BotProfileSubmission()
     @State private var saveError: String?
     @State private var confirmMessage: String?
     @State private var confirmShown = false
@@ -41,19 +43,29 @@ struct BotAdvancedView: View {
                     // screen would otherwise be a dead end.
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Back") { dismiss() }
+                            .disabled(submission.isLocked)
                     }
                 #endif
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }
-                        .disabled((draft?.hasChanges != true) || saving || loading)
+                        .disabled((draft?.hasChanges != true) || submission.isLocked || loading)
                 }
             }
+            // Leaving mid-save would drop the pending model warning, or an
+            // edit the success dismiss is about to discard (#98).
+            #if !os(macOS)
+                .navigationBarBackButtonHidden(submission.isLocked)
+            #endif
+            .interactiveDismissDisabled(submission.isLocked)
             .task { await load() }
             .alert(
                 "Confirm Model", isPresented: $confirmShown, presenting: confirmMessage
             ) { _ in
                 Button("Use This Model") { Task { await confirmModel() } }
-                Button("Cancel", role: .cancel) { Task { await load() } }
+                Button("Cancel", role: .cancel) {
+                    submission.cancelConfirmation()
+                    Task { await load() }
+                }
             } message: { message in
                 Text(message)
             }
@@ -72,11 +84,16 @@ struct BotAdvancedView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let draftBinding = Binding($draft) {
             Form {
-                soulSection(draftBinding)
-                modelSection(draftBinding)
-                skillsSection(draftBinding)
-                toolsetsSection(draftBinding)
-                mcpSection(draftBinding)
+                Group {
+                    soulSection(draftBinding)
+                    modelSection(draftBinding)
+                    skillsSection(draftBinding)
+                    toolsetsSection(draftBinding)
+                    mcpSection(draftBinding)
+                }
+                // Frozen while a save is pending: an edit made now would miss
+                // the submitted copy and be lost on dismiss (#98).
+                .disabled(submission.isLocked)
                 if saveError != nil || loading {
                     Section {
                         HStack {
@@ -88,7 +105,7 @@ struct BotAdvancedView: View {
                                 ProgressView().controlSize(.small)
                             }
                             Button("Reload") { Task { await load() } }
-                                .disabled(loading)
+                                .disabled(loading || submission.isLocked)
                         }
                     }
                 }
@@ -303,11 +320,14 @@ struct BotAdvancedView: View {
     }
 
     private func save() async {
-        guard let draft else { return }
-        saving = true
+        guard let draft, let sent = submission.submit(draft) else { return }
         saveError = nil
-        let result = await model.saveBotProfile(bot.name, draft: draft)
-        saving = false
+        let result = await model.saveBotProfile(bot.name, draft: sent)
+        if case .needsModelConfirmation = result {
+            submission.saveFinished(needsConfirmation: true)
+        } else {
+            submission.saveFinished(needsConfirmation: false)
+        }
         switch result {
         case .saved:
             dismiss()
@@ -319,11 +339,12 @@ struct BotAdvancedView: View {
         }
     }
 
+    /// Confirms the submitted draft's model, the one the warning named, not
+    /// whatever `draft.model` holds now (#98).
     private func confirmModel() async {
-        guard let pin = draft?.model else { return }
-        saving = true
+        guard let pin = submission.confirm() else { return }
         let error = await model.confirmBotModel(bot.name, pin: pin)
-        saving = false
+        submission.confirmFinished()
         if let error {
             saveError = error
         } else {
