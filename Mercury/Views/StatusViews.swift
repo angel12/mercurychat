@@ -1,3 +1,4 @@
+import ChatCore
 import MercuryKit
 import SwiftUI
 
@@ -103,6 +104,9 @@ struct ConnectionBannerView: View {
                         "Needs contract",
                         value: "v\(AppModel.contractRequirement.minimum) or newer")
                     LabeledContent("Bot Mode (profiles RPC)", value: botModeDescription)
+                }
+                Section("About") {
+                    Link("Privacy Policy", destination: MercuryLinks.privacyPolicy)
                 }
             }
             .formStyle(.grouped)

@@ -44,6 +44,10 @@ struct ConnectView: View {
                 if !model.savedServers.isEmpty, model.pendingPasswordLogin == nil {
                     recentServers
                 }
+
+                // Reachable before sign-in on every platform (#101).
+                Link("Privacy Policy", destination: MercuryLinks.privacyPolicy)
+                    .font(.footnote)
             }
             .padding()
             .frame(maxWidth: 480)

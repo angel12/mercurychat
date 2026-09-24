@@ -1,0 +1,53 @@
+name: Privacy Policy Site
+
+# Publishes the privacy policy (docs/index.html) to GitHub Pages at
+# https://angel12.github.io/mercurychat/, the URL the app links (#101).
+# Only the policy page and its icon are deployed: the rest of docs/ (such
+# as the migrated Gitea attachments) is not part of the site.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/index.html
+      - docs/icon.png
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy privacy policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Stage the policy page only
+        run: |
+          mkdir _site
+          cp docs/index.html docs/icon.png docs/.nojekyll _site/
+          ls -la _site
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Upload site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

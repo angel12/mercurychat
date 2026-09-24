@@ -1,3 +1,4 @@
+import ChatCore
 import MercuryKit
 import SwiftUI
 
@@ -95,6 +96,8 @@ struct SidebarView: View {
             }
             ToolbarItem(placement: .cancellationAction) {
                 Menu {
+                    Link("Privacy Policy", destination: MercuryLinks.privacyPolicy)
+                    Divider()
                     Button("Disconnect", role: .destructive) { model.disconnect() }
                 } label: {
                     Label("Server", systemImage: "server.rack")
