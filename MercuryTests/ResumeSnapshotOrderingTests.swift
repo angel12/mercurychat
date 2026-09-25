@@ -43,6 +43,27 @@ struct ResumeSnapshotOrderingTests {
 
     private static let approvalID = "srq-aaaaaaaaaaa1"
 
+    /// Fail initial hydration, then hold the first-page retry so the test
+    /// observes the real controller while that request is still pending.
+    final class FirstPageRetry: @unchecked Sendable {
+        let reached = TestLatch()
+        let gate = HistoryGate()
+        private let lock = NSLock()
+        private var queries: [String] = []
+        var requestedQueries: [String] { lock.withLock { queries } }
+
+        func respond(_ request: TestHTTPRequest) -> TestHTTPResponse {
+            let count = lock.withLock {
+                queries.append(request.query)
+                return queries.count
+            }
+            if count == 1 { return TestHTTPResponse(500, "{}") }
+            reached.signal()
+            gate.wait()
+            return TestHTTPResponse(200, #"{"messages":[{"id":1,"role":"user","content":"Earlier question"},{"id":2,"role":"assistant","content":"Recovered answer"}],"pagination":{"limit":100,"offset":0,"returned":2}}"#)
+        }
+    }
+
     /// Resume "stored-1" with its history page held, run `whileHeld` once the
     /// runtime is adopted, then release the page and let the resume finish.
     private func resume(
@@ -128,6 +149,61 @@ struct ResumeSnapshotOrderingTests {
         #expect(!chat.isLoading)
         #expect(!chat.store.running)
         #expect(assistantBubbles(chat).map(\.text) == ["Hello"])
+    }
+
+    @Test func failedFirstPageRetryRestoresHistoryWithoutAnOpeningSpinner() async throws {
+        let history = FirstPageRetry()
+        let script = ResumeScript(extras: ["running": false])
+        let server = try await HermesTestServer.start(
+            rpc: { method, _ in script.respond(method: method) }
+        ) { request in
+            switch (request.method, request.path) {
+            case ("GET", "/api/status"):
+                return TestHTTPResponse(200, #"{"auth_required": false}"#)
+            case ("GET", "/api/sessions/stored-1/messages"):
+                return history.respond(request)
+            default:
+                return TestHTTPResponse(200, "{}")
+            }
+        }
+        let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
+        let store = KeychainTokenStore(service: "com.mercury.tokens.tests")
+        let model = AppModel(tokenStore: store)
+        defer {
+            history.gate.release()
+            model.disconnect()
+            server.stop()
+            try? store.deleteToken(for: endpoint)
+        }
+        await model.connect(endpoint: endpoint, credentials: nil)
+        try #require(await eventually {
+            if case .ready = model.phase { return true }
+            return false
+        })
+        let chat = try #require(model.openChat(profile: nil))
+        await chat.begin(.resume(try #require(SessionSummary(json: ["id": "stored-1"]))))
+        try #require(chat.historyError != nil)
+        #expect(chat.store.items.isEmpty)
+        #expect(!chat.canLoadOlder)
+        #expect(!chat.isLoading)
+
+        let retrying = Task { await chat.retryHistory() }
+        try #require(await history.reached.wait(), "first-page retry was never requested")
+        #expect(chat.isLoading)
+        #expect(chat.loadingMessage == nil, "retry must not insert the opening spinner row")
+        #expect(chat.store.items.isEmpty)
+        let queries = history.requestedQueries
+        #expect(queries.count == 2)
+        #expect(queries.allSatisfy { !$0.contains("offset=") }, "both requests must fetch the first page")
+
+        history.gate.release()
+        await retrying.value
+        #expect(!chat.isLoading)
+        #expect(chat.loadingMessage == nil)
+        #expect(chat.historyError == nil)
+        #expect(chat.store.items.count == 2)
+        #expect(assistantBubbles(chat).map(\.text) == ["Recovered answer"])
+        #expect(!chat.canLoadOlder)
     }
 
     /// The snapshot says a turn is running with an approval open; before
