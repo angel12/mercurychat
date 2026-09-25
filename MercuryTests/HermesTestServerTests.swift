@@ -55,32 +55,64 @@ struct HermesTestServerTests {
     }
 
     /// Sends `request` then FIN, and collects the reply until the server closes.
+    /// A connection that can't proceed fails the exchange instead of leaving
+    /// it suspended: `.waiting` retries forever (EADDRINUSE, once repeated
+    /// runs exhaust loopback's ephemeral ports), and a wait that never resumes
+    /// outlives the time limit and hangs the whole test process.
     private static func exchange(_ request: Data, port: UInt16) async throws -> Data {
         let connection = NWConnection(
             host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
         defer { connection.cancel() }
-        connection.start(queue: DispatchQueue(label: "test.hermes-client"))
-        connection.send(content: request, isComplete: true, completion: .idempotent)
         return try await withCheckedThrowingContinuation { continuation in
-            let collected = Collected()
+            let reply = Reply(continuation)
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .waiting(let error), .failed(let error): reply.finish(throwing: error)
+                default: break
+                }
+            }
             func next() {
                 connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) {
                     data, _, isComplete, error in
-                    if let data { collected.data.append(data) }
+                    if let data { reply.append(data) }
                     if let error {
-                        continuation.resume(throwing: error)
+                        reply.finish(throwing: error)
                     } else if isComplete {
-                        continuation.resume(returning: collected.data)
+                        reply.finish()
                     } else {
                         next()
                     }
                 }
             }
+            connection.start(queue: DispatchQueue(label: "test.hermes-client"))
+            connection.send(content: request, isComplete: true, completion: .idempotent)
             next()
         }
     }
 
-    private final class Collected: @unchecked Sendable {
-        var data = Data()
+    /// The bytes read so far, and the continuation resumed exactly once.
+    private final class Reply: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        private var continuation: CheckedContinuation<Data, Error>?
+
+        init(_ continuation: CheckedContinuation<Data, Error>) {
+            self.continuation = continuation
+        }
+
+        func append(_ bytes: Data) { lock.withLock { data.append(bytes) } }
+
+        func finish(throwing error: Error? = nil) {
+            let (taken, collected) = lock.withLock {
+                let taken = continuation
+                continuation = nil
+                return (taken, data)
+            }
+            if let error {
+                taken?.resume(throwing: error)
+            } else {
+                taken?.resume(returning: collected)
+            }
+        }
     }
 }

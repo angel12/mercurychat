@@ -20,6 +20,10 @@ final class AppModel {
 
     /// Contract-version drift notice (non-blocking, shown in settings/banner).
     private(set) var contractNotice: String?
+    /// This connection's contract probe has returned: `contractNotice` is
+    /// final (set or not) from here on. False while the probe is out, and
+    /// after a probe that failed (the next connect re-probes).
+    private(set) var contractChecked = false
 
     /// A keychain credential write failed (locked keychain, auth failure):
     /// the stale item persists and the next launch will present dead
@@ -606,6 +610,7 @@ final class AppModel {
         browseLoading = false
         selectedProfile = nil
         contractNotice = nil
+        contractChecked = false
         keychainNotice = nil
         botModeSupported = nil
         sidebarTab = .sessions
@@ -1249,13 +1254,18 @@ final class AppModel {
     private func checkContractVersion() async {
         guard let connection, contractNotice == nil else { return }
         let generation = connectGeneration
-        guard let contract = try? await connection.probeDesktopContract(),
-            generation == connectGeneration  // not another server's verdict (#95)
-        else { return }
-        if case .older(let reported) = Self.contractRequirement.assess(contract) {
+        let contract: Int?
+        do {
+            contract = try await connection.probeDesktopContract()
+        } catch {
+            return
+        }
+        guard generation == connectGeneration else { return }  // not another server's verdict (#95)
+        if let contract, case .older(let reported) = Self.contractRequirement.assess(contract) {
             contractNotice =
                 "This server speaks desktop contract v\(reported); Mercury Chat needs v\(Self.contractRequirement.minimum) or newer. Approval, clarify, sudo and secret prompts won't appear until the backend is updated."
         }
+        contractChecked = true
     }
 }
 

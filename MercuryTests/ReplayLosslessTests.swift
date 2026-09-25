@@ -251,7 +251,10 @@ struct ReplayLosslessTests {
         defer { harness.cleanup() }
 
         harness.server.dropSockets()
-        let landed = await eventually(within: 5) {
+        // A real drop: the supervisor's jittered backoff, a redial and the
+        // replay all run before this can hold — seconds on a loaded runner,
+        // so take the standard deadline, not a tight one.
+        let landed = await eventually {
             harness.replies() == ["before the drop", "while away"]
         }
         #expect(landed, "the replay was not used: \(harness.replies())")
@@ -274,8 +277,12 @@ struct ReplayLosslessTests {
         // AppModel runs connectionBecameReady before it forwards the new
         // socket's gateway.ready, so the replay may still be attempted (and
         // refused on the batch's epoch) before the watermark is voided —
-        // hence "at least" the fallback resume, not an exact count.
-        let fellBack = await eventually(within: 5) {
+        // hence "at least" the fallback resume, not an exact count. The
+        // re-fetch is only ever the fallback's own (each request is counted
+        // once), and it runs inside that resume's loading span, so this can't
+        // hold while the replay is still out. A redial plus two resumes and a
+        // fetch: the standard deadline, as above.
+        let fellBack = await eventually {
             harness.resumes >= 2 && harness.refetchedHistory && !harness.chat.isLoading
         }
         #expect(fellBack, "no full resume after a gateway restart")

@@ -110,14 +110,13 @@ struct ServerRequestAdoptionTests {
 
     @Test(arguments: [(6, true), (7, false), (8, false)])
     func aBackendBelowContract7GetsANotice(contract: Int, expectNotice: Bool) async throws {
-        let (model, server, cleanup) = try await connectedModel(GatewayScript(contract: contract))
+        let (model, _, cleanup) = try await connectedModel(GatewayScript(contract: contract))
         defer { cleanup() }
-        // The probe runs after ready and closes its throwaway session; the
-        // verdict is final once that close has gone out.
-        let probed = await eventually { server.rpcRequests.contains { $0.method == "session.close" } }
-        try #require(probed)
-        let noticed = await eventually(within: 1) { model.contractNotice != nil }
-        #expect(noticed == expectNotice)
+        // Wait for the model's own verdict, then assert once. The server
+        // seeing `session.close` is not that signal: the probe still awaits
+        // the reply (and retries an unconfirmed close) before it returns.
+        try #require(await eventually { model.contractChecked }, "the contract probe never returned")
+        #expect((model.contractNotice != nil) == expectNotice)
         if expectNotice {
             #expect(model.contractNotice?.contains("v\(contract)") == true)
             #expect(model.contractNotice?.contains("v7") == true)

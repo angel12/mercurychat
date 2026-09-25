@@ -162,8 +162,12 @@ final class HermesTestServer: @unchecked Sendable {
                     } else {
                         box.resume(.failure(URLError(.cannotConnectToHost)))
                     }
-                case .failed(let error):
+                // `.waiting` would retry on its own schedule: fail the test
+                // now rather than suspend it past its time limit.
+                case .failed(let error), .waiting(let error):
                     box.resume(.failure(error))
+                case .cancelled:
+                    box.resume(.failure(CancellationError()))
                 default:
                     break
                 }
@@ -501,7 +505,10 @@ final class TestLatch: @unchecked Sendable {
         return signalled
     }
 
-    func wait(within seconds: TimeInterval = 5) async -> Bool {
+    /// The flag is sticky, so a late wait can't miss it; the deadline only
+    /// bounds a request that never arrives. Same default as `eventually`:
+    /// reaching the server can take a whole connect under a loaded runner.
+    func wait(within seconds: TimeInterval = 10) async -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
             if isSet { return true }
