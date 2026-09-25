@@ -46,7 +46,8 @@ struct ResumeSnapshotOrderingTests {
     /// Resume "stored-1" with its history page held, run `whileHeld` once the
     /// runtime is adopted, then release the page and let the resume finish.
     private func resume(
-        extras: [String: JSONValue], whileHeld: (ChatController) -> Void
+        extras: [String: JSONValue], historyStatus: Int = 200,
+        whileHeld: (ChatController) -> Void
     ) async throws -> (ChatController, () -> Void) {
         let gate = HistoryGate()
         let script = ResumeScript(extras: extras)
@@ -58,7 +59,7 @@ struct ResumeSnapshotOrderingTests {
                 return TestHTTPResponse(200, #"{"auth_required": false}"#)
             case ("GET", let path) where path.hasPrefix("/api/sessions/stored-1/messages"):
                 gate.wait()
-                return TestHTTPResponse(200, #"{"messages": []}"#)
+                return TestHTTPResponse(historyStatus, #"{"messages": []}"#)
             default:
                 return TestHTTPResponse(200, "{}")
             }
@@ -100,6 +101,33 @@ struct ResumeSnapshotOrderingTests {
             if case .assistant(let message) = item { return message }
             return nil
         }
+    }
+
+    /// Reopening a running chat can finish the resume RPC long before REST
+    /// history. It must not look like an empty, idle conversation meanwhile.
+    /// Keep the snapshot barrier, but expose a loading presentation to the UI.
+    @Test(arguments: [200, 500])
+    func slowHistoryHasAnExplicitLoadingPresentation(historyStatus: Int) async throws {
+        let (chat, cleanup) = try await resume(
+            extras: [
+                "running": true,
+                "inflight": ["user": "hi", "assistant": "Hel", "streaming": true],
+            ], historyStatus: historyStatus
+        ) { chat in
+            #expect(chat.isLoading)
+            #expect(chat.store.items.isEmpty)
+            #expect(chat.loadingMessage == "Loading history…")
+            chat.handle(event: event(GatewayEvent.Kind.messageDelta, ["text": "lo"], seq: 1))
+            chat.handle(event: event(GatewayEvent.Kind.messageComplete, ["text": "Hello"], seq: 2))
+            chat.handle(event: event(GatewayEvent.Kind.sessionInfo, ["running": false], seq: 3))
+        }
+        defer { cleanup() }
+
+        #expect(chat.loadingMessage == nil)
+        #expect((chat.historyError != nil) == (historyStatus == 500))
+        #expect(!chat.isLoading)
+        #expect(!chat.store.running)
+        #expect(assistantBubbles(chat).map(\.text) == ["Hello"])
     }
 
     /// The snapshot says a turn is running with an approval open; before

@@ -62,6 +62,12 @@ final class ChatController: Identifiable {
     @ObservationIgnored var serverRequestSettled: ((_ requestID: String, _ runtimeID: String) -> Void)?
     private(set) var handle: SessionHandle?
     private(set) var isLoading = false
+    /// Keep progress visible after ChatView installs its controller: resume
+    /// can finish well before REST hydration and the snapshot/event barrier.
+    var loadingMessage: String? {
+        guard isLoading else { return nil }
+        return runtimeID == nil ? "Opening session…" : "Loading history…"
+    }
     private(set) var canLoadOlder = false
     var errorMessage: String?
     /// Transcript history couldn't be fetched (initial hydration or an
@@ -644,11 +650,13 @@ final class ChatController: Identifiable {
             ]))!
     }
 
-    /// Politely close the runtime session when the view goes away — unless
-    /// another open chat holds or is opening the same session (#112): the
-    /// backend's `session.close` would kill that window's runtime too. The
-    /// last chat to leave closes it.
+    /// Leaving a canonical Bot Chat is navigation, not session termination:
+    /// `session.close` removes its live runtime (and can interrupt its turn).
+    /// Keep it on the shared connection for the next resume; disconnect and
+    /// the backend's normal session lifecycle still release it. Ordinary
+    /// sessions close when their last viewer leaves (#112).
     func teardown() async {
+        guard !isCanonicalBotChat else { return }
         guard let runtimeID else { return }
         guard isHeldElsewhere?(sessionClaims) != true else { return }
         await connection.closeSession(sessionID: runtimeID)
