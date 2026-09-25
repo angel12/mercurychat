@@ -287,6 +287,11 @@ private struct ChatContentView: View {
     @ViewBuilder
     private func transcriptItems(_ proxy: ScrollViewProxy) -> some View {
         Group {
+            if let loadingMessage = controller.loadingMessage {
+                ProgressView(loadingMessage)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+            }
             if let historyError = controller.historyError {
                 VStack(spacing: 6) {
                     Text(historyError)

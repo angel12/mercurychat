@@ -14,6 +14,9 @@ struct BotChatControllerTests {
     final class GatewayScript: @unchecked Sendable {
         private let lock = NSLock()
         private var canonicalExists = false
+        private let running: Bool
+
+        init(running: Bool = false) { self.running = running }
 
         func setCanonicalExists(_ exists: Bool) {
             lock.withLock { canonicalExists = exists }
@@ -24,11 +27,12 @@ struct BotChatControllerTests {
             case "session.list":
                 let exists = lock.withLock { canonicalExists }
                 guard exists else { return .object(["sessions": .array([])]) }
+                let stored = params["profile"]?.stringValue == "writer" ? "stored-writer" : "stored-canonical"
                 return .object([
                     "sessions": .array([
                         .object([
-                            "id": .string("stored-canonical"),
-                            "resolved_id": .string("stored-canonical"),
+                            "id": .string(stored),
+                            "resolved_id": .string(stored),
                             "title": .string("Bot Chat"),
                             "message_count": .number(3),
                         ])
@@ -45,9 +49,13 @@ struct BotChatControllerTests {
                 lock.withLock { canonicalExists = true }
                 return .object(["session_id": .string("rt-created")])
             case "session.resume":
+                let writer = params["session_id"]?.stringValue == "stored-writer"
                 return .object([
-                    "session_id": .string("rt-resumed"),
-                    "stored_session_id": .string("stored-canonical"),
+                    "session_id": .string(writer ? "rt-writer" : "rt-resumed"),
+                    "stored_session_id": .string(writer ? "stored-writer" : "stored-canonical"),
+                    "running": .bool(running && !writer),
+                    "inflight": running && !writer
+                        ? ["user": "hi", "assistant": "Hel", "streaming": true] : .null,
                 ])
             case "session.compress":
                 return .object(["status": .string("pending")])
@@ -57,8 +65,26 @@ struct BotChatControllerTests {
         }
     }
 
+    /// Hold only A's second history request: the first A and intervening B
+    /// open normally, then returning to A exposes the slow-history window.
+    final class ReopenHistory: @unchecked Sendable {
+        let reached = TestLatch()
+        private let released = DispatchSemaphore(value: 0)
+        private let lock = NSLock()
+        private var requests = 0
+
+        func waitIfReopening(_ path: String) {
+            guard path.hasPrefix("/api/sessions/stored-canonical/messages") else { return }
+            let count = lock.withLock { requests += 1; return requests }
+            guard count == 2 else { return }
+            reached.signal()
+            _ = released.wait(timeout: .now() + 10)
+        }
+        func release() { released.signal() }
+    }
+
     private func connectedModel(
-        _ script: GatewayScript
+        _ script: GatewayScript, history: ReopenHistory? = nil
     ) async throws -> (AppModel, HermesTestServer, () -> Void) {
         let server = try await HermesTestServer.start(
             rpc: { method, params in script.respond(method: method, params: params) }
@@ -67,6 +93,7 @@ struct BotChatControllerTests {
             case ("GET", "/api/status"):
                 return TestHTTPResponse(200, #"{"auth_required": false}"#)
             default:
+                history?.waitIfReopening(request.path)
                 // Transcript hydration and friends: an empty page is fine —
                 // begin() tolerates hydration failure independently.
                 return TestHTTPResponse(200, #"{"messages": []}"#)
@@ -153,6 +180,60 @@ struct BotChatControllerTests {
 
         #expect(canonicalCreates(server).count == 1)
         #expect(rpcMethods(server).contains("session.resume"))
+    }
+
+    /// Leaving a canonical chat is navigation, not a request to end its
+    /// runtime. Exercise the real AppModel close path and await teardown
+    /// directly too, so the absence of a close is not a timing assertion.
+    @Test func switchingBotsDoesNotCloseTheirCanonicalRuntimes() async throws {
+        let script = GatewayScript(running: true)
+        script.setCanonicalExists(true)
+        let history = ReopenHistory()
+        let (model, server, cleanup) = try await connectedModel(script, history: history)
+        defer { history.release(); cleanup() }
+
+        let a = try #require(model.openChat(profile: "researcher"))
+        a.isCanonicalBotChat = true
+        await a.begin(.bot(profile: "researcher", expectCanonical: true))
+        #expect(a.store.running)
+        model.closeChat(a)
+        await a.teardown()
+        #expect(a.isInvalidated)
+        #expect(!model.openChats.contains { $0 === a })
+
+        let b = try #require(model.openChat(profile: "writer"))
+        b.isCanonicalBotChat = true
+        await b.begin(.bot(profile: "writer", expectCanonical: true))
+        model.closeChat(b)
+        await b.teardown()
+
+        let reopened = try #require(model.openChat(profile: "researcher"))
+        reopened.isCanonicalBotChat = true
+        let resuming = Task {
+            await reopened.begin(.bot(profile: "researcher", expectCanonical: true))
+        }
+        #expect(await history.reached.wait())
+        try #require(await eventually { reopened.runtimeID == "rt-resumed" })
+        #expect(reopened !== a)
+        #expect(reopened.store.items.isEmpty)
+        #expect(reopened.loadingMessage == "Loading history…")
+        #expect(b.runtimeID == "rt-writer")
+        history.release()
+        await resuming.value
+        #expect(reopened.store.running)
+        #expect(reopened.loadingMessage == nil)
+        server.pushEvent(GatewayEvent.Kind.messageDelta, sessionID: "rt-resumed", payload: ["text": "lo"])
+        #expect(await eventually {
+            reopened.store.items.contains {
+                if case .assistant(let message) = $0 { return message.text == "Hello" }
+                return false
+            }
+        }, "reopened A must receive events through AppModel's update pump")
+        let runtimeCloses = server.rpcRequests.filter {
+            $0.method == "session.close" && $0.params["session_id"]?.stringValue != "rt-probe"
+        }
+        #expect(runtimeCloses.isEmpty, "switching bots must not terminate their server runtimes")
+        #expect(canonicalCreates(server).isEmpty)
     }
 
     @Test func emptyLookupAgainstRosterSightingFailsClosed() async throws {
