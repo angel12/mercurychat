@@ -89,7 +89,7 @@ struct OlderPageGenerationTests {
 
     /// Resume "stored-1" (a full first page, so older pages exist) and start
     /// an older-page fetch that the server holds.
-    private func pagingChat() async throws -> (ChatController, Script, Task<Void, Never>, () -> Void) {
+    private func pagingChat(retry: Bool = false) async throws -> (ChatController, Script, Task<Void, Never>, () -> Void) {
         let script = Script()
         let server = try await HermesTestServer.start(
             rpc: { method, _ in
@@ -120,7 +120,10 @@ struct OlderPageGenerationTests {
         let chat = try #require(model.openChat(profile: nil))
         await chat.begin(.resume(try #require(SessionSummary(json: ["id": "stored-1"]))))
         try #require(chat.canLoadOlder)
-        let loadingOlder = Task { await chat.loadOlderMessages() }
+        let loadingOlder = Task {
+            if retry { await chat.retryHistory() }
+            else { await chat.loadOlderMessages() }
+        }
         #expect(await script.olderPage.reached.wait(), "the older page was never requested")
         return (chat, script, loadingOlder, cleanup)
     }
@@ -133,6 +136,18 @@ struct OlderPageGenerationTests {
             default: return nil
             }
         }
+    }
+
+    @Test(arguments: [false, true])
+    func pagingDoesNotInsertTheOpeningSpinner(retry: Bool) async throws {
+        let (chat, script, loadingOlder, cleanup) = try await pagingChat(retry: retry)
+        defer { cleanup() }
+        #expect(chat.isLoading)
+        #expect(chat.loadingMessage == nil)
+        script.olderPage.release()
+        await loadingOlder.value
+        #expect(!chat.isLoading)
+        #expect(chat.loadingMessage == nil)
     }
 
     /// The stale page lands while the new resume is still loading its
@@ -151,10 +166,12 @@ struct OlderPageGenerationTests {
         script.olderPage.release()
         await loadingOlder.value
         #expect(chat.isLoading, "the stale older page cleared the new resume's loading state")
+        #expect(chat.loadingMessage == "Loading history…")
 
         script.continuationPage.release()
         await resuming.value
         #expect(!chat.isLoading)
+        #expect(chat.loadingMessage == nil)
     }
 
     /// The stale page lands after the new resume has hydrated the
