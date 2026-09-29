@@ -44,6 +44,10 @@ final class PushCoordinator {
     private(set) var profileStatus: [String: ProfilePushStatus] = [:]
     /// Profiles whose pairing was confirmed with the server on this connection.
     private var confirmedThisConnection: Set<String> = []
+    /// Bumped by `resetConnection()`; work started under an older value must not write status.
+    private var generation = 0
+    /// The most recent queued mutating operation; the next one waits for it (FIFO).
+    private var tail: Task<Void, Never>?
     /// Called when a relay re-registration dropped every pairing, so the app re-syncs.
     var onReregistered: (@MainActor () -> Void)?
 
@@ -67,6 +71,17 @@ final class PushCoordinator {
 
     func settings(for serverKey: String) -> ServerPushSettings {
         settings[serverKey] ?? ServerPushSettings()
+    }
+
+    /// Runs `operation` after every previously queued operation has finished.
+    private func serialized(_ operation: @escaping @MainActor () async -> Void) async {
+        let previous = tail
+        let task = Task { @MainActor in
+            await previous?.value
+            await operation()
+        }
+        tail = task
+        await task.value
     }
 
     private func update(_ serverKey: String, _ body: (inout ServerPushSettings) -> Void) {
@@ -108,6 +123,10 @@ final class PushCoordinator {
     // MARK: User actions (connected server)
 
     func enable(server: HermesRESTClient, profiles: [String]) async {
+        await serialized { await self.performEnable(server: server, profiles: profiles) }
+    }
+
+    private func performEnable(server: HermesRESTClient, profiles: [String]) async {
         enableError = nil
         let granted: Bool
         switch await system.authorizationStatus() {
@@ -121,21 +140,26 @@ final class PushCoordinator {
             return
         }
         if !hasToken {
+            tokenError = nil
             system.registerForRemoteNotifications()
             let deadline = ContinuousClock.now.advanced(by: tokenTimeout)
-            while !hasToken, ContinuousClock.now < deadline {
+            while !hasToken, tokenError == nil, ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(50))
             }
             guard hasToken else {
-                enableError = "Couldn't register with Apple. Try again."
+                enableError = tokenError ?? "Couldn't register with Apple. Try again."
                 return
             }
         }
         update(server.endpoint.key) { $0.enabled = true }
-        await sync(server: server, profiles: profiles)
+        await performSync(server: server, profiles: profiles)
     }
 
     func disable(server: HermesRESTClient, profiles: [String]) async {
+        await serialized { await self.performDisable(server: server, profiles: profiles) }
+    }
+
+    private func performDisable(server: HermesRESTClient, profiles: [String]) async {
         let key = server.endpoint.key
         update(key) { $0.enabled = false }
         for record in await pairing.pairings() where record.server == key {
@@ -146,13 +170,19 @@ final class PushCoordinator {
     }
 
     func setProfile(_ profile: String, enabled: Bool, server: HermesRESTClient, profiles: [String]) async {
-        update(server.endpoint.key) {
-            if enabled { $0.disabledProfiles.remove(profile) } else { $0.disabledProfiles.insert(profile) }
+        await serialized {
+            self.update(server.endpoint.key) {
+                if enabled { $0.disabledProfiles.remove(profile) } else { $0.disabledProfiles.insert(profile) }
+            }
+            await self.performSync(server: server, profiles: profiles)
         }
-        await sync(server: server, profiles: profiles)
     }
 
     func setPreferences(_ preferences: PushPreferences, server: HermesRESTClient) async {
+        await serialized { await self.performSetPreferences(preferences, server: server) }
+    }
+
+    private func performSetPreferences(_ preferences: PushPreferences, server: HermesRESTClient) async {
         let key = server.endpoint.key
         update(key) { $0.preferences = preferences }
         for record in await pairing.pairings() where record.server == key {
@@ -180,6 +210,11 @@ final class PushCoordinator {
 
     /// Bring the connected server's pairings in line with the user's choices.
     func sync(server: HermesRESTClient, profiles: [String]) async {
+        await serialized { await self.performSync(server: server, profiles: profiles) }
+    }
+
+    private func performSync(server: HermesRESTClient, profiles: [String]) async {
+        let gen = generation
         let key = server.endpoint.key
         let choice = settings(for: key)
         let records = await pairing.pairings().filter { $0.server == key }
@@ -189,27 +224,27 @@ final class PushCoordinator {
             do {
                 switch (wanted, isPaired) {
                 case (true, false):
-                    try await pairProfile(profile, server: server, preferences: choice.preferences)
+                    try await pairProfile(profile, server: server, preferences: choice.preferences, gen: gen)
                 case (false, true):
                     _ = try await pairing.unpair(server: server, profile: profile)
-                    profileStatus[profile] = .off
+                    setStatus(profile, .off, gen)
                 case (true, true):
                     if confirmedThisConnection.contains(profile) {
-                        profileStatus[profile] = .paired
+                        setStatus(profile, .paired, gen)
                         continue
                     }
                     switch try await pairing.syncPairing(server: server, profile: profile) {
                     case .paired:
-                        profileStatus[profile] = .paired
-                        confirmedThisConnection.insert(profile)
+                        setStatus(profile, .paired, gen)
+                        confirm(profile, gen)
                     case .notPaired:
-                        try await pairProfile(profile, server: server, preferences: choice.preferences)
+                        try await pairProfile(profile, server: server, preferences: choice.preferences, gen: gen)
                     }
                 case (false, false):
-                    profileStatus[profile] = .off
+                    setStatus(profile, .off, gen)
                 }
             } catch {
-                profileStatus[profile] = .error(Self.message(for: error))
+                setStatus(profile, .error(Self.message(for: error)), gen)
             }
         }
         for stale in records where !profiles.contains(stale.profile) {
@@ -217,16 +252,27 @@ final class PushCoordinator {
         }
     }
 
-    private func pairProfile(_ profile: String, server: HermesRESTClient, preferences: PushPreferences) async throws {
-        profileStatus[profile] = .pairing
+    private func setStatus(_ profile: String, _ status: ProfilePushStatus, _ gen: Int) {
+        if gen == generation { profileStatus[profile] = status }
+    }
+
+    private func confirm(_ profile: String, _ gen: Int) {
+        if gen == generation { confirmedThisConnection.insert(profile) }
+    }
+
+    private func pairProfile(
+        _ profile: String, server: HermesRESTClient, preferences: PushPreferences, gen: Int
+    ) async throws {
+        setStatus(profile, .pairing, gen)
         _ = try await pairing.pair(
             server: server, profile: profile, deviceName: system.deviceName, preferences: preferences)
-        profileStatus[profile] = .paired
-        confirmedThisConnection.insert(profile)
+        setStatus(profile, .paired, gen)
+        confirm(profile, gen)
     }
 
     /// A new connection (or server): statuses and per-connection confirmations start over.
     func resetConnection() {
+        generation += 1
         profileStatus = [:]
         confirmedThisConnection = []
         enableError = nil
@@ -247,15 +293,21 @@ final class PushCoordinator {
     // MARK: Copy
 
     static func message(for error: Error) -> String {
-        switch error as? PushPairingError {
-        case .devices(.pluginNotEnabled(let profile))?:
+        var error = error
+        if case .devices(let inner)? = error as? PushPairingError { error = inner }
+        switch error as? PushDevicesError {
+        case .pluginNotEnabled(let profile)?:
             return "Enable Mercury Push for profile \(profile) on the server: hermes -p \(profile) plugins enable mercury_push"
-        case .devices(.pluginUnavailable)?:
+        case .pluginUnavailable?:
             return "Mercury Push isn't installed on this server"
-        case .devices(.relayURLInvalid)?:
+        case .relayURLInvalid?:
             return "The server's Mercury Push relay setting is invalid"
-        case .devices(.unauthorized)?:
+        case .unauthorized?:
             return "Sign in to the server again"
+        default:
+            break
+        }
+        switch error as? PushPairingError {
         case .storageUnavailable?:
             return "Unlock your device and try again"
         case .relay(.rateLimited)?:

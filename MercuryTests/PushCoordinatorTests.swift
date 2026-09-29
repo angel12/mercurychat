@@ -170,4 +170,45 @@ struct PushCoordinatorTests {
         let old = try #require(PushPayload(userInfo: ["mercury": ["v": 1, "kind": "cron", "event_id": "e", "profile": "coder"]]))
         #expect(await h.coordinator.route(for: old) == PushTapRoute(serverKey: nil, profile: "coder", sessionID: nil))
     }
+
+    @Test func messageMapsBareDevicesError() {
+        #expect(PushCoordinator.message(for: PushDevicesError.unauthorized) == "Sign in to the server again")
+    }
+
+    @Test func disableWhileEnableWaitsForTokenWins() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        h.system.onRegister = { [weak coordinator = h.coordinator] in
+            Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                await coordinator?.didRegister(deviceToken: Data(repeating: 0xab, count: 32))
+            }
+        }
+        let enabling = Task { await h.coordinator.enable(server: h.rest, profiles: ["default"]) }
+        while h.system.registerCalls == 0 { try? await Task.sleep(for: .milliseconds(5)) }
+        await h.coordinator.disable(server: h.rest, profiles: ["default"])
+        await enabling.value
+        #expect(!h.coordinator.settings(for: h.rest.endpoint.key).enabled)
+        #expect(h.backend.deviceIDs(profile: "default").isEmpty)
+    }
+
+    @Test func switchingProfileOffDuringEnableSyncIsRespected() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        let profiles = ["default", "coder"]
+        let enabling = Task { await h.coordinator.enable(server: h.rest, profiles: profiles) }
+        while h.backend.deviceIDs(profile: "default").isEmpty { await Task.yield() }
+        await h.coordinator.setProfile("coder", enabled: false, server: h.rest, profiles: profiles)
+        await enabling.value
+        #expect(h.backend.deviceIDs(profile: "default").count == 1)
+        #expect(h.backend.deviceIDs(profile: "coder").isEmpty)
+        #expect(h.coordinator.profileStatus["coder"] == .off)
+    }
+
+    @Test func tokenErrorEndsTheWaitAndIsSurfaced() async throws {
+        let h = try await Self.harness(tokenTimeout: .seconds(30)); defer { h.server.stop() }
+        h.system.onRegister = { [weak coordinator = h.coordinator] in
+            Task { coordinator?.didFailToRegister(NSError(domain: "apns", code: 1)) }
+        }
+        await h.coordinator.enable(server: h.rest, profiles: ["default"])
+        #expect(h.coordinator.enableError?.hasPrefix("Couldn't register with Apple:") == true)
+    }
 }
