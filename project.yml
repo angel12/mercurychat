@@ -28,6 +28,8 @@ targets:
       - path: Mercury/ImageAttachmentPreparer.swift
       - path: Mercury/ImagePasteboardReader.swift
       - path: Mercury/Views/TranscriptScrollState.swift
+      - path: Mercury/Push/PushSystem.swift
+      - path: Mercury/Push/PushSettings.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryKit
