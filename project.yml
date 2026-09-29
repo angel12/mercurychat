@@ -30,6 +30,7 @@ targets:
       - path: Mercury/Views/TranscriptScrollState.swift
       - path: Mercury/Push/PushSystem.swift
       - path: Mercury/Push/PushSettings.swift
+      - path: Mercury/Push/PushCoordinator.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryKit
