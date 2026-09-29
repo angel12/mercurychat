@@ -31,6 +31,7 @@
 		539AA08FE874D44AE007BD46 /* BotAdvancedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63BEC3749530E29DB9F96DE8 /* BotAdvancedView.swift */; };
 		56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5AB9D4B96A47F2A0E24656A /* RootView.swift */; };
 		584BF8743978889C3AD32FC5 /* ImageAttachmentPreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2385853D812F0AEB3C05FE /* ImageAttachmentPreparer.swift */; };
+		58BD3CFACCFE2DCE7971B59F /* PushRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1C5BE77A81AB99F57C9CE6 /* PushRoutingTests.swift */; };
 		5B65C1530850A83B3FDF13D6 /* OlderPageGenerationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF196FBEA9ECF7A9ECFDD2C6 /* OlderPageGenerationTests.swift */; };
 		64EBBBD524F2CFA0F522704B /* AbandonedCreateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDB93486105B7024469A675 /* AbandonedCreateTests.swift */; };
 		66BEC0EA880906671E1A1D8A /* BotRefreshCoalescingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B91B9951C249787DEC11894E /* BotRefreshCoalescingTests.swift */; };
@@ -115,6 +116,7 @@
 		92068ED6EF5F4C63EB44F3B7 /* PushCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushCoordinatorTests.swift; sourceTree = "<group>"; };
 		94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		95372298CE4EB18C2FDACD29 /* AppModelPasswordSignInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelPasswordSignInTests.swift; sourceTree = "<group>"; };
+		9A1C5BE77A81AB99F57C9CE6 /* PushRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRoutingTests.swift; sourceTree = "<group>"; };
 		9B194A81AC2450A2C12D7C7B /* ResumeSnapshotOrderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeSnapshotOrderingTests.swift; sourceTree = "<group>"; };
 		AF0EF1FA0B2C23FD41721AD9 /* ImageAttachmentPreparerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAttachmentPreparerTests.swift; sourceTree = "<group>"; };
 		AF196FBEA9ECF7A9ECFDD2C6 /* OlderPageGenerationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OlderPageGenerationTests.swift; sourceTree = "<group>"; };
@@ -207,6 +209,7 @@
 				4529C08F9865AA34CDA050F3 /* OpenRequestReconcileTests.swift */,
 				191088CD8A5C97C17FC4C649 /* PrivacyManifestTests.swift */,
 				92068ED6EF5F4C63EB44F3B7 /* PushCoordinatorTests.swift */,
+				9A1C5BE77A81AB99F57C9CE6 /* PushRoutingTests.swift */,
 				D497F0E624F53821520A5D51 /* PushSettingsTests.swift */,
 				0A4D31C14EEC3FDD12DF7885 /* PushTestSupport.swift */,
 				26E38B4DB1B688BED024CB77 /* ReplayLosslessTests.swift */,
@@ -448,6 +451,7 @@
 				37A5E79B1C80835F1B78E3F1 /* PrivacyManifestTests.swift in Sources */,
 				9C7228F35C07FD95BC4F16F8 /* PushCoordinator.swift in Sources */,
 				F71ACDE231B72D6DC871D698 /* PushCoordinatorTests.swift in Sources */,
+				58BD3CFACCFE2DCE7971B59F /* PushRoutingTests.swift in Sources */,
 				0B86ADDF070624F6FB234985 /* PushSettings.swift in Sources */,
 				113773D76FA918890640CE1F /* PushSettingsTests.swift in Sources */,
 				DA8927A5AC75E60E2436DA94 /* PushSystem.swift in Sources */,
