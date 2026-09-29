@@ -33,12 +33,20 @@ struct PrivacyManifestTests {
         #expect(try Self.declaredReasons() == ["NSPrivacyAccessedAPICategoryUserDefaults": ["CA92.1"]])
     }
 
-    @Test func declaresNoTrackingAndNoCollectedData() throws {
-        // Matches PRIVACY.md: the developer collects nothing.
+    @Test func declaresNoTrackingAndOnlyThePushTokenAsCollectedData() throws {
+        // Matches PRIVACY.md: the only data leaving for a developer-run service
+        // is the optional Mercury Push device token, used to deliver notifications.
         let manifest = try Self.manifest()
         #expect(manifest["NSPrivacyTracking"] as? Bool == false)
         #expect((manifest["NSPrivacyTrackingDomains"] as? [String])?.isEmpty == true)
-        #expect((manifest["NSPrivacyCollectedDataTypes"] as? [Any])?.isEmpty == true)
+        let collected = try #require(manifest["NSPrivacyCollectedDataTypes"] as? [[String: Any]])
+        #expect(collected.count == 1)
+        let entry = try #require(collected.first)
+        #expect(entry["NSPrivacyCollectedDataType"] as? String == "NSPrivacyCollectedDataTypeDeviceID")
+        #expect(entry["NSPrivacyCollectedDataTypeLinked"] as? Bool == false)
+        #expect(entry["NSPrivacyCollectedDataTypeTracking"] as? Bool == false)
+        #expect(entry["NSPrivacyCollectedDataTypePurposes"] as? [String]
+            == ["NSPrivacyCollectedDataTypePurposeAppFunctionality"])
     }
 
     /// A new use of a listed API in app code must come with a declaration.

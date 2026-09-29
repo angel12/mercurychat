@@ -1,17 +1,17 @@
 # Privacy Policy for Mercury Chat
 
-**Last updated:** August 28, 2026
+**Last updated:** September 29, 2026
 
 Mercury Chat is a client app for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It connects
 to a Hermes Agent server that **you** run and control. Mercury Chat has no backend of its own: there is no
-Mercury Chat account, no Mercury Chat server, and no service operated by the developer that your data passes
+Mercury Chat account, no Mercury Chat server, and, unless you turn on push notifications, no service operated by the developer that your data passes
 through.
 
 This policy explains what Mercury Chat stores, what it sends, and where it sends it.
 
 ## The short version
 
-- Mercury Chat collects **no** personal data and transmits **no** data to the developer.
+- Mercury Chat collects **no** personal data. If you turn on push notifications, a device token and pairing records go to the developer's push relay (see below); nothing else is transmitted to the developer.
 - Mercury Chat contains **no** analytics, advertising, tracking, or crash-reporting services, and no
   third-party SDKs of any kind.
 - Everything you type in Mercury Chat goes to the Hermes Agent server you chose to connect to, and
@@ -64,7 +64,16 @@ services' handling of your data is governed by their own terms and privacy polic
 one.
 
 Mercury Chat does not contact any host other than the server address you supply and, during OAuth
-sign-in, the authorization endpoint that your server advertises.
+sign-in, the authorization endpoint that your server advertises. The one exception is the optional Mercury Push relay described below.
+
+## Push notifications (optional)
+
+Push notifications are off until you turn them on in **Notifications**. When they're on:
+
+- Your device's Apple push token, an installation ID the app generates, and the Hermes profiles you chose (as opaque pairing records) are sent to the Mercury Push relay at `mpns.angelsolutionsnm.com`, which is operated by the developer. Your Hermes server keeps a matching record and sends notifications through the relay.
+- Notifications carry short generic text (for example "Needs your approval" or "Response ready"), a session title or cron job name, and identifiers the app uses to open the right session. The relay passes them to Apple for delivery and doesn't store them. Your conversations never go to the relay or to Apple.
+- The installation ID and pairing records are stored in the device Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, never synchronized).
+- Turning notifications off revokes the pairings. The relay deletes installations that have no pairings, and ones idle for 90 days.
 
 ## Network and transport
 
@@ -101,7 +110,7 @@ or, in fact, from anyone.
 
 ## Your rights
 
-Because the developer receives, stores, and processes none of your data, there is nothing held by
+Because the developer receives, stores, and processes none of your data (apart from the optional push token and pairing records above, which you revoke by turning notifications off), there is little held by
 the developer to access, correct, export, or delete. Data held by your Hermes Agent server is under
 your control on that server. Locally stored data can be removed by forgetting the server in the app
 or by deleting the app.

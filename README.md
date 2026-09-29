@@ -54,6 +54,7 @@ Both test workflows fetch MercuryKit from GitHub.
 - Subagent activity (`subagent.start/tool/complete` on the parent session) is flattened to labeled tool rows in v1, not rendered as a nested spawn tree.
 - One socket per connection; profile scoping via the `profile` param (no per-profile socket pooling).
 - Voice (`/api/audio/*`) is out of v1 scope; the transport keeps `speakStreamURL`/`transcribe` available for a later graft.
+- iOS push notifications via Mercury Push (MercuryKit 0.5.1, angel12/mercury-push). The Hermes plugin must be enabled in each profile.
 
 ## Connection recipes
 
@@ -98,3 +99,11 @@ Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-0
 - [x] Contract-drift notice (v5 server vs v6 build) as a transient, hit-transparent toast. *(Since #27 M2 it warns only below the required contract 7.)*
 - [x] PKCE against a real OAuth provider — native `native_pkce` sign-in exercised end to end (loopback listener → code exchange → authenticated WS dial) on 2026-08-20.
 - [ ] iOS 10-minute background → foreground poke-reconnect (wired via scenePhase; not soak-tested).
+
+### Push notifications (iOS)
+- [ ] Enable notifications, accept the permission, and every profile shows Paired.
+- [ ] `hermes mercury-push test` delivers a banner.
+- [ ] With the app in the background, an approval arrives as a time-sensitive banner. Tapping it opens the session with its approval card.
+- [ ] With the app open on another session, a response banner appears. On the same session, no banner appears.
+- [ ] A notification from a second saved server switches servers when tapped.
+- [ ] With one profile switched off, events there don't push.
