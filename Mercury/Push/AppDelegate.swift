@@ -8,7 +8,16 @@
     @MainActor
     final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
         /// Set by MercuryApp's first `.task`.
-        weak var model: AppModel?
+        weak var model: AppModel? {
+            didSet {
+                guard model != nil, let payload = pendingPayload else { return }
+                pendingPayload = nil
+                Task { await open(payload) }
+            }
+        }
+
+        /// A tap that arrived before `model` was set (cold launch); latest wins.
+        private var pendingPayload: PushPayload?
 
         func application(
             _ application: UIApplication,
@@ -50,7 +59,10 @@
         }
 
         private func open(_ payload: PushPayload) async {
-            guard let model else { return }
+            guard let model else {
+                pendingPayload = payload
+                return
+            }
             let route = await model.push.route(for: payload)
             await model.openPushRoute(route)
         }

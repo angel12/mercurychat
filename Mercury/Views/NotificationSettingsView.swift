@@ -8,7 +8,7 @@
     struct NotificationSettingsView: View {
         @Environment(AppModel.self) private var model
         @Environment(\.dismiss) private var dismiss
-        @State private var busy = false
+        @State private var inFlight = 0
         @State private var testResult: String?
 
         private var serverKey: String? { model.endpoint?.key }
@@ -25,7 +25,6 @@
                                 set: { on in run { on
                                     ? await model.push.enable(server: rest, profiles: profileNames)
                                     : await model.push.disable(server: rest, profiles: profileNames) } }))
-                            .disabled(busy)
                             if let error = model.push.enableError {
                                 Text(error).font(.callout).foregroundStyle(.orange)
                                 if model.push.authorization == .denied {
@@ -40,6 +39,7 @@
                         } footer: {
                             Text("Notifications are delivered through the Mercury Push relay. They carry short generic text, never your conversations.")
                         }
+                        .disabled(inFlight > 0)
 
                         if choice.enabled {
                             Section("Profiles") {
@@ -53,6 +53,7 @@
                                     }
                                 }
                             }
+                            .disabled(inFlight > 0)
                             Section("Notify me about") {
                                 preferenceToggle("Approvals", \.approval, choice, rest)
                                 preferenceToggle("Responses", \.responseReady, choice, rest)
@@ -60,12 +61,14 @@
                                 preferenceToggle("Delegated tasks", \.taskDone, choice, rest)
                                 preferenceToggle("Cron", \.cron, choice, rest)
                             }
+                            .disabled(inFlight > 0)
                             Section {
                                 Button("Send test notification") {
                                     run { testResult = await model.push.sendTest(server: rest) ?? "Sent." }
                                 }
                                 if let testResult { Text(testResult).font(.callout).foregroundStyle(.secondary) }
                             }
+                            .disabled(inFlight > 0)
                         }
                         Section {
                             Link("Privacy Policy", destination: MercuryLinks.privacyPolicy)
@@ -81,10 +84,10 @@
         }
 
         private func run(_ work: @escaping @MainActor () async -> Void) {
-            busy = true
+            inFlight += 1
             Task {
                 await work()
-                busy = false
+                inFlight -= 1
             }
         }
 
