@@ -3,6 +3,9 @@ import SwiftUI
 @main
 struct MercuryApp: App {
     @State private var model = AppModel()
+    #if os(iOS)
+        @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    #endif
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -23,7 +26,13 @@ struct MercuryApp: App {
         WindowGroup(id: Self.mainWindowID) {
             RootView()
                 .environment(model)
-                .task { await model.autoConnectOnLaunch() }
+                .task {
+                    #if os(iOS)
+                        appDelegate.model = model
+                        await model.push.applicationDidLaunch()
+                    #endif
+                    await model.autoConnectOnLaunch()
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             // Skip any reconnect backoff the moment the app is visible again.

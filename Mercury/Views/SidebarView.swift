@@ -13,6 +13,7 @@ struct SidebarView: View {
     @State private var botSearch = ""
     @State private var showHiddenBots = false
     @State private var newBotShown = false
+    @State private var notificationsShown = false
 
     var body: some View {
         @Bindable var model = model
@@ -97,6 +98,15 @@ struct SidebarView: View {
                     Label("New Session", systemImage: "square.and.pencil")
                 }
             }
+            #if os(iOS)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        notificationsShown = true
+                    } label: {
+                        Label("Notifications", systemImage: "bell")
+                    }
+                }
+            #endif
             ToolbarItem(placement: .cancellationAction) {
                 Menu {
                     Link("Privacy Policy", destination: MercuryLinks.privacyPolicy)
@@ -107,6 +117,9 @@ struct SidebarView: View {
                 }
             }
         }
+        #if os(iOS)
+            .sheet(isPresented: $notificationsShown) { NotificationSettingsView() }
+        #endif
     }
 
     private var tabSection: some View {
