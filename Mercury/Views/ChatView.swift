@@ -131,6 +131,9 @@ private struct ChatContentView: View {
                 controller: controller, text: $composerText, attachments: attachments)
         }
         .overlay { dropTarget }
+        .onChange(of: composerText) { _, text in
+            controller.hasUnsentDraft = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
         // The drop destination sits on the WHOLE chat surface, not just the
         // composer strip: dropping a file anywhere in the window attaches it.

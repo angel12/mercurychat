@@ -5,12 +5,13 @@ options:
     macOS: "14.0"
     visionOS: "2.0"
   xcodeVersion: "16.0"
+  createIntermediateGroups: true
 packages:
   # The shared protocol kit, pinned to the same version as
   # Packages/MercuryCore/Package.swift so both references resolve to one copy.
   MercuryKit:
     url: https://github.com/angel12/mercurykit
-    exactVersion: 0.4.1
+    exactVersion: 0.5.1
   MercuryCore:
     path: Packages/MercuryCore
 targets:
@@ -28,6 +29,9 @@ targets:
       - path: Mercury/ImageAttachmentPreparer.swift
       - path: Mercury/ImagePasteboardReader.swift
       - path: Mercury/Views/TranscriptScrollState.swift
+      - path: Mercury/Push/PushSystem.swift
+      - path: Mercury/Push/PushSettings.swift
+      - path: Mercury/Push/PushCoordinator.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryKit
@@ -66,6 +70,8 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=xros*]": AppIconVision
         "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=xrsimulator*]": AppIconVision
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": Mercury/MercuryiOS.entitlements
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]": Mercury/MercuryiOS.entitlements
     info:
       path: Mercury/Info.plist
       properties:

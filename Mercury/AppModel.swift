@@ -104,6 +104,11 @@ final class AppModel {
     /// Set by the first `autoConnectOnLaunch`.
     private var didAutoConnect = false
 
+    /// False until launch has finished connecting (`autoConnectOnLaunch` returned, or
+    /// any `connect(endpoint:credentials:)` began): a push tap before then is only
+    /// stored, so launch's own connect can't cancel the tap's server switch.
+    private var launchSettled = false
+
     // MARK: Navigation
 
     /// A bot roster row's click target: the profile plus its server-resolved
@@ -218,6 +223,8 @@ final class AppModel {
     }
 
     private let tokenStore: KeychainTokenStore
+    /// Mercury Push: pairing, per-server choices, and tap resolution.
+    let push: PushCoordinator
     private var updatePump: Task<Void, Never>?
 
     /// The Keychain service Mercury Chat's saved credentials live under.
@@ -226,9 +233,16 @@ final class AppModel {
     static let keychainService = "com.mercury.tokens"
 
     /// Tests inject an isolated keychain service so fixtures never touch
-    /// the real `com.mercury.tokens` items.
-    init(tokenStore: KeychainTokenStore = KeychainTokenStore(service: AppModel.keychainService)) {
+    /// the real `com.mercury.tokens` items, and an isolated push coordinator.
+    init(
+        tokenStore: KeychainTokenStore = KeychainTokenStore(service: AppModel.keychainService),
+        push: PushCoordinator? = nil
+    ) {
         self.tokenStore = tokenStore
+        self.push = push ?? PushCoordinator.live(system: PushSystemFactory.make())
+        self.push.onReregistered = { [weak self] in
+            Task { await self?.syncPush() }
+        }
     }
 
     /// Monotonic guard for the connect flow: `connect()` suspends across the
@@ -316,19 +330,24 @@ final class AppModel {
     }
     private(set) var pendingPasswordLogin: PendingPasswordLogin?
 
-    func autoConnectOnLaunch() async {
+    /// `lastServer` is injectable for tests (parallel tests share the real default).
+    func autoConnectOnLaunch(
+        lastServer: String? = UserDefaults.standard.string(forKey: "lastServer")
+    ) async {
         // Once per launch, not per window (#112): every new window's root
         // runs this `.task`, and a second run would re-dial the last server
         // after a deliberate disconnect — or, mid-connect (connection still
         // nil), restart the first window's connect from scratch.
         guard !didAutoConnect else { return }
         didAutoConnect = true
-        guard connection == nil,
-            let last = UserDefaults.standard.string(forKey: "lastServer"),
+        if connection == nil,
+            let last = lastServer,
             let parsed = try? ServerEndpoint.parse(last),
             let credentials = tokenStore.credentials(for: parsed.endpoint)
-        else { return }
-        await connect(endpoint: parsed.endpoint, credentials: credentials)
+        {
+            await connect(endpoint: parsed.endpoint, credentials: credentials)
+        }
+        await settleLaunch()
     }
 
     /// Parse input (URL, host:port, or dashboard URL with `?token=`),
@@ -347,7 +366,16 @@ final class AppModel {
         }
     }
 
+    /// A connect the user (or launch) asked for. Once launch has settled, it
+    /// supersedes any push tap still waiting to open — that tap's server switch
+    /// failed or was abandoned, and must not fire on this unrelated connection.
     func connect(endpoint: ServerEndpoint, credentials: ServerCredentials?) async {
+        if launchSettled { pendingPushRoute = nil }
+        launchSettled = true
+        await openConnection(endpoint: endpoint, credentials: credentials)
+    }
+
+    private func openConnection(endpoint: ServerEndpoint, credentials: ServerCredentials?) async {
         disconnect()
         connectGeneration += 1
         let generation = connectGeneration
@@ -609,6 +637,7 @@ final class AppModel {
         browseRequest += 1  // orphan any in-flight refresh (#95)
         browseLoading = false
         selectedProfile = nil
+        push.resetConnection()
         contractNotice = nil
         contractChecked = false
         keychainNotice = nil
@@ -865,6 +894,16 @@ final class AppModel {
                     // profile the picker now shows (#95).
                     if selectedProfile != nil { await refreshProjects() }
                 }
+                // A waiting tap opens first: navigation never waits on the push
+                // sync (one pairing check per profile, queued behind any other
+                // coordinator work).
+                guard generation == connectGeneration else { return }
+                if let route = pendingPushRoute {
+                    pendingPushRoute = nil
+                    await openPushRoute(route)
+                }
+                guard generation == connectGeneration else { return }  // the tap switched servers
+                await syncPush()
             }
         }
         // Bot Mode probe: once per connection (reconnects keep the verdict; a
@@ -1266,6 +1305,115 @@ final class AppModel {
                 "This server speaks desktop contract v\(reported); Mercury Chat needs v\(Self.contractRequirement.minimum) or newer. Approval, clarify, sudo and secret prompts won't appear until the backend is updated."
         }
         contractChecked = true
+    }
+
+    // MARK: Push
+
+    /// A push tap for a route that can't open yet (cold launch, or mid-switch).
+    private var pendingPushRoute: PushTapRoute?
+
+    /// Filled by a push tap for a server with no saved credentials; ConnectView consumes it.
+    var connectPrefill: String?
+
+    /// A push tap for another server while work would be lost: the UI asks first.
+    struct PendingPushSwitch: Equatable {
+        var route: PushTapRoute
+        var fromName: String
+        var toName: String
+    }
+    private(set) var pendingPushSwitch: PendingPushSwitch?
+
+    /// Sync the connected server's pairings, only when the user turned push on for it.
+    func syncPush() async {
+        guard let connection, let endpoint, push.settings(for: endpoint.key).enabled, !profiles.isEmpty
+        else { return }
+        await push.sync(server: connection.rest, profiles: profiles.map(\.name))
+    }
+
+    /// A running turn or an unsent draft in any open chat.
+    var hasWorkAtRisk: Bool {
+        openChats.contains { $0.store.running || $0.hasUnsentDraft }
+    }
+
+    func isShowingSession(_ id: String) -> Bool {
+        liveWindows.contains { window in
+            if case .session(let session)? = window.route { return session.storedID == id }
+            return false
+        }
+    }
+
+    /// Foreground rule: hide a banner only when a window already shows that
+    /// session on this server.
+    func shouldPresentPush(_ route: PushTapRoute, appActive: Bool) -> Bool {
+        guard appActive, let id = route.sessionID else { return true }
+        if let key = route.serverKey, key != endpoint?.key { return true }
+        return !isShowingSession(id)
+    }
+
+    func openPushRoute(_ route: PushTapRoute) async {
+        guard launchSettled else {
+            pendingPushRoute = route
+            return
+        }
+        if let key = route.serverKey, key != endpoint?.key {
+            let toName = (try? ServerEndpoint.parse(key).endpoint.displayName) ?? key
+            if hasWorkAtRisk {
+                pendingPushSwitch = PendingPushSwitch(
+                    route: route, fromName: endpoint?.displayName ?? "", toName: toName)
+                return
+            }
+            await switchServer(for: route)
+            return
+        }
+        guard connection != nil, !profiles.isEmpty else {
+            pendingPushRoute = route
+            return
+        }
+        if route.profile != selectedProfile, profiles.contains(where: { $0.name == route.profile }) {
+            await selectProfile(route.profile)
+        }
+        guard let id = route.sessionID, let window = liveWindows.first,
+            let session = SessionSummary(
+                json: .object(["session_id": .string(id), "profile": .string(route.profile)]))
+        else { return }
+        window.route = .session(session)
+    }
+
+    func confirmPushSwitch() async {
+        guard let pending = pendingPushSwitch else { return }
+        pendingPushSwitch = nil
+        await switchServer(for: pending.route)
+    }
+
+    func cancelPushSwitch() {
+        pendingPushSwitch = nil
+    }
+
+    private func switchServer(for route: PushTapRoute) async {
+        guard let key = route.serverKey, let target = try? ServerEndpoint.parse(key).endpoint else { return }
+        guard let credentials = tokenStore.credentials(for: target) else {
+            disconnect()
+            connectPrefill = key
+            return
+        }
+        pendingPushRoute = route
+        await openConnection(endpoint: target, credentials: credentials)
+        // Failed, or stopped at a sign-in / plaintext prompt: drop the tap so it
+        // can't fire on some later, unrelated connection.
+        if connection == nil, pendingPushRoute == route { pendingPushRoute = nil }
+    }
+
+    /// Launch finished connecting. Connected: the profiles-loaded path opens a
+    /// waiting tap (switching servers then if it names another). Not connected
+    /// (no saved server, or the connect failed): a tap naming another server
+    /// switches to it now; one for the failed or unknown server is dropped.
+    private func settleLaunch() async {
+        launchSettled = true
+        guard connection == nil, let route = pendingPushRoute else { return }
+        pendingPushRoute = nil
+        if let key = route.serverKey, key != endpoint?.key {
+            await switchServer(for: route)
+        }
     }
 }
 

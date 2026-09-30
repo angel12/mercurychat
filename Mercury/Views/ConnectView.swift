@@ -54,6 +54,15 @@ struct ConnectView: View {
             .frame(maxWidth: .infinity)
         }
         .sheet(isPresented: $showHelp) { ConnectHelpView() }
+        .onAppear { applyPrefill() }
+        .onChange(of: model.connectPrefill) { _, _ in applyPrefill() }
+    }
+
+    /// A push tap for a server with no saved credentials lands here with the server filled in.
+    private func applyPrefill() {
+        guard let prefill = model.connectPrefill else { return }
+        form.setServer(prefill)
+        model.connectPrefill = nil
     }
 
     private var header: some View {

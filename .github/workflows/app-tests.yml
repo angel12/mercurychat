@@ -61,3 +61,15 @@ jobs:
           status=$?
           kill "$watchdog" 2>/dev/null
           exit $status
+
+  ios-build:
+    name: xcodebuild build (Mercury, iOS Simulator)
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build Mercury for the iOS Simulator
+        run: xcodebuild -project Mercury.xcodeproj -scheme Mercury -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build

@@ -26,6 +26,10 @@ final class ChatController: Identifiable {
     let id = UUID()
     let store = TranscriptStore()
 
+    /// The composer holds text the user hasn't sent. Kept current by ChatView;
+    /// a push tap for another server asks before discarding it.
+    var hasUnsentDraft = false
+
     /// Runtime id — what RPCs take; recycled on backend restart.
     private(set) var runtimeID: String?
     /// Durable id — what resume/hydration take; re-anchored on every resume.

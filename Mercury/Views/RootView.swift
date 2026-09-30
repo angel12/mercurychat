@@ -21,6 +21,18 @@ struct RootView: View {
         // navigation; nil (no key window) disables it.
         .focusedSceneValue(\.windowNavigation, navigation)
         .onAppear { model.register(navigation) }
+        .alert(
+            "Switch servers?",
+            isPresented: Binding(
+                get: { model.pendingPushSwitch != nil },
+                set: { if !$0 { model.cancelPushSwitch() } }),
+            presenting: model.pendingPushSwitch
+        ) { _ in
+            Button("Switch", role: .destructive) { Task { await model.confirmPushSwitch() } }
+            Button("Cancel", role: .cancel) { model.cancelPushSwitch() }
+        } message: { pending in
+            Text("This notification is from \(pending.toName). Switch from \(pending.fromName)? Unsent drafts and running turns on \(pending.fromName) will stop.")
+        }
     }
 }
 
