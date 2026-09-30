@@ -3,26 +3,27 @@
 **Last updated:** September 29, 2026
 
 Mercury Chat is a client app for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It connects
-to a Hermes Agent server that **you** run and control. Mercury Chat has no backend of its own: there is no
-Mercury Chat account, no Mercury Chat server, and, unless you turn on push notifications, no service operated by the developer that your data passes
-through.
+to a Hermes Agent server that **you** run and control. Mercury Chat has no backend of its own apart from an
+optional push notification relay: there is no Mercury Chat account, and, unless you turn on push notifications, no service operated by the developer that
+your data passes through.
 
 This policy explains what Mercury Chat stores, what it sends, and where it sends it.
 
 ## The short version
 
-- Mercury Chat collects **no** personal data. If you turn on push notifications, a device token and pairing records go to the developer's push relay (see below); nothing else is transmitted to the developer.
+- Mercury Chat collects **no** personal data. If you turn on push notifications, the developer's push relay receives a device token, a pairing record for each profile you pair (labelled with the profile's name and your server's hostname), the IP addresses of your device and your server, and notification text in transit (see below); nothing else is transmitted to the developer.
 - Mercury Chat contains **no** analytics, advertising, tracking, or crash-reporting services, and no
   third-party SDKs of any kind.
 - Everything you type in Mercury Chat goes to the Hermes Agent server you chose to connect to, and
-  nowhere else.
+  nowhere else, except that a notification you turned on may show a session title (see below).
 - Credentials are stored in the device Keychain; server addresses are stored in app preferences.
   Both stay on your device.
 
 ## Information stored on your device
 
-Mercury Chat stores the following locally. None of it is transmitted to the developer or to any third
-party.
+Mercury Chat stores the following locally. Apart from the push notification items, which are used
+with the Mercury Push relay and your server while notifications are on (see below), none of it is
+transmitted to the developer or to any third party.
 
 | What | Where | Why |
 |---|---|---|
@@ -30,6 +31,8 @@ party.
 | The most recently used server | App preferences | To reconnect automatically when you reopen the app |
 | Servers you explicitly allowed over plaintext HTTP | App preferences | So Mercury Chat does not re-prompt for a warning you already accepted |
 | Access tokens, passwords, and OAuth credentials for those servers | Device Keychain | To authenticate to your server without asking every time |
+| Push notification choices: which servers and profiles have notifications on, and which kinds | App preferences (`pushSettings`) | To remember your notification settings |
+| The push installation ID and secret, and a pairing record for each paired profile | Device Keychain | To authenticate to the Mercury Push relay and manage pairings with your server |
 
 Keychain items are written with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: they are
 available only after the device has been unlocked once, and they are **not** synchronized to iCloud
@@ -40,7 +43,9 @@ server when you resume a session. Mercury Chat does not maintain its own separat
 your conversations.
 
 Removing a saved server from the connect screen deletes its stored credentials from the Keychain and
-its address from app preferences. Deleting the app removes all locally stored data.
+its address from app preferences. Deleting the app removes its app preferences, but Keychain items
+(saved credentials and push pairing records) can remain on the device afterward. To remove them, forget
+each server and turn notifications off (which also revokes the pairings) before deleting the app.
 
 ## Information sent to your Hermes Agent server
 
@@ -70,9 +75,10 @@ sign-in, the authorization endpoint that your server advertises. The one excepti
 
 Push notifications are off until you turn them on in **Notifications**. When they're on:
 
-- Your device's Apple push token, an installation ID the app generates, and the Hermes profiles you chose (as opaque pairing records) are sent to the Mercury Push relay at `mpns.angelsolutionsnm.com`, which is operated by the developer. Your Hermes server keeps a matching record and sends notifications through the relay.
-- Notifications carry short generic text (for example "Needs your approval" or "Response ready"), a session title or cron job name, and identifiers the app uses to open the right session. The relay passes them to Apple for delivery and doesn't store them. Your conversations never go to the relay or to Apple.
-- The installation ID and pairing records are stored in the device Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, never synchronized).
+- Your device's Apple push token is sent to the Mercury Push relay at `mpns.angelsolutionsnm.com`, which is operated by the developer; the relay gives the app an installation ID and secret. For each profile you turn on, your Hermes server pairs with the relay under a label made of the profile's name and the server's hostname (for example `coder@my-mac`). Your Hermes server keeps a matching record and sends notifications through the relay.
+- The relay sees the IP addresses of your device and of your Hermes server when they connect to it, and uses them for rate limiting.
+- Notifications carry short generic text (for example "Needs your approval" or "Response ready"), a session title or cron job name, and identifiers the app uses to open the right session. The relay passes them to Apple for delivery as they arrive and doesn't store them. Your conversations never go to the relay or to Apple.
+- The installation ID, its secret, and the pairing records are stored in the device Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, never synchronized).
 - Turning notifications off revokes the pairings. The relay deletes installations that have no pairings, and ones idle for 90 days.
 
 ## Network and transport
@@ -97,7 +103,7 @@ closes immediately afterward.
 - No third-party crash-reporting or attribution SDKs.
 - No sale or sharing of personal information — no personal information is collected to sell or
   share.
-- No user accounts, registration, or profiles with the developer.
+- No user accounts, registration, or user profiles with the developer.
 
 Mercury Chat does not collect data as defined by Apple's App Tracking Transparency framework and does not
 present a tracking prompt.
@@ -112,8 +118,8 @@ or, in fact, from anyone.
 
 Because the developer receives, stores, and processes none of your data (apart from the optional push token and pairing records above, which you revoke by turning notifications off), there is little held by
 the developer to access, correct, export, or delete. Data held by your Hermes Agent server is under
-your control on that server. Locally stored data can be removed by forgetting the server in the app
-or by deleting the app.
+your control on that server. Locally stored data can be removed by forgetting the server in the app and turning
+notifications off; deleting the app alone can leave Keychain items behind (see above).
 
 ## Changes to this policy
 

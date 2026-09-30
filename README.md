@@ -101,6 +101,8 @@ Live checks below were run against `hermes serve` 0.20.0 in token mode on 2026-0
 - [ ] iOS 10-minute background → foreground poke-reconnect (wired via scenePhase; not soak-tested).
 
 ### Push notifications (iOS)
+Test push with Debug builds: a Release build run from Xcode tells the relay to use production APNs, but while it's development-signed (`aps-environment` = `development`) its device token is a sandbox token, so delivery fails. TestFlight and App Store builds are fine, because export rewrites `aps-environment` to production.
+
 - [ ] Enable notifications, accept the permission, and every profile shows Paired.
 - [ ] `hermes mercury-push test` delivers a banner.
 - [ ] With the app in the background, an approval arrives as a time-sensitive banner. Tapping it opens the session with its approval card.
