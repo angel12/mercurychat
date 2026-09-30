@@ -5,6 +5,7 @@ options:
     macOS: "14.0"
     visionOS: "2.0"
   xcodeVersion: "16.0"
+  createIntermediateGroups: true
 packages:
   # The shared protocol kit, pinned to the same version as
   # Packages/MercuryCore/Package.swift so both references resolve to one copy.

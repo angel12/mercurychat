@@ -180,8 +180,6 @@
 				32CC2A933D91BD18026CB2F9 /* Mercury */,
 				16B9D390B9E721F086B0732D /* MercuryTests */,
 				A64A5206569B2C5FC5C81329 /* Packages */,
-				5DCCE31864EDE6F0CF3E29E1 /* Push */,
-				34EF0B497D35DDAC5A3A45EA /* Views */,
 				C3720C5B3CF5336173F4D614 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -264,8 +262,7 @@
 				261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */,
 				CC742A6027C58E24CAD9087D /* TranscriptScrollState.swift */,
 			);
-			name = Views;
-			path = Mercury/Views;
+			path = Views;
 			sourceTree = "<group>";
 		};
 		5DCCE31864EDE6F0CF3E29E1 /* Push */ = {
@@ -277,8 +274,7 @@
 				CD6FD450217A735105CD8110 /* PushSystem.swift */,
 				1036E0CF55F49224B91272FE /* UIKitPushSystem.swift */,
 			);
-			name = Push;
-			path = Mercury/Push;
+			path = Push;
 			sourceTree = "<group>";
 		};
 		A64A5206569B2C5FC5C81329 /* Packages */ = {
