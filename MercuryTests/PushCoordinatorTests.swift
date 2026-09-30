@@ -13,7 +13,10 @@ struct PushCoordinatorTests {
         let rest: HermesRESTClient
     }
 
-    static func harness(tokenTimeout: Duration = .seconds(2)) async throws -> Harness {
+    static func harness(
+        tokenTimeout: Duration = .seconds(2),
+        defaults: UserDefaults = UserDefaults(suiteName: "push-\(UUID().uuidString)")!
+    ) async throws -> Harness {
         let backend = FakePushBackend()
         let server = try await HermesTestServer.start { backend.handle($0) ?? TestHTTPResponse(200) }
         let keychain = InMemoryPushKeychain()
@@ -24,7 +27,7 @@ struct PushCoordinatorTests {
         let system = FakePushSystem()
         let coordinator = PushCoordinator(
             pairing: pairing, system: system,
-            settingsStore: PushSettingsStore(defaults: UserDefaults(suiteName: "push-\(UUID().uuidString)")!),
+            settingsStore: PushSettingsStore(defaults: defaults),
             tokenTimeout: tokenTimeout)
         system.onRegister = { [weak coordinator] in
             Task { await coordinator?.didRegister(deviceToken: Data(repeating: 0xab, count: 32)) }
@@ -210,5 +213,70 @@ struct PushCoordinatorTests {
         }
         await h.coordinator.enable(server: h.rest, profiles: ["default"])
         #expect(h.coordinator.enableError?.hasPrefix("Couldn't register with Apple:") == true)
+    }
+
+    @Test func launchDoesNotRegisterWhenNoServerHasPushOn() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        h.system.status = .authorized
+        await h.coordinator.applicationDidLaunch()
+        #expect(h.coordinator.authorization == .authorized)
+        #expect(h.system.registerCalls == 0)
+        #expect(h.backend.log.isEmpty)
+    }
+
+    @Test func launchRegistersWhenAServerHasPushOn() async throws {
+        let defaults = UserDefaults(suiteName: "push-\(UUID().uuidString)")!
+        PushSettingsStore(defaults: defaults).save(["http://example.test:9119": ServerPushSettings(enabled: true)])
+        let h = try await Self.harness(defaults: defaults); defer { h.server.stop() }
+        h.system.status = .authorized
+        await h.coordinator.applicationDidLaunch()
+        #expect(h.system.registerCalls == 1)
+    }
+
+    @Test func launchNeverRegistersWithoutAuthorization() async throws {
+        let defaults = UserDefaults(suiteName: "push-\(UUID().uuidString)")!
+        PushSettingsStore(defaults: defaults).save(["http://example.test:9119": ServerPushSettings(enabled: true)])
+        let h = try await Self.harness(defaults: defaults); defer { h.server.stop() }
+        h.system.status = .notDetermined
+        await h.coordinator.applicationDidLaunch()
+        #expect(h.system.registerCalls == 0)
+        #expect(h.system.requestCalls == 0)
+    }
+
+    @Test func operationsQueuedBeforeAResetWriteNoStatus() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        h.system.onRegister = { [weak coordinator = h.coordinator] in
+            Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                await coordinator?.didRegister(deviceToken: Data(repeating: 0xab, count: 32))
+            }
+        }
+        let enabling = Task { await h.coordinator.enable(server: h.rest, profiles: ["default"]) }
+        while h.system.registerCalls == 0 { try? await Task.sleep(for: .milliseconds(5)) }
+        let syncing = Task { await h.coordinator.sync(server: h.rest, profiles: ["default"]) }
+        try await Task.sleep(for: .milliseconds(50))  // the sync is queued behind the token wait
+        h.coordinator.resetConnection()  // the user moved to another server
+        await enabling.value
+        await syncing.value
+        #expect(h.coordinator.profileStatus.isEmpty)
+        #expect(h.coordinator.enableError == nil)
+        // The user's choice for that server still stands.
+        #expect(h.coordinator.settings(for: h.rest.endpoint.key).enabled)
+    }
+
+    @Test func syncWithNoProfilesUnpairsNothing() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        await h.coordinator.enable(server: h.rest, profiles: ["default"])
+        await h.coordinator.sync(server: h.rest, profiles: [])
+        #expect(h.backend.deviceIDs(profile: "default").count == 1)
+    }
+
+    @Test func refreshAuthorizationReadsWithoutPrompting() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        h.system.status = .denied
+        await h.coordinator.refreshAuthorization()
+        #expect(h.coordinator.authorization == .denied)
+        #expect(h.system.requestCalls == 0)
+        #expect(h.system.registerCalls == 0)
     }
 }

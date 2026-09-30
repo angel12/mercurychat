@@ -25,13 +25,15 @@
                                 set: { on in run { on
                                     ? await model.push.enable(server: rest, profiles: profileNames)
                                     : await model.push.disable(server: rest, profiles: profileNames) } }))
-                            if let error = model.push.enableError {
-                                Text(error).font(.callout).foregroundStyle(.orange)
-                                if model.push.authorization == .denied {
-                                    Button("Open Settings") { model.push.openSystemSettings() }
-                                }
+                            let denied = model.push.authorization == .denied
+                            if denied {
+                                Text(PushCoordinator.deniedMessage).font(.callout).foregroundStyle(.orange)
+                                Button("Open Settings") { model.push.openSystemSettings() }
                             }
-                            if let error = model.push.tokenError {
+                            if let error = model.push.enableError, !(denied && error == PushCoordinator.deniedMessage) {
+                                Text(error).font(.callout).foregroundStyle(.orange)
+                            }
+                            if let error = model.push.tokenError, error != model.push.enableError {
                                 Text(error).font(.callout).foregroundStyle(.orange)
                             }
                         } header: {
@@ -79,7 +81,10 @@
                 }
                 .navigationTitle("Notifications")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-                .task { await model.syncPush() }
+                .task {
+                    await model.push.refreshAuthorization()
+                    await model.syncPush()
+                }
             }
         }
 
@@ -96,7 +101,8 @@
             case .paired?: Text("Paired").font(.caption).foregroundStyle(.secondary)
             case .pairing?: Text("Pairing…").font(.caption).foregroundStyle(.secondary)
             case .error(let message)?: Text(message).font(.caption).foregroundStyle(.red)
-            case .off?, nil: EmptyView()
+            case .off?: Text("Off").font(.caption).foregroundStyle(.secondary)
+            case nil: EmptyView()
             }
         }
 

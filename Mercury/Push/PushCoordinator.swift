@@ -93,10 +93,19 @@ final class PushCoordinator {
 
     // MARK: APNs events
 
-    /// On launch: re-register only when already authorized (never prompts).
+    /// On launch: re-register only when already authorized (never prompts) and some
+    /// server has push on — otherwise the token would reach the relay for nothing.
+    /// `enable` registers on demand.
     func applicationDidLaunch() async {
         authorization = await system.authorizationStatus()
-        if authorization == .authorized { system.registerForRemoteNotifications() }
+        if authorization == .authorized, settings.values.contains(where: \.enabled) {
+            system.registerForRemoteNotifications()
+        }
+    }
+
+    /// Reads the current permission without prompting (the settings sheet calls this on appear).
+    func refreshAuthorization() async {
+        authorization = await system.authorizationStatus()
     }
 
     func didRegister(deviceToken: Data) async {
@@ -122,12 +131,16 @@ final class PushCoordinator {
 
     // MARK: User actions (connected server)
 
+    // Each public wrapper captures `generation` when the operation is queued, so one
+    // queued for a server the user has since left writes no status when it runs.
+
     func enable(server: HermesRESTClient, profiles: [String]) async {
-        await serialized { await self.performEnable(server: server, profiles: profiles) }
+        let gen = generation
+        await serialized { await self.performEnable(server: server, profiles: profiles, gen: gen) }
     }
 
-    private func performEnable(server: HermesRESTClient, profiles: [String]) async {
-        enableError = nil
+    private func performEnable(server: HermesRESTClient, profiles: [String], gen: Int) async {
+        setEnableError(nil, gen)
         let granted: Bool
         switch await system.authorizationStatus() {
         case .authorized: granted = true
@@ -136,7 +149,7 @@ final class PushCoordinator {
         }
         authorization = granted ? .authorized : .denied
         guard granted else {
-            enableError = "Notifications are turned off for Mercury Chat in Settings."
+            setEnableError(Self.deniedMessage, gen)
             return
         }
         if !hasToken {
@@ -147,12 +160,18 @@ final class PushCoordinator {
                 try? await Task.sleep(for: .milliseconds(50))
             }
             guard hasToken else {
-                enableError = tokenError ?? "Couldn't register with Apple. Try again."
+                setEnableError(tokenError ?? "Couldn't register with Apple. Try again.", gen)
                 return
             }
         }
         update(server.endpoint.key) { $0.enabled = true }
-        await performSync(server: server, profiles: profiles)
+        await performSync(server: server, profiles: profiles, gen: gen)
+    }
+
+    static let deniedMessage = "Notifications are turned off for Mercury Chat in Settings."
+
+    private func setEnableError(_ message: String?, _ gen: Int) {
+        if gen == generation { enableError = message }
     }
 
     func disable(server: HermesRESTClient, profiles: [String]) async {
@@ -170,11 +189,12 @@ final class PushCoordinator {
     }
 
     func setProfile(_ profile: String, enabled: Bool, server: HermesRESTClient, profiles: [String]) async {
+        let gen = generation
         await serialized {
             self.update(server.endpoint.key) {
                 if enabled { $0.disabledProfiles.remove(profile) } else { $0.disabledProfiles.insert(profile) }
             }
-            await self.performSync(server: server, profiles: profiles)
+            await self.performSync(server: server, profiles: profiles, gen: gen)
         }
     }
 
@@ -210,11 +230,11 @@ final class PushCoordinator {
 
     /// Bring the connected server's pairings in line with the user's choices.
     func sync(server: HermesRESTClient, profiles: [String]) async {
-        await serialized { await self.performSync(server: server, profiles: profiles) }
+        let gen = generation
+        await serialized { await self.performSync(server: server, profiles: profiles, gen: gen) }
     }
 
-    private func performSync(server: HermesRESTClient, profiles: [String]) async {
-        let gen = generation
+    private func performSync(server: HermesRESTClient, profiles: [String], gen: Int) async {
         let key = server.endpoint.key
         let choice = settings(for: key)
         let records = await pairing.pairings().filter { $0.server == key }
@@ -247,6 +267,8 @@ final class PushCoordinator {
                 setStatus(profile, .error(Self.message(for: error)), gen)
             }
         }
+        // An empty list is no evidence the server dropped every profile: unpair nothing.
+        guard !profiles.isEmpty else { return }
         for stale in records where !profiles.contains(stale.profile) {
             _ = try? await pairing.unpair(server: server, profile: stale.profile)
         }
