@@ -104,6 +104,11 @@ final class AppModel {
     /// Set by the first `autoConnectOnLaunch`.
     private var didAutoConnect = false
 
+    /// False until launch has finished connecting (`autoConnectOnLaunch` returned, or
+    /// any `connect(endpoint:credentials:)` began): a push tap before then is only
+    /// stored, so launch's own connect can't cancel the tap's server switch.
+    private var launchSettled = false
+
     // MARK: Navigation
 
     /// A bot roster row's click target: the profile plus its server-resolved
@@ -325,19 +330,24 @@ final class AppModel {
     }
     private(set) var pendingPasswordLogin: PendingPasswordLogin?
 
-    func autoConnectOnLaunch() async {
+    /// `lastServer` is injectable for tests (parallel tests share the real default).
+    func autoConnectOnLaunch(
+        lastServer: String? = UserDefaults.standard.string(forKey: "lastServer")
+    ) async {
         // Once per launch, not per window (#112): every new window's root
         // runs this `.task`, and a second run would re-dial the last server
         // after a deliberate disconnect — or, mid-connect (connection still
         // nil), restart the first window's connect from scratch.
         guard !didAutoConnect else { return }
         didAutoConnect = true
-        guard connection == nil,
-            let last = UserDefaults.standard.string(forKey: "lastServer"),
+        if connection == nil,
+            let last = lastServer,
             let parsed = try? ServerEndpoint.parse(last),
             let credentials = tokenStore.credentials(for: parsed.endpoint)
-        else { return }
-        await connect(endpoint: parsed.endpoint, credentials: credentials)
+        {
+            await connect(endpoint: parsed.endpoint, credentials: credentials)
+        }
+        await settleLaunch()
     }
 
     /// Parse input (URL, host:port, or dashboard URL with `?token=`),
@@ -356,7 +366,16 @@ final class AppModel {
         }
     }
 
+    /// A connect the user (or launch) asked for. Once launch has settled, it
+    /// supersedes any push tap still waiting to open — that tap's server switch
+    /// failed or was abandoned, and must not fire on this unrelated connection.
     func connect(endpoint: ServerEndpoint, credentials: ServerCredentials?) async {
+        if launchSettled { pendingPushRoute = nil }
+        launchSettled = true
+        await openConnection(endpoint: endpoint, credentials: credentials)
+    }
+
+    private func openConnection(endpoint: ServerEndpoint, credentials: ServerCredentials?) async {
         disconnect()
         connectGeneration += 1
         let generation = connectGeneration
@@ -875,12 +894,16 @@ final class AppModel {
                     // profile the picker now shows (#95).
                     if selectedProfile != nil { await refreshProjects() }
                 }
-                await syncPush()
+                // A waiting tap opens first: navigation never waits on the push
+                // sync (one pairing check per profile, queued behind any other
+                // coordinator work).
                 guard generation == connectGeneration else { return }
                 if let route = pendingPushRoute {
                     pendingPushRoute = nil
                     await openPushRoute(route)
                 }
+                guard generation == connectGeneration else { return }  // the tap switched servers
+                await syncPush()
             }
         }
         // Bot Mode probe: once per connection (reconnects keep the verdict; a
@@ -1328,6 +1351,10 @@ final class AppModel {
     }
 
     func openPushRoute(_ route: PushTapRoute) async {
+        guard launchSettled else {
+            pendingPushRoute = route
+            return
+        }
         if let key = route.serverKey, key != endpoint?.key {
             let toName = (try? ServerEndpoint.parse(key).endpoint.displayName) ?? key
             if hasWorkAtRisk {
@@ -1370,7 +1397,23 @@ final class AppModel {
             return
         }
         pendingPushRoute = route
-        await connect(endpoint: target, credentials: credentials)
+        await openConnection(endpoint: target, credentials: credentials)
+        // Failed, or stopped at a sign-in / plaintext prompt: drop the tap so it
+        // can't fire on some later, unrelated connection.
+        if connection == nil, pendingPushRoute == route { pendingPushRoute = nil }
+    }
+
+    /// Launch finished connecting. Connected: the profiles-loaded path opens a
+    /// waiting tap (switching servers then if it names another). Not connected
+    /// (no saved server, or the connect failed): a tap naming another server
+    /// switches to it now; one for the failed or unknown server is dropped.
+    private func settleLaunch() async {
+        launchSettled = true
+        guard connection == nil, let route = pendingPushRoute else { return }
+        pendingPushRoute = nil
+        if let key = route.serverKey, key != endpoint?.key {
+            await switchServer(for: route)
+        }
     }
 }
 

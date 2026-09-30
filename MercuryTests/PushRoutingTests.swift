@@ -7,11 +7,23 @@ import Testing
 struct PushRoutingTests {
     static let tokens = KeychainTokenStore(service: "com.mercury.tokens.tests")
 
-    static func hermes(profiles: [String] = ["default", "coder"]) async throws -> HermesTestServer {
+    /// Counts `/api/status` probes: one per connect attempt.
+    final class ProbeCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int { lock.withLock { count } }
+        func bump() { lock.withLock { count += 1 } }
+    }
+
+    static func hermes(
+        profiles: [String] = ["default", "coder"], probes: ProbeCounter? = nil
+    ) async throws -> HermesTestServer {
         let list = profiles.enumerated().map { #"{"name": "\#($1)", "is_default": \#($0 == 0)}"# }.joined(separator: ",")
         return try await HermesTestServer.start { request in
             switch request.path {
-            case "/api/status": return TestHTTPResponse(200, #"{"auth_required": false}"#)
+            case "/api/status":
+                probes?.bump()
+                return TestHTTPResponse(200, #"{"auth_required": false}"#)
             case "/api/profiles": return TestHTTPResponse(200, #"{"profiles": [\#(list)]}"#)
             default: return TestHTTPResponse(200)
             }
@@ -144,5 +156,101 @@ struct PushRoutingTests {
         #expect(model.shouldPresentPush(PushTapRoute(serverKey: endpoint.key, profile: "default", sessionID: "s2"), appActive: true))
         #expect(model.shouldPresentPush(PushTapRoute(serverKey: "http://other:1", profile: "default", sessionID: "s1"), appActive: true))
         #expect(model.shouldPresentPush(PushTapRoute(serverKey: endpoint.key, profile: "default", sessionID: "s1"), appActive: false))
+    }
+
+    @Test func coldLaunchTapForTheLaunchServerOpensOnceLaunchSettles() async throws {
+        let probes = ProbeCounter()
+        let server = try await Self.hermes(probes: probes); defer { server.stop() }
+        let model = Self.model(); defer { model.disconnect() }
+        let navigation = WindowNavigation()
+        model.register(navigation)
+        let endpoint = try ServerEndpoint.parse("http://127.0.0.1:\(server.port)").endpoint
+        try Self.tokens.setCredentials(.sessionToken("tok"), for: endpoint)
+        defer { try? Self.tokens.deleteToken(for: endpoint) }
+
+        // The tap is replayed before autoConnectOnLaunch runs: it waits.
+        await model.openPushRoute(PushTapRoute(serverKey: endpoint.key, profile: "coder", sessionID: "s7"))
+        #expect(model.connection == nil)
+        #expect(probes.value == 0)
+
+        await model.autoConnectOnLaunch(lastServer: endpoint.key)
+        #expect(await eventually {
+            if case .session(let s)? = navigation.route { return s.storedID == "s7" && s.profile == "coder" }
+            return false
+        })
+        #expect(model.endpoint?.key == endpoint.key)
+        #expect(probes.value == 1)  // no second connect
+    }
+
+    @Test func coldLaunchTapForAnotherServerSwitchesAfterLaunch() async throws {
+        let last = try await Self.hermes(profiles: ["a"]); defer { last.stop() }
+        let tapped = try await Self.hermes(profiles: ["b"]); defer { tapped.stop() }
+        let model = Self.model(); defer { model.disconnect() }
+        let navigation = WindowNavigation()
+        model.register(navigation)
+        let lastEndpoint = try ServerEndpoint.parse("http://127.0.0.1:\(last.port)").endpoint
+        let tappedEndpoint = try ServerEndpoint.parse("http://127.0.0.1:\(tapped.port)").endpoint
+        try Self.tokens.setCredentials(.sessionToken("tok"), for: lastEndpoint)
+        try Self.tokens.setCredentials(.sessionToken("tok"), for: tappedEndpoint)
+        defer {
+            try? Self.tokens.deleteToken(for: lastEndpoint)
+            try? Self.tokens.deleteToken(for: tappedEndpoint)
+        }
+
+        await model.openPushRoute(PushTapRoute(serverKey: tappedEndpoint.key, profile: "b", sessionID: "s3"))
+        #expect(model.connection == nil)
+        await model.autoConnectOnLaunch(lastServer: lastEndpoint.key)
+
+        #expect(await eventually {
+            if case .session(let s)? = navigation.route { return s.storedID == "s3" }
+            return false
+        })
+        #expect(model.endpoint?.key == tappedEndpoint.key)
+    }
+
+    @Test func coldLaunchTapWithNoSavedServerSwitchesOnceLaunchSettles() async throws {
+        let tapped = try await Self.hermes(profiles: ["b"]); defer { tapped.stop() }
+        let model = Self.model(); defer { model.disconnect() }
+        let navigation = WindowNavigation()
+        model.register(navigation)
+        let tappedEndpoint = try ServerEndpoint.parse("http://127.0.0.1:\(tapped.port)").endpoint
+        try Self.tokens.setCredentials(.sessionToken("tok"), for: tappedEndpoint)
+        defer { try? Self.tokens.deleteToken(for: tappedEndpoint) }
+
+        await model.openPushRoute(PushTapRoute(serverKey: tappedEndpoint.key, profile: "b", sessionID: "s4"))
+        #expect(model.connection == nil)
+        await model.autoConnectOnLaunch(lastServer: nil)
+
+        #expect(await eventually {
+            if case .session(let s)? = navigation.route { return s.storedID == "s4" }
+            return false
+        })
+        #expect(model.endpoint?.key == tappedEndpoint.key)
+    }
+
+    @Test func failedPushSwitchDoesNotHijackALaterConnection() async throws {
+        let first = try await Self.hermes(profiles: ["a"]); defer { first.stop() }
+        let later = try await Self.hermes(profiles: ["c"]); defer { later.stop() }
+        let model = Self.model(); defer { model.disconnect() }
+        let navigation = WindowNavigation()
+        model.register(navigation)
+        let unreachable = try ServerEndpoint.parse("http://127.0.0.1:3").endpoint
+        try Self.tokens.setCredentials(.sessionToken("tok"), for: unreachable)
+        defer { try? Self.tokens.deleteToken(for: unreachable) }
+        let firstEndpoint = try await Self.connect(model, to: first)
+        defer { try? Self.tokens.deleteToken(for: firstEndpoint) }
+
+        // A tap for a server that can't be reached: the switch fails.
+        await model.openPushRoute(PushTapRoute(serverKey: unreachable.key, profile: "b", sessionID: "s5"))
+        #expect(model.connection == nil)
+        #expect(model.connectError != nil)
+
+        // The user then connects somewhere else; the stale tap must not fire.
+        let laterEndpoint = try await Self.connect(model, to: later)
+        defer { try? Self.tokens.deleteToken(for: laterEndpoint) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(model.endpoint?.key == laterEndpoint.key)
+        #expect(model.connection != nil)
+        #expect(navigation.route == nil)
     }
 }
