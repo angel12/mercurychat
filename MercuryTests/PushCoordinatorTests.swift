@@ -64,10 +64,10 @@ struct PushCoordinatorTests {
         await h.coordinator.enable(server: h.rest, profiles: ["default"])
         #expect(h.coordinator.enableError == "Couldn't register with Apple. Try again.")
         #expect(!h.coordinator.settings(for: h.rest.endpoint.key).enabled)
-        // A second attempt still works once a token arrives.
-        h.system.onRegister = { [weak coordinator = h.coordinator] in
-            Task { await coordinator?.didRegister(deviceToken: Data(repeating: 0xab, count: 32)) }
-        }
+        // A second attempt still works once a token arrives. Deliver it before retrying so the
+        // relay registration isn't racing the deliberately short 300 ms wait (slow CI runners).
+        await h.coordinator.didRegister(deviceToken: Data(repeating: 0xab, count: 32))
+        #expect(h.coordinator.hasToken)
         await h.coordinator.enable(server: h.rest, profiles: ["default"])
         #expect(h.coordinator.enableError == nil)
     }
