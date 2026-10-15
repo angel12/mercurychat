@@ -204,8 +204,20 @@ final class AppModel {
                 chat.withdrawSettledRequest(requestID)
             }
         }
+        controller.onSessionActivity = { [weak self] storedID, profile in
+            self?.claimPushSession(storedID: storedID, profile: profile)
+        }
         openChats.append(controller)
         return controller
+    }
+
+    /// A chat on this device created `storedID` or sent a message in it: claim the session so
+    /// its notifications come here. A chat without a profile is on the server's default one,
+    /// which pairings record by name.
+    private func claimPushSession(storedID: String, profile: String?) {
+        guard let connection, let name = profile ?? profiles.first(where: \.isDefault)?.name else { return }
+        let server = connection.rest
+        Task { await push.claim(server: server, profile: name, sessionID: storedID) }
     }
 
     /// Unregister one chat — never another window's (#112). Its runtime is

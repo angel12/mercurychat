@@ -11,7 +11,7 @@ packages:
   # Packages/MercuryCore/Package.swift so both references resolve to one copy.
   MercuryKit:
     url: https://github.com/angel12/mercurykit
-    exactVersion: 0.5.1
+    exactVersion: 0.6.0
   MercuryCore:
     path: Packages/MercuryCore
 targets:
@@ -33,6 +33,7 @@ targets:
       - path: Mercury/Push/PushSystem.swift
       - path: Mercury/Push/PushSettings.swift
       - path: Mercury/Push/PushCoordinator.swift
+      - path: Mercury/Push/SessionActivityTracker.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryKit
