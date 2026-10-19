@@ -64,6 +64,10 @@ final class ChatController: Identifiable {
     /// answered (only `request.cancel` on timeout/cancel), so the other
     /// chats on that runtime are told here.
     @ObservationIgnored var serverRequestSettled: ((_ requestID: String, _ runtimeID: String) -> Void)?
+    /// Set by AppModel: this device created the session or sent a message in it, reported with
+    /// its stored id and profile once the stored id is known (Mercury Push session claims).
+    @ObservationIgnored var onSessionActivity: ((_ storedID: String, _ profile: String?) -> Void)?
+    @ObservationIgnored private var activity = SessionActivityTracker()
     private(set) var handle: SessionHandle?
     private(set) var isLoading = false
     /// Keep progress visible after ChatView installs its controller: resume
@@ -219,6 +223,7 @@ final class ChatController: Identifiable {
                     return
                 }
                 adopt(handle)
+                noteSessionActivity()
 
             case .bot(let profile, let expectCanonical):
                 // FAIL CLOSED on lookup failure: a failed registry check must
@@ -240,6 +245,7 @@ final class ChatController: Identifiable {
                     }
                     effectiveProfile = profile
                     adopt(handle)
+                    noteSessionActivity()
                     return
                 }
                 guard generation == beginGeneration else { return }
@@ -789,6 +795,15 @@ final class ChatController: Identifiable {
             let stored = event.payload["stored_session_id"]?.stringValue, !stored.isEmpty
         {
             storedID = stored
+            if let reported = activity.storedIDChanged(stored) {
+                onSessionActivity?(reported, effectiveProfile ?? profile)
+            }
+        }
+    }
+
+    private func noteSessionActivity() {
+        if let reported = activity.activity(storedID: storedID) {
+            onSessionActivity?(reported, effectiveProfile ?? profile)
         }
     }
 
@@ -966,6 +981,7 @@ final class ChatController: Identifiable {
             // The DB row exists after the first prompt; a created session
             // learns its stored id via session.info events.
             store.setUserMessageState(id: echoID, status == "queued" ? .queued : .sent)
+            noteSessionActivity()
             switch status {
             case "redirected":
                 store.appendNotice("Redirecting the current turn to your message…")

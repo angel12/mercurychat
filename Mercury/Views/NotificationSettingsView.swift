@@ -56,6 +56,32 @@
                                 }
                             }
                             .disabled(inFlight > 0)
+                            // Support is learned from a paired device; say nothing until one is paired.
+                            if model.push.supportsSessionScope || model.push.profileStatus.values.contains(.paired) {
+                                Section {
+                                    if model.push.supportsSessionScope {
+                                        Picker("Sessions that notify me", selection: Binding(
+                                            get: { choice.sessionScope },
+                                            set: { scope in run { await model.push.setSessionScope(scope, server: rest) } })
+                                        ) {
+                                            Text("All sessions").tag(PushSessionScope.all)
+                                            Text("Only this device's").tag(PushSessionScope.owned)
+                                        }
+                                        .pickerStyle(.inline)
+                                        .labelsHidden()
+                                    } else {
+                                        Text("Update Mercury Push on the server to v0.2.0 or later to limit notifications to sessions from this device.")
+                                            .font(.callout).foregroundStyle(.secondary)
+                                    }
+                                } header: {
+                                    Text("Sessions")
+                                } footer: {
+                                    if model.push.supportsSessionScope {
+                                        Text("Only this device's: sessions you start or send a message in from this device. Cron and test notifications always arrive.")
+                                    }
+                                }
+                                .disabled(inFlight > 0)
+                            }
                             Section("Notify me about") {
                                 preferenceToggle("Approvals", \.approval, choice, rest)
                                 preferenceToggle("Responses", \.responseReady, choice, rest)

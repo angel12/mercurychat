@@ -8,6 +8,23 @@ struct ServerPushSettings: Codable, Equatable, Sendable {
     /// Profiles the user switched off (every other profile the server lists is on).
     var disabledProfiles: Set<String> = []
     var preferences = PushPreferences()
+    /// Which sessions notify this device: every session, or only ones it started or messaged.
+    var sessionScope = PushSessionScope.all
+}
+
+// In an extension so the memberwise initializer survives.
+extension ServerPushSettings {
+    // Settings saved before `sessionScope` existed must still decode (a failed decode loads as
+    // empty, switching push off everywhere), so each field falls back to its default.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false,
+            disabledProfiles: try container.decodeIfPresent(Set<String>.self, forKey: .disabledProfiles) ?? [],
+            preferences: try container.decodeIfPresent(PushPreferences.self, forKey: .preferences)
+                ?? PushPreferences(),
+            sessionScope: try container.decodeIfPresent(PushSessionScope.self, forKey: .sessionScope) ?? .all)
+    }
 }
 
 /// `UserDefaults["pushSettings"]`: JSON `[ServerEndpoint.key: ServerPushSettings]`.

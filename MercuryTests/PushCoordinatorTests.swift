@@ -106,10 +106,12 @@ struct PushCoordinatorTests {
         await h.coordinator.enable(server: h.rest, profiles: ["default"])
         await h.coordinator.sync(server: h.rest, profiles: ["default"])
         await h.coordinator.sync(server: h.rest, profiles: ["default"])
-        #expect(h.backend.log.filter { $0.hasPrefix("GET /api/plugins/mercury_push/devices") }.isEmpty)
+        // One read right after pairing (it learns whether the plugin supports session scopes),
+        // then none for the rest of the connection.
+        #expect(h.backend.log.filter { $0.hasPrefix("GET /api/plugins/mercury_push/devices") }.count == 1)
         h.coordinator.resetConnection()
         await h.coordinator.sync(server: h.rest, profiles: ["default"])
-        #expect(h.backend.log.filter { $0.hasPrefix("GET /api/plugins/mercury_push/devices") }.count == 1)
+        #expect(h.backend.log.filter { $0.hasPrefix("GET /api/plugins/mercury_push/devices") }.count == 2)
     }
 
     @Test func disableUnpairsEverything() async throws {
@@ -278,5 +280,84 @@ struct PushCoordinatorTests {
         #expect(h.coordinator.authorization == .denied)
         #expect(h.system.requestCalls == 0)
         #expect(h.system.registerCalls == 0)
+    }
+
+    // MARK: Session scope
+
+    @Test func pairingSendsTheChosenScopeAndLearnsSupport() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        #expect(!h.coordinator.supportsSessionScope)
+        await h.coordinator.setSessionScope(.owned, server: h.rest)  // nothing paired yet: just saved
+        await h.coordinator.enable(server: h.rest, profiles: ["default"])
+        let device = try #require(h.backend.deviceIDs(profile: "default").first)
+        #expect(h.backend.scope(of: device) == "owned")
+        #expect(h.coordinator.supportsSessionScope)
+        #expect(h.coordinator.settings(for: h.rest.endpoint.key).sessionScope == .owned)
+    }
+
+    @Test func changingTheScopeUpdatesEveryPairing() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        await h.coordinator.enable(server: h.rest, profiles: ["default", "coder"])
+        await h.coordinator.setSessionScope(.owned, server: h.rest)
+        for profile in ["default", "coder"] {
+            let device = try #require(h.backend.deviceIDs(profile: profile).first)
+            #expect(h.backend.scope(of: device) == "owned")
+        }
+        #expect(h.coordinator.profileStatus == ["default": .paired, "coder": .paired])
+    }
+
+    @Test func anOlderPluginReportsNoSupport() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        h.backend.supportsSessionScope = false
+        await h.coordinator.enable(server: h.rest, profiles: ["default"])
+        #expect(h.coordinator.profileStatus["default"] == .paired)
+        #expect(!h.coordinator.supportsSessionScope)
+        await h.coordinator.setSessionScope(.owned, server: h.rest)
+        #expect(h.coordinator.profileStatus["default"] == .error("Update Mercury Push on the server to use this"))
+    }
+
+    @Test func syncRestoresADriftedScope() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        await h.coordinator.setSessionScope(.owned, server: h.rest)
+        await h.coordinator.enable(server: h.rest, profiles: ["default"])
+        let device = try #require(h.backend.deviceIDs(profile: "default").first)
+        h.backend.setScope("all", of: device)  // e.g. changed from another client
+        h.coordinator.resetConnection()  // a reconnect re-confirms each pairing
+        await h.coordinator.sync(server: h.rest, profiles: ["default"])
+        #expect(h.backend.scope(of: device) == "owned")
+        #expect(h.coordinator.supportsSessionScope)
+    }
+
+    @Test func claimUsesThePairingWhenSupported() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        await h.coordinator.enable(server: h.rest, profiles: ["default", "coder"])
+        await h.coordinator.claim(server: h.rest, profile: "coder", sessionID: "stored-1")
+        #expect(h.backend.claims == ["stored-1": try #require(h.backend.deviceIDs(profile: "coder").first)])
+    }
+
+    @Test func claimSendsNothingWhenUnsupportedOrOff() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        // Push off for this server: no request at all.
+        await h.coordinator.claim(server: h.rest, profile: "default", sessionID: "stored-1")
+        #expect(h.backend.log.isEmpty)
+        // An older plugin: paired, but no claim route to call.
+        h.backend.supportsSessionScope = false
+        await h.coordinator.enable(server: h.rest, profiles: ["default"])
+        let before = h.backend.log.count
+        await h.coordinator.claim(server: h.rest, profile: "default", sessionID: "stored-1")
+        #expect(h.backend.log.count == before)
+        // A profile that isn't paired: nothing either.
+        h.backend.supportsSessionScope = true
+        await h.coordinator.claim(server: h.rest, profile: "unpaired", sessionID: "stored-1")
+        #expect(h.backend.log.count == before)
+    }
+
+    @Test func aFailedClaimStaysQuiet() async throws {
+        let h = try await Self.harness(); defer { h.server.stop() }
+        await h.coordinator.enable(server: h.rest, profiles: ["default"])
+        h.backend.pluginOverride = (500, #"{"detail":"boom"}"#)
+        await h.coordinator.claim(server: h.rest, profile: "default", sessionID: "stored-1")
+        #expect(h.coordinator.profileStatus["default"] == .paired)
+        #expect(h.coordinator.enableError == nil)
     }
 }

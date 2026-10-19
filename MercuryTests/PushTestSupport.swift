@@ -75,12 +75,19 @@ final class FakePushBackend: @unchecked Sendable {
     private let lock = NSLock()
     private var installations: [String: (secret: String, token: String)] = [:]
     private var codes: [String: String] = [:]
-    private var devices: [String: (installation: String, profile: String, active: Bool)] = [:]
+    private var devices: [String: (installation: String, profile: String, active: Bool, scope: String)] = [:]
+    private var _claims: [String: String] = [:]  // session id → device id
     private var counter = 0
     private var _log: [String] = []
     /// Plugin override for the next plugin call(s): (status, body).
     var pluginOverride: (Int, String)?
+    /// False: a plugin from before session scopes (mercury-push < 0.2.0) — no `session_scope`
+    /// in device rows, 422 for a PATCH without `preferences`, and no claim route (405).
+    var supportsSessionScope = true
     var log: [String] { lock.withLock { _log } }
+    var claims: [String: String] { lock.withLock { _claims } }
+    func scope(of id: String) -> String? { lock.withLock { devices[id]?.scope } }
+    func setScope(_ scope: String, of id: String) { lock.withLock { devices[id]?.scope = scope } }
     func deviceIDs(profile: String) -> [String] {
         lock.withLock { devices.filter { $0.value.profile == profile }.map(\.key).sorted() }
     }
@@ -142,13 +149,12 @@ final class FakePushBackend: @unchecked Sendable {
             else { return TestHTTPResponse(502, #"{"error":"relay_error","relay_error":"pairing_code_invalid"}"#) }
             devices = devices.filter { !($0.value.installation == installation && $0.value.profile == profile) }
             let id = next("dev")
-            devices[id] = (installation, profile, true)
+            let scope = supportsSessionScope ? body["session_scope"]?.stringValue ?? "all" : "all"
+            devices[id] = (installation, profile, true, scope)
             return TestHTTPResponse(201, #"{"device_id":"\#(id)","profile":"\#(profile)"}"#)
         }
         if method == "GET", path == base {
-            let rows = devices.filter { $0.value.profile == profile }.map {
-                #"{"device_id":"\#($0.key)","device_name":"Test iPhone","preferences":{},"paired_at":null,"last_delivery_at":null,"last_error":null,"active":\#($0.value.active)}"#
-            }
+            let rows = devices.filter { $0.value.profile == profile }.map { row(id: $0.key, $0.value.active, $0.value.scope) }
             return TestHTTPResponse(200, "[\(rows.joined(separator: ","))]")
         }
         if path.hasPrefix(base + "/") {
@@ -160,7 +166,15 @@ final class FakePushBackend: @unchecked Sendable {
                 devices[id] = nil
                 return TestHTTPResponse(204, "")
             case "PATCH":
-                return TestHTTPResponse(200, #"{"device_id":"\#(id)","device_name":"Test iPhone","preferences":{},"active":true}"#)
+                if let scope = body["session_scope"]?.stringValue {
+                    guard supportsSessionScope else { return TestHTTPResponse(422, #"{"detail":[{"type":"missing"}]}"#) }
+                    devices[id]?.scope = scope
+                }
+                return TestHTTPResponse(200, row(id: id, true, devices[id]?.scope ?? "all"))
+            case "PUT" where rest.hasPrefix(id + "/sessions/") && supportsSessionScope:
+                guard devices[id]?.active == true else { return TestHTTPResponse(404, #"{"error":"device_not_found"}"#) }
+                _claims[String(rest.dropFirst(id.count + "/sessions/".count))] = id
+                return TestHTTPResponse(204, "")
             case "POST":
                 return TestHTTPResponse(202, #"{"event_id":"e-1"}"#)
             default:
@@ -168,5 +182,10 @@ final class FakePushBackend: @unchecked Sendable {
             }
         }
         return TestHTTPResponse(404, #"{"detail":"Not Found"}"#)
+    }
+
+    private func row(id: String, _ active: Bool, _ scope: String) -> String {
+        let scopeField = supportsSessionScope ? #","session_scope":"\#(scope)""# : ""
+        return #"{"device_id":"\#(id)","device_name":"Test iPhone","preferences":{},"paired_at":null,"last_delivery_at":null,"last_error":null,"active":\#(active)\#(scopeField)}"#
     }
 }

@@ -28,7 +28,7 @@ Packages/MercuryCore/
                                  Bot Chat composer rule
 ```
 
-The protocol layer is **MercuryKit** ([angel12/mercurykit](https://github.com/angel12/mercurykit)), the Swift client for Hermes shared with Mercury Voice: endpoints, credentials and Keychain storage, authentication (including native PKCE), the JSON-RPC gateway and its supervisor, REST, session and Bot Mode RPCs, and the wire models. It is pinned exactly to `0.5.1` in two places that must move together: `Packages/MercuryCore/Package.swift` (for ChatCore) and `project.yml` (for the app and `MercuryTests`). Its own tests run in its repository. Chat keeps app UI and composer rules, such as `BotChatPolicy.isCompactCommand`.
+The protocol layer is **MercuryKit** ([angel12/mercurykit](https://github.com/angel12/mercurykit)), the Swift client for Hermes shared with Mercury Voice: endpoints, credentials and Keychain storage, authentication (including native PKCE), the JSON-RPC gateway and its supervisor, REST, session and Bot Mode RPCs, and the wire models. It is pinned exactly to `0.6.0` in two places that must move together: `Packages/MercuryCore/Package.swift` (for ChatCore) and `project.yml` (for the app and `MercuryTests`). Its own tests run in its repository. Chat keeps app UI and composer rules, such as `BotChatPolicy.isCompactCommand`.
 
 Saved credentials live in the Keychain under the service `com.mercury.tokens` (`AppModel.keychainService`). Keep that string: it predates the rename to Mercury Chat, and changing it strands every saved sign-in.
 
@@ -54,7 +54,7 @@ Both test workflows fetch MercuryKit from GitHub.
 - Subagent activity (`subagent.start/tool/complete` on the parent session) is flattened to labeled tool rows in v1, not rendered as a nested spawn tree.
 - One socket per connection; profile scoping via the `profile` param (no per-profile socket pooling).
 - Voice (`/api/audio/*`) is out of v1 scope; the transport keeps `speakStreamURL`/`transcribe` available for a later graft.
-- iOS push notifications via Mercury Push (MercuryKit 0.5.1, angel12/mercury-push). The Hermes plugin must be enabled in each profile.
+- iOS push notifications via Mercury Push (MercuryKit 0.6.0, angel12/mercury-push). The Hermes plugin must be enabled in each profile. Each server can limit notifications to "Only this device's" sessions (mercury-push 0.2.0+): sessions created or messaged from this device are claimed for it, and claims are best effort.
 
 ## Connection recipes
 
@@ -109,3 +109,6 @@ Test push with Debug builds: a Release build run from Xcode tells the relay to u
 - [ ] With the app open on another session, a response banner appears. On the same session, no banner appears.
 - [ ] A notification from a second saved server switches servers when tapped.
 - [ ] With one profile switched off, events there don't push.
+- [ ] Against mercury-push 0.2.0+, Settings shows the Sessions section. Against an older plugin, it says to update the server.
+- [ ] With "Only this device's" selected, a session started or messaged from this device pushes here. A session used only from another client (CLI, desktop) does not. Cron and test notifications still arrive.
+- [ ] Sending a message from another device that is set to "All sessions" moves that session's notifications to that device.

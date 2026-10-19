@@ -1,6 +1,7 @@
 import Foundation
 import MercuryKit
 import Observation
+import os
 
 /// Where a tapped notification should go. `serverKey` nil means "the connected server"
 /// (an older plugin without `device_id`, or no local pairing matched).
@@ -21,6 +22,7 @@ enum ProfilePushStatus: Equatable {
 @Observable
 final class PushCoordinator {
     static let keychainService = "com.mercury.push"
+    private static let logger = Logger(subsystem: "Mercury", category: "Push")
 
     static var currentEnvironment: PushEnvironment {
         #if DEBUG
@@ -44,6 +46,11 @@ final class PushCoordinator {
     private(set) var profileStatus: [String: ProfilePushStatus] = [:]
     /// Profiles whose pairing was confirmed with the server on this connection.
     private var confirmedThisConnection: Set<String> = []
+    /// The connected server's paired profiles whose plugin supports session scopes
+    /// (mercury-push 0.2.0+), learned from the device the server reports.
+    private(set) var scopeSupportedProfiles: Set<String> = []
+    /// Whether the connected server can limit notifications to this device's sessions.
+    var supportsSessionScope: Bool { !scopeSupportedProfiles.isEmpty }
     /// Bumped by `resetConnection()`; work started under an older value must not write status.
     private var generation = 0
     /// The most recent queued mutating operation; the next one waits for it (FIFO).
@@ -186,6 +193,7 @@ final class PushCoordinator {
         }
         for profile in profiles { profileStatus[profile] = .off }
         confirmedThisConnection = []
+        scopeSupportedProfiles = []
     }
 
     func setProfile(_ profile: String, enabled: Bool, server: HermesRESTClient, profiles: [String]) async {
@@ -212,6 +220,36 @@ final class PushCoordinator {
             } catch {
                 profileStatus[record.profile] = .error(Self.message(for: error))
             }
+        }
+    }
+
+    func setSessionScope(_ scope: PushSessionScope, server: HermesRESTClient) async {
+        await serialized { await self.performSetSessionScope(scope, server: server) }
+    }
+
+    private func performSetSessionScope(_ scope: PushSessionScope, server: HermesRESTClient) async {
+        let key = server.endpoint.key
+        update(key) { $0.sessionScope = scope }
+        for record in await pairing.pairings() where record.server == key {
+            do {
+                _ = try await server.updatePushSessionScope(profile: record.profile, deviceID: record.deviceID, scope)
+            } catch {
+                profileStatus[record.profile] = .error(Self.message(for: error))
+            }
+        }
+    }
+
+    /// This device started `sessionID` or sent a message in it: make it the session's owner, so a
+    /// device set to "only this device's sessions" is notified about it. Sent whatever this
+    /// device's own scope is (using a session here takes it over from another device). Best
+    /// effort: only when the plugin supports it, and a failure is logged, never shown.
+    /// Not queued behind pairing work, so a send is never held up.
+    func claim(server: HermesRESTClient, profile: String, sessionID: String) async {
+        guard settings(for: server.endpoint.key).enabled, scopeSupportedProfiles.contains(profile) else { return }
+        do {
+            try await pairing.claimSession(server: server, profile: profile, sessionID: sessionID)
+        } catch {
+            Self.logger.info("Push session claim failed: \(Self.message(for: error), privacy: .public)")
         }
     }
 
@@ -244,21 +282,23 @@ final class PushCoordinator {
             do {
                 switch (wanted, isPaired) {
                 case (true, false):
-                    try await pairProfile(profile, server: server, preferences: choice.preferences, gen: gen)
+                    try await pairProfile(profile, server: server, choice: choice, gen: gen)
                 case (false, true):
                     _ = try await pairing.unpair(server: server, profile: profile)
                     setStatus(profile, .off, gen)
+                    if gen == generation { scopeSupportedProfiles.remove(profile) }
                 case (true, true):
                     if confirmedThisConnection.contains(profile) {
                         setStatus(profile, .paired, gen)
                         continue
                     }
                     switch try await pairing.syncPairing(server: server, profile: profile) {
-                    case .paired:
+                    case .paired(let device):
+                        try await reconcileScope(device, profile: profile, server: server, scope: choice.sessionScope, gen: gen)
                         setStatus(profile, .paired, gen)
                         confirm(profile, gen)
                     case .notPaired:
-                        try await pairProfile(profile, server: server, preferences: choice.preferences, gen: gen)
+                        try await pairProfile(profile, server: server, choice: choice, gen: gen)
                     }
                 case (false, false):
                     setStatus(profile, .off, gen)
@@ -283,13 +323,34 @@ final class PushCoordinator {
     }
 
     private func pairProfile(
-        _ profile: String, server: HermesRESTClient, preferences: PushPreferences, gen: Int
+        _ profile: String, server: HermesRESTClient, choice: ServerPushSettings, gen: Int
     ) async throws {
         setStatus(profile, .pairing, gen)
         _ = try await pairing.pair(
-            server: server, profile: profile, deviceName: system.deviceName, preferences: preferences)
+            server: server, profile: profile, deviceName: system.deviceName, preferences: choice.preferences,
+            sessionScope: choice.sessionScope)
         setStatus(profile, .paired, gen)
         confirm(profile, gen)
+        // `pair` can't tell whether this plugin supports session scopes (an older one ignores the
+        // scope); one read of the device can. Not worth failing a pairing that succeeded.
+        if case .paired(let device)? = try? await pairing.syncPairing(server: server, profile: profile) {
+            try? await reconcileScope(device, profile: profile, server: server, scope: choice.sessionScope, gen: gen)
+        }
+    }
+
+    /// Records whether `device`'s plugin supports session scopes and, when it does, puts the
+    /// device's scope back to the user's choice if it drifted (another client changed it).
+    private func reconcileScope(
+        _ device: PushDevice, profile: String, server: HermesRESTClient, scope: PushSessionScope, gen: Int
+    ) async throws {
+        guard let current = device.sessionScope else {
+            if gen == generation { scopeSupportedProfiles.remove(profile) }
+            return
+        }
+        if gen == generation { scopeSupportedProfiles.insert(profile) }
+        if current != scope {
+            _ = try await server.updatePushSessionScope(profile: profile, deviceID: device.deviceID, scope)
+        }
     }
 
     /// A new connection (or server): statuses and per-connection confirmations start over.
@@ -297,6 +358,7 @@ final class PushCoordinator {
         generation += 1
         profileStatus = [:]
         confirmedThisConnection = []
+        scopeSupportedProfiles = []
         enableError = nil
     }
 
@@ -324,6 +386,8 @@ final class PushCoordinator {
             return "Mercury Push isn't installed on this server"
         case .relayURLInvalid?:
             return "The server's Mercury Push relay setting is invalid"
+        case .featureUnsupported?:
+            return "Update Mercury Push on the server to use this"
         case .unauthorized?:
             return "Sign in to the server again"
         default:

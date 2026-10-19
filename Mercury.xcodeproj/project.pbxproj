@@ -11,6 +11,7 @@
 		003BB02CEE04C82DE745C92D /* MercuryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F8E655F17AF012AFCEA205 /* MercuryApp.swift */; };
 		02E59D6EAC2D52AFED5B17A4 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F4A67BA4AAA2CDE152FD20 /* MarkdownText.swift */; };
 		04C8550BCC9000ABA1667054 /* ServerRequestAdoptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70298A3FB29008EA90770D28 /* ServerRequestAdoptionTests.swift */; };
+		067880B85CADE97CB73B8612 /* SessionActivityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DD7E841EFF1CE6E70B38582 /* SessionActivityTests.swift */; };
 		07140644954FBAF77D83161E /* ComposerAttachmentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 401441B5559E261DC51F2AA5 /* ComposerAttachmentsTests.swift */; };
 		0B86ADDF070624F6FB234985 /* PushSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E38A6BAE2FEBF621E2A090C2 /* PushSettings.swift */; };
 		0D3B65AC5E51E314BEAB476F /* UIKitPushSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1036E0CF55F49224B91272FE /* UIKitPushSystem.swift */; };
@@ -48,6 +49,7 @@
 		8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */; };
 		865FB2BBC58F6243AA53997E /* PushSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E38A6BAE2FEBF621E2A090C2 /* PushSettings.swift */; };
 		875B3C90BB92619CB74CE0C1 /* PushTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A4D31C14EEC3FDD12DF7885 /* PushTestSupport.swift */; };
+		88077A1B0EB07C92F63C8541 /* SessionActivityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABFDFC2421CA8F76AEA0ABBE /* SessionActivityTracker.swift */; };
 		89EB30E1C1481F41D49D6A4F /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A3E9A556ED764A655CD5EA9 /* NotificationSettingsView.swift */; };
 		8B349087493237E06C15B9FD /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696FDD7EA0879D6A21F3E07B /* AppModel.swift */; };
 		8B5F8EF23C7156F46304EC10 /* ChatController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB97969196F04F2B48FCB03E /* ChatController.swift */; };
@@ -60,6 +62,7 @@
 		9CB010695A73DB41BE1CE5E6 /* AppModelPasswordSignInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95372298CE4EB18C2FDACD29 /* AppModelPasswordSignInTests.swift */; };
 		9E567F18B5A5C8B7417B5E93 /* TranscriptScrollStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D01072AAEDA445A543D4065 /* TranscriptScrollStateTests.swift */; };
 		9F4B8D354F281AC44DEF9CB3 /* MercuryKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6A2149E41114F3E415ACCC47 /* MercuryKit */; };
+		A03A96E645005E57AA128D46 /* SessionActivityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABFDFC2421CA8F76AEA0ABBE /* SessionActivityTracker.swift */; };
 		A13AC4FAFCA7F638095C7F77 /* AppModelChatLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5220C37E1E54AD412B7EC6C /* AppModelChatLifecycleTests.swift */; };
 		A3498399CA3BC4D680FB5D0E /* OpenRequestReconcileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4529C08F9865AA34CDA050F3 /* OpenRequestReconcileTests.swift */; };
 		A9518D13DF29336C88CD89AD /* MercuryKit in Frameworks */ = {isa = PBXBuildFile; productRef = 270DCD916107ED2451EA4BB3 /* MercuryKit */; };
@@ -104,6 +107,7 @@
 		26E38B4DB1B688BED024CB77 /* ReplayLosslessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplayLosslessTests.swift; sourceTree = "<group>"; };
 		26F0A1567A15C6816DB59D53 /* PushCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushCoordinator.swift; sourceTree = "<group>"; };
 		2D01072AAEDA445A543D4065 /* TranscriptScrollStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptScrollStateTests.swift; sourceTree = "<group>"; };
+		2DD7E841EFF1CE6E70B38582 /* SessionActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityTests.swift; sourceTree = "<group>"; };
 		31F7DAA740A01BE642F7A9F5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		3C7D11718D49275BD388B653 /* FileAttachmentWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileAttachmentWire.swift; sourceTree = "<group>"; };
 		401441B5559E261DC51F2AA5 /* ComposerAttachmentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerAttachmentsTests.swift; sourceTree = "<group>"; };
@@ -130,6 +134,7 @@
 		95372298CE4EB18C2FDACD29 /* AppModelPasswordSignInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelPasswordSignInTests.swift; sourceTree = "<group>"; };
 		9A1C5BE77A81AB99F57C9CE6 /* PushRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRoutingTests.swift; sourceTree = "<group>"; };
 		9B194A81AC2450A2C12D7C7B /* ResumeSnapshotOrderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeSnapshotOrderingTests.swift; sourceTree = "<group>"; };
+		ABFDFC2421CA8F76AEA0ABBE /* SessionActivityTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityTracker.swift; sourceTree = "<group>"; };
 		AD95BB18DE3E16045A34E88C /* MercuryiOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MercuryiOS.entitlements; sourceTree = "<group>"; };
 		AF0EF1FA0B2C23FD41721AD9 /* ImageAttachmentPreparerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAttachmentPreparerTests.swift; sourceTree = "<group>"; };
 		AF196FBEA9ECF7A9ECFDD2C6 /* OlderPageGenerationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OlderPageGenerationTests.swift; sourceTree = "<group>"; };
@@ -229,6 +234,7 @@
 				ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */,
 				9B194A81AC2450A2C12D7C7B /* ResumeSnapshotOrderingTests.swift */,
 				70298A3FB29008EA90770D28 /* ServerRequestAdoptionTests.swift */,
+				2DD7E841EFF1CE6E70B38582 /* SessionActivityTests.swift */,
 				2D01072AAEDA445A543D4065 /* TranscriptScrollStateTests.swift */,
 			);
 			path = MercuryTests;
@@ -282,6 +288,7 @@
 				26F0A1567A15C6816DB59D53 /* PushCoordinator.swift */,
 				E38A6BAE2FEBF621E2A090C2 /* PushSettings.swift */,
 				CD6FD450217A735105CD8110 /* PushSystem.swift */,
+				ABFDFC2421CA8F76AEA0ABBE /* SessionActivityTracker.swift */,
 				1036E0CF55F49224B91272FE /* UIKitPushSystem.swift */,
 			);
 			path = Push;
@@ -427,6 +434,7 @@
 				865FB2BBC58F6243AA53997E /* PushSettings.swift in Sources */,
 				4985C29D68FE36BE25F82A0F /* PushSystem.swift in Sources */,
 				56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */,
+				88077A1B0EB07C92F63C8541 /* SessionActivityTracker.swift in Sources */,
 				0031121B30D2FAE2CA4A217C /* SidebarView.swift in Sources */,
 				373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */,
 				DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */,
@@ -484,6 +492,8 @@
 				AF9D93B14BD5D0101A1AF4D8 /* ReplaySupersessionTests.swift in Sources */,
 				F270ABB7C9C2E17E468EEFDD /* ResumeSnapshotOrderingTests.swift in Sources */,
 				04C8550BCC9000ABA1667054 /* ServerRequestAdoptionTests.swift in Sources */,
+				067880B85CADE97CB73B8612 /* SessionActivityTests.swift in Sources */,
+				A03A96E645005E57AA128D46 /* SessionActivityTracker.swift in Sources */,
 				8E8E6C1FBE5F7502DB582C2B /* TranscriptScrollState.swift in Sources */,
 				9E567F18B5A5C8B7417B5E93 /* TranscriptScrollStateTests.swift in Sources */,
 			);
@@ -762,7 +772,7 @@
 			repositoryURL = "https://github.com/angel12/mercurykit";
 			requirement = {
 				kind = exactVersion;
-				version = 0.5.1;
+				version = 0.6.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
