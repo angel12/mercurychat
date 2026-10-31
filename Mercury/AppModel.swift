@@ -739,8 +739,13 @@ final class AppModel {
 
     func togglePin(_ session: SessionSummary) async {
         guard let connection else { return }
-        try? await connection.rest.updateSession(
-            storedID: session.storedID, pinned: !session.pinned, profile: session.profile)
+        do {
+            try await connection.rest.updateSession(
+                storedID: session.storedID, pinned: !session.pinned, profile: session.profile)
+        } catch {
+            browseError = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
+        }
         await refreshProjects()
     }
 
