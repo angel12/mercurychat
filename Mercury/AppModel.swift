@@ -57,6 +57,14 @@ final class AppModel {
     private(set) var profiles: [ProfileInfo] = []
     private(set) var profilesLoading = false
     var selectedProfile: String?
+
+    /// The picker's label for `name` — its display name when the profile
+    /// list has it.
+    func profileDisplayName(_ name: String?) -> String? {
+        guard let name else { return nil }
+        return profiles.first { $0.name == name }?.displayName ?? name
+    }
+
     private(set) var projectTree: ProjectTree?
     private(set) var recentSessions: [SessionSummary] = []
     private(set) var browseLoading = false
@@ -742,11 +750,29 @@ final class AppModel {
         do {
             try await connection.rest.updateSession(
                 storedID: session.storedID, pinned: !session.pinned, profile: session.profile)
+            // Only after a success: a refresh that lands clears browseError,
+            // which would swallow the refusal.
+            await refreshProjects()
         } catch {
             browseError = (error as? HermesError)?.errorDescription
                 ?? error.localizedDescription
         }
-        await refreshProjects()
+    }
+
+    /// Soft-hide a stored session: it leaves the lists but its transcript
+    /// stays on the server, so an open chat on it keeps working.
+    func archiveSession(_ session: SessionSummary) async {
+        guard let connection else { return }
+        do {
+            try await connection.rest.updateSession(
+                storedID: session.storedID, archived: true, profile: session.profile)
+            // Only after a success: a refresh that lands clears browseError,
+            // which would swallow the refusal.
+            await refreshProjects()
+        } catch {
+            browseError = (error as? HermesError)?.errorDescription
+                ?? error.localizedDescription
+        }
     }
 
     func deleteSession(_ session: SessionSummary) async {

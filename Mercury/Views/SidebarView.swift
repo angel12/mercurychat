@@ -2,11 +2,18 @@ import ChatCore
 import MercuryKit
 import SwiftUI
 
-/// Sidebar: profile picker → projects (from projects.tree, or the flat-list
-/// fallback) → sessions, plus recents and a new-session button.
+/// Sidebar, laid out like Mercury Voice's browser in three pages:
+///  1. profile picker (or the Bots roster, on the Bots tab)
+///  2. recent sessions for the selected profile, plus "new session" and
+///     "choose a workspace" actions
+///  3. workspaces (projects.tree, or the flat-list fallback), each listing
+///     its sessions
+/// The pages push inside the sidebar column's own stack; a session row
+/// selects the window's route, which the split view shows as the detail.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Environment(WindowNavigation.self) private var navigation
+    @State private var path: [Page] = []
     @State private var renameTarget: SessionSummary?
     @State private var renameText = ""
     @State private var deleteTarget: SessionSummary?
@@ -15,55 +22,20 @@ struct SidebarView: View {
     @State private var newBotShown = false
     @State private var notificationsShown = false
 
+    enum Page: Hashable {
+        case sessions
+        case workspaces
+    }
+
     var body: some View {
-        @Bindable var model = model
-        @Bindable var navigation = navigation
-        List(selection: $navigation.route) {
-            if model.botModeSupported == true {
-                tabSection
-            }
-
-            if model.sidebarTab == .bots {
-                botsSections
-            } else {
-                if !model.profiles.isEmpty || model.profilesLoading {
-                    profileSection
-                }
-
-                if let tree = model.projectTree {
-                    ForEach(tree.projects) { project in
-                        projectSection(project, scoped: tree.scopedSessionIDs)
+        NavigationStack(path: $path) {
+            rootPage
+                .navigationDestination(for: Page.self) { page in
+                    switch page {
+                    case .sessions: sessionsPage
+                    case .workspaces: workspacesPage
                     }
                 }
-
-                recentsSection
-
-                if let error = model.browseError {
-                    Section {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                    }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .overlay {
-            if model.sidebarTab == .bots {
-                if model.botsLoading && model.bots.isEmpty {
-                    ProgressView("Loading bots…")
-                }
-            } else if model.browseLoading && model.recentSessions.isEmpty {
-                ProgressView("Loading sessions…")
-            }
-        }
-        .task(id: model.sidebarTab) {
-            if model.sidebarTab == .bots { await model.loadBots() }
-        }
-        .refreshable {
-            if model.sidebarTab == .bots {
-                await model.loadBots(force: true)
-            } else {
-                await model.refreshProjects()
-            }
         }
         .alert("Rename Session", isPresented: renameAlertShown) {
             TextField("Title", text: $renameText)
@@ -88,16 +60,45 @@ struct SidebarView: View {
             }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                // ⌘N lives on the menu command, which targets the focused
-                // window (#112) — a shortcut here too would collide with it.
-                Button {
-                    model.requestNewSession(in: navigation)
-                } label: {
-                    Label("New Session", systemImage: "square.and.pencil")
-                }
+        #if os(iOS)
+            .sheet(isPresented: $notificationsShown) { NotificationSettingsView() }
+        #endif
+    }
+
+    // MARK: Page 1 — profiles (or bots)
+
+    private var rootPage: some View {
+        @Bindable var navigation = navigation
+        return List(selection: $navigation.route) {
+            if model.botModeSupported == true {
+                tabSection
             }
+
+            if model.sidebarTab == .bots {
+                botsSections
+            } else {
+                profilesSection
+                errorSection
+            }
+        }
+        .overlay {
+            if model.sidebarTab == .bots && model.botsLoading && model.bots.isEmpty {
+                ProgressView("Loading bots…")
+            }
+        }
+        .navigationTitle(model.endpoint?.displayName ?? "Mercury Chat")
+        .task(id: model.sidebarTab) {
+            if model.sidebarTab == .bots { await model.loadBots() }
+        }
+        .refreshable {
+            if model.sidebarTab == .bots {
+                await model.loadBots(force: true)
+            } else {
+                await model.refreshProjects()
+            }
+        }
+        .toolbar {
+            newSessionToolbarItem
             #if os(iOS)
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -117,9 +118,6 @@ struct SidebarView: View {
                 }
             }
         }
-        #if os(iOS)
-            .sheet(isPresented: $notificationsShown) { NotificationSettingsView() }
-        #endif
     }
 
     private var tabSection: some View {
@@ -134,7 +132,76 @@ struct SidebarView: View {
         }
     }
 
-    // MARK: Bots roster
+    @ViewBuilder
+    private var profilesSection: some View {
+        Section("Profile") {
+            if model.profilesLoading && model.profiles.isEmpty {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Loading profiles (this can take a while)…")
+                        .foregroundStyle(.secondary)
+                }
+            } else if model.profiles.isEmpty {
+                // No profile list (older backend, or the read failed): the
+                // sessions page still works, unscoped.
+                pageButton(.sessions) {
+                    Label("All sessions", systemImage: "bubble.left.and.bubble.right")
+                }
+            }
+            ForEach(model.profiles) { profile in
+                Button {
+                    path.append(.sessions)
+                    Task { await model.selectProfile(profile.name) }
+                } label: {
+                    profileRow(profile)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func profileRow(_ profile: ProfileInfo) -> some View {
+        HStack {
+            VStack(alignment: .leading) {
+                HStack(spacing: 6) {
+                    Text(profile.displayName).font(.body.weight(.medium))
+                    if profile.isDefault {
+                        Text("default")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.quaternary, in: Capsule())
+                    }
+                }
+                let subtitle = profileSubtitle(profile)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if model.selectedProfile == profile.name {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.tint)
+            }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        // Whole row is the hit target, not just the text.
+        .contentShape(Rectangle())
+    }
+
+    private func profileSubtitle(_ profile: ProfileInfo) -> String {
+        var parts: [String] = []
+        if let model = profile.model { parts.append(model) }
+        if let provider = profile.provider { parts.append(provider) }
+        if let skills = profile.skillCount { parts.append("\(skills) skills") }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: Page 1 (Bots tab) — roster
 
     @ViewBuilder
     private var botsSections: some View {
@@ -205,32 +272,91 @@ struct SidebarView: View {
             }
     }
 
-    private var profileSection: some View {
-        Section("Profile") {
-            if model.profilesLoading && model.profiles.isEmpty {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Loading profiles…").foregroundStyle(.secondary)
+    // MARK: Page 2 — sessions for the selected profile
+
+    private var sessionsPage: some View {
+        @Bindable var navigation = navigation
+        return List(selection: $navigation.route) {
+            Section {
+                Button {
+                    model.requestNewSession(in: navigation)
+                } label: {
+                    Label("New session", systemImage: "square.and.pencil")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
-            } else {
-                Picker(
-                    "Profile",
-                    selection: Binding(
-                        get: { model.selectedProfile ?? "" },
-                        set: { name in Task { await model.selectProfile(name) } })
-                ) {
-                    ForEach(model.profiles) { profile in
-                        Text(profile.name).tag(profile.name)
+                pageButton(.workspaces) {
+                    Label("Choose a workspace", systemImage: "folder")
+                }
+            }
+            errorSection
+            Section("Recent sessions") {
+                if model.browseLoading && model.recentSessions.isEmpty {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Loading sessions…").foregroundStyle(.secondary)
                     }
+                } else if model.recentSessions.isEmpty {
+                    Text("No sessions yet for this profile.")
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
+                ForEach(model.recentSessions) { session in
+                    sessionRow(session)
+                }
             }
         }
+        .navigationTitle(model.profileDisplayName(model.selectedProfile) ?? "Sessions")
+        .refreshable { await model.refreshProjects() }
+        .toolbar { newSessionToolbarItem }
     }
 
-    private func projectSection(_ project: ProjectInfo, scoped: Set<String>) -> some View {
-        Section {
+    // MARK: Page 3 — workspaces
+
+    private var workspacesPage: some View {
+        @Bindable var navigation = navigation
+        return List(selection: $navigation.route) {
+            errorSection
+            if model.browseLoading && model.projectTree == nil {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Loading workspaces…").foregroundStyle(.secondary)
+                }
+            } else if (model.projectTree?.projects ?? []).isEmpty {
+                Text("No workspaces yet.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(model.projectTree?.projects ?? []) { project in
+                workspaceSection(project)
+            }
+        }
+        .navigationTitle("Workspaces")
+        .refreshable { await model.refreshProjects() }
+        .toolbar { newSessionToolbarItem }
+    }
+
+    /// The Home bucket stays as its own group — it holds the sessions that
+    /// belong to no workspace, which the recents page may have aged out.
+    private func workspaceSection(_ project: ProjectInfo) -> some View {
+        Section(project.isHomeBucket ? "Home" : project.name) {
+            if let path = project.primaryPath {
+                Text(path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if project.primaryPath != nil || project.isHomeBucket {
+                Button {
+                    model.requestNewSession(cwd: project.primaryPath, in: navigation)
+                } label: {
+                    Label(
+                        project.isHomeBucket ? "New session (no workspace)" : "New session in workspace",
+                        systemImage: "square.and.pencil"
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+            }
             ForEach(project.previewSessions) { session in
                 sessionRow(session)
             }
@@ -239,44 +365,53 @@ struct SidebarView: View {
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
-        } header: {
-            HStack {
-                Text(project.isHomeBucket ? "Home" : project.name)
-                Spacer()
-                if project.primaryPath != nil || project.isHomeBucket {
-                    Button {
-                        model.requestNewSession(cwd: project.primaryPath, in: navigation)
-                    } label: {
-                        Image(systemName: "plus.circle")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.borderless)
-                    .help(
-                        project.isHomeBucket
-                            ? "New session (no workspace)"
-                            : "New session in \(project.name)")
-                }
+        }
+    }
+
+    // MARK: Shared pieces
+
+    private var newSessionToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            // ⌘N lives on the menu command, which targets the focused
+            // window (#112) — a shortcut here too would collide with it.
+            Button {
+                model.requestNewSession(in: navigation)
+            } label: {
+                Label("New Session", systemImage: "square.and.pencil")
             }
         }
     }
 
-    @ViewBuilder
-    private var recentsSection: some View {
-        let scoped = model.projectTree?.scopedSessionIDs ?? []
-        let rows = model.recentSessions.filter { !scoped.contains($0.storedID) }
-        // When every session is already shown inside a project group, skip
-        // the section instead of showing a misleading empty state.
-        if !rows.isEmpty {
-            Section("Recent") {
-                ForEach(rows) { session in
-                    sessionRow(session)
-                }
+    /// A row that pushes `page`, drawn like a navigation link. A plain
+    /// NavigationLink(value:) would compete with the list's route selection.
+    private func pageButton<Content: View>(
+        _ page: Page, @ViewBuilder label: () -> Content
+    ) -> some View {
+        Button {
+            path.append(page)
+        } label: {
+            HStack {
+                label()
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
-        } else if model.recentSessions.isEmpty && !model.browseLoading {
-            Section("Recent") {
-                Text("No sessions yet")
-                    .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder private var errorSection: some View {
+        if let error = model.browseError {
+            Section {
+                Label(error, systemImage: "exclamationmark.triangle")
                     .font(.callout)
+                    .foregroundStyle(.red)
+                Button("Retry") {
+                    Task { await model.refreshProjects() }
+                }
+                .disabled(model.browseLoading)
             }
         }
     }
@@ -284,32 +419,37 @@ struct SidebarView: View {
     private func sessionRow(_ session: SessionSummary) -> some View {
         NavigationLink(value: AppModel.Route.session(session)) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     if session.pinned {
-                        Image(systemName: "pin.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "pin.fill").font(.caption2)
                     }
-                    Text(session.title?.isEmpty == false ? session.title! : "Untitled")
+                    Text(session.title?.isEmpty == false ? session.title! : "Untitled session")
                         .lineLimit(1)
                 }
                 HStack(spacing: 6) {
                     if let updated = session.updatedAt {
                         Text(updated, format: .relative(presentation: .named))
                     }
+                    if let branch = session.gitBranch {
+                        Label(branch, systemImage: "arrow.triangle.branch")
+                    }
                     if let count = session.messageCount {
-                        Text("· \(count) messages")
+                        Text("\(count) messages")
                     }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
         }
         .contextMenu {
             // Canonical Bot Chats resolve by their exact title — renaming one
             // severs its bot's forever-chat (AppModel.renameSession refuses
-            // too; hiding the item explains less but confuses least).
-            if !BotChatPolicy.isCanonicalRow(rootTitle: nil, title: session.title) {
+            // too; hiding the item explains less but confuses least). The
+            // gateway resurrects an archived one on the next lookup, so
+            // Archive would quietly undo itself; hide that too.
+            let canonical = BotChatPolicy.isCanonicalRow(rootTitle: nil, title: session.title)
+            if !canonical {
                 Button {
                     renameText = session.title ?? ""
                     renameTarget = session
@@ -323,6 +463,13 @@ struct SidebarView: View {
                 Label(
                     session.pinned ? "Unpin" : "Pin",
                     systemImage: session.pinned ? "pin.slash" : "pin")
+            }
+            if !canonical {
+                Button {
+                    Task { await model.archiveSession(session) }
+                } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
             }
             Divider()
             Button(role: .destructive) {
