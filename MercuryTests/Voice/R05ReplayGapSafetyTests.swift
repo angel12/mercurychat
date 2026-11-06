@@ -158,10 +158,16 @@ struct R05ReplayGapSafetyTests {
         expectFallback(controller, service: service)
     }
 
-    @Test(arguments: [
-        JSONValue?.none, .null, .array([]), .bool(false), .number(7), .string("text"),
-    ])
-    func malformedPayloadRefusesPrefixAndAllowsRedelivery(payload: JSONValue?) async throws {
+    /// Labelled so every case has its own identity: `nil` and `.null` encode
+    /// alike, and Xcode 16's Swift Testing starts colliding cases twice.
+    nonisolated static let malformedPayloads: [(label: String, payload: JSONValue?)] = [
+        ("absent", nil), ("null", .null), ("array", .array([])), ("bool", .bool(false)),
+        ("number", .number(7)), ("string", .string("text")),
+    ]
+
+    @Test(arguments: malformedPayloads.map(\.label))
+    func malformedPayloadRefusesPrefixAndAllowsRedelivery(label: String) async throws {
+        let payload = try #require(Self.malformedPayloads.first { $0.label == label }).payload
         let service = ScriptedSessionService()
         let controller = try await openedController(service: service)
         var frame =
