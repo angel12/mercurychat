@@ -3,7 +3,7 @@ import MercuryKit
 import Observation
 import MercuryVoiceEngine
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
     import AVFoundation
     import CallKit
     import UIKit
@@ -213,7 +213,7 @@ final class ConversationController {
     private let cues = ConversationCuePlayer()
     private var stateTask: Task<Void, Never>?
 
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
         // Background-audio lifecycle (issue #31). The keepalive stream pins
         // the capture engine on for the whole conversation, so iOS never
         // sees a stopped-audio gap to suspend into, and audio only ever
@@ -790,7 +790,7 @@ final class ConversationController {
                     // Background / interruption refusals are transient
                     // (issue #31); real device or permission problems in the
                     // foreground stay fatal.
-                    #if os(iOS)
+                    #if os(iOS) || os(visionOS)
                         guard let self else { return true }
                         if self.audioInterrupted { return false }
                         if UIApplication.shared.applicationState != .active { return false }
@@ -817,11 +817,11 @@ final class ConversationController {
         stateTask = Task { [weak self] in
             for await state in await engine.uiStates() {
                 guard let self else { return }
-                #if os(iOS)
+                #if os(iOS) || os(visionOS)
                     let wasMuted = self.voiceState.muted
                 #endif
                 self.voiceState = state
-                #if os(iOS)
+                #if os(iOS) || os(visionOS)
                     if state.muted != wasMuted {
                         self.applyMuteToCapture(muted: state.muted)
                     }
@@ -829,7 +829,7 @@ final class ConversationController {
             }
         }
         takeLevelMeter()
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             startAudioKeepalive()
             observeAudioInterruptions()
         #endif
@@ -850,7 +850,7 @@ final class ConversationController {
         clarifyAnnouncement?.cancel()
         credentialAnnouncement?.cancel()
         releaseLevelMeterIfOwned()
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             stopAudioKeepalive()
             if let interruptionObserver {
                 NotificationCenter.default.removeObserver(interruptionObserver)
@@ -933,7 +933,7 @@ final class ConversationController {
     /// capture engine, and resume — every branch no-ops when nothing is
     /// actually paused or stopped.
     func appBecameActive() {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             audioInterrupted = false
             // Starting audio is allowed again: restore a keepalive that was
             // dropped by a mute (or refused while backgrounded), or the rest
@@ -945,7 +945,7 @@ final class ConversationController {
         #endif
     }
 
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
         private func startAudioKeepalive() {
             guard keepaliveStreamID == nil,
                 let opened = try? capture.openStream()
@@ -2095,7 +2095,7 @@ final class ConversationController {
     /// the interruption state, revive the capture engine if the system
     /// killed it, unpause, and re-arm.
     func listenNow() {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             audioInterrupted = false
             capture.ensureRunning()
         #endif
@@ -2281,7 +2281,7 @@ final class ConversationController {
 
     private func resumeIfUnprompted() {
         guard !hasPrompt else { return }
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             guard !audioInterrupted else { return }
         #endif
         Task { await engine?.setPaused(false) }
@@ -2412,7 +2412,7 @@ final class ConversationController {
     }
 }
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
     /// CXCallObserver delegate reporting the moment no system call remains
     /// (phone, FaceTime, or VoIP). Observation-only CallKit — review-safe,
     /// no entitlement. Delegate callbacks arrive on the queue given to

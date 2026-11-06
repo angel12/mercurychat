@@ -100,6 +100,11 @@ targets:
           Hermes agent hands-free.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # Voice conversations keep running behind the lock screen as a
+        # CallKit call (sub-project 3).
+        UIBackgroundModes:
+          - audio
+          - voip
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
