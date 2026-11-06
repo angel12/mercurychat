@@ -1097,6 +1097,9 @@ final class ConversationController {
             GatewayEvent.Kind.error:
             // Only this conversation's own turn reaches the tracker: the turn
             // a queued prompt waits behind belongs to another app.
+            // A submit going out reopens a finished gate: its turn's start
+            // can land before its receipt.
+            if sessionBox.submitsInFlight > 0 { turnAttribution.noteSubmitInFlight() }
             switch turnAttribution.classify(event) {
             case .feed:
                 trackerEventContinuation?.yield(.event(event))
@@ -1114,6 +1117,12 @@ final class ConversationController {
                 runningSubagents.removeAll()
                 trackerEventContinuation?.yield(.reset(busy: false, id: UUID()))
                 setNotice("Your message was removed from the queue.")
+                return
+            case .ownTurnAlreadyOver:
+                // Steered into a turn that has already ended: nothing of ours
+                // is left to say.
+                runningSubagents.removeAll()
+                trackerEventContinuation?.yield(.reset(busy: false, id: UUID()))
                 return
             }
             if event.type == GatewayEvent.Kind.error {
@@ -1838,7 +1847,10 @@ final class ConversationController {
             sessionBox.storedID = handle.storedID
             // The authority's snapshot lists the shared queue: re-derive
             // whether our prompt still waits before any replayed turn event.
-            turnAttribution.noteResume(queue: QueuedPrompt.list(from: handle.raw))
+            // A claim buffered when the socket dropped is decided here too.
+            for buffered in turnAttribution.noteResume(queue: QueuedPrompt.list(from: handle.raw)) {
+                trackerEventContinuation?.yield(.event(buffered))
+            }
             let currentEpoch = await sessionService.replayEpoch
             guard !isTornDown else {
                 await closeSessionIfOpen()
@@ -1989,11 +2001,10 @@ final class ConversationController {
         return snapshot
     }
 
-    /// Keeps the wait: the reconnect resume re-derives it. A half-seen
-    /// claim can't be decided any more, so its buffer goes.
+    /// Keeps the wait and any half-seen claim: the reconnect resume's
+    /// snapshot decides them.
     func connectionLost() {
         connectionHealthy = false
-        turnAttribution.noteConnectionLost()
     }
 
     /// A submit's outcome (nil: it threw). Queued behind another turn is a

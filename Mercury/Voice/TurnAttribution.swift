@@ -10,34 +10,43 @@ import MercuryKit
 /// the real reply one utterance late. The controller asks `classify` about
 /// each turn event and feeds the tracker only the ones that are its own.
 ///
-/// - Authority: the receipt's `admission_id` is followed through
-///   `session.info.pending`. When the authority claims a row it publishes the
-///   turn's `message.start` FIRST and the `pending` list that shows the row
-///   started (or gone) right after it (hermes v0.23 `_stamp_claim`). So while
-///   our row is queued, a `message.start` opens a buffer of that turn's
-///   events; the next `pending` list decides: our row left the queue → the
-///   turn is ours, flush the buffer to the tracker; our row still queued →
-///   it was someone else's turn, discard it.
-/// - Legacy `forwarded` (no admission ids, no queue): everything until the
-///   next `message.start` belongs to the turn ahead; that start is ours.
-/// - `message.complete {admission_id, outcome: cancelled | steered}` retires
-///   a queued row (the authority publishes it after the `pending` list). It
-///   is never a turn's end. Ours cancelled: our prompt will never run. Ours
-///   steered: our text joined the running turn, whose output is now ours.
+/// Authority wire order (hermes v0.23):
+/// - A claim publishes the turn's `message.start` FIRST, then the `pending`
+///   list showing the claimed row `started` (`_stamp_claim`). So while our
+///   row is queued, a start opens a buffer of that turn's events and the next
+///   list decides it: our row listed `started` (not steering) → our claim,
+///   flush the buffer; still queued, or gone → not ours, discard it.
+/// - A steer (`prompt.steer_queued`) lists our row `started` + `steering` at
+///   once: our text is in the running turn, whose remaining output is ours.
+///   Its `steered` settle comes after that turn's own complete. An
+///   undelivered steer lists the row `queued` again.
+/// - A cancel publishes the list (row gone) FIRST, then the row's
+///   `message.complete {admission_id, outcome: cancelled}`.
+/// - `cancelled`/`steered` settles retire rows; they are never a turn's end.
+///
+/// Legacy `forwarded` (no admission ids, no queue): everything until the next
+/// `message.start` belongs to the turn ahead; that start is ours.
 ///
 /// Envelope-level `admission_id` would attribute frames exactly, but
 /// MercuryKit 0.9.0's `GatewayEvent` does not keep it (parked kit follow-up).
+/// One `ownAdmissionID`: a second queued voice prompt replaces the first
+/// (parked; the earlier reply may go unspoken).
 struct TurnAttribution {
     enum Phase: Equatable {
-        /// Every turn event is ours (or nothing of ours is pending).
+        /// Our turn (or a turn we did not submit through the queue) is
+        /// running: feed everything.
         case open
         /// Authority: our admission is queued (or `unknown`). `seenQueued`
         /// once a `pending` list has shown it, so a later list without it
         /// means it left the queue rather than that the list predates it.
         case queued(seenQueued: Bool)
-        /// Our admission left the queue with no turn start seen yet, or the
-        /// legacy `forwarded` wait: the next `message.start` is ours.
+        /// Our admission left the queue with no claim of ours seen (a
+        /// cancel/steer settle decides), or the legacy `forwarded` wait: the
+        /// next `message.start` is ours.
         case awaitingOurStart
+        /// The turn our admission ran in has completed: later turns on the
+        /// session are other apps' claims. Ends at our next submit.
+        case finished
     }
 
     enum Verdict: Equatable {
@@ -51,6 +60,9 @@ struct TurnAttribution {
         case retiredRow
         /// Our still-queued prompt was cancelled elsewhere: it will never run.
         case ownQueuedPromptCancelled
+        /// Our row was steered into a turn whose steering list we never saw
+        /// (it settles after that turn's complete): our turn is already over.
+        case ownTurnAlreadyOver
     }
 
     private(set) var phase: Phase = .open
@@ -63,7 +75,12 @@ struct TurnAttribution {
     private var lastQueue: [QueuedPrompt]?
 
     /// Shown as "Waiting for the current turn".
-    var isWaiting: Bool { phase != .open }
+    var isWaiting: Bool {
+        switch phase {
+        case .queued, .awaitingOurStart: return true
+        case .open, .finished: return false
+        }
+    }
 
     /// Our prompt is admitted but has not started: a tracker reset must
     /// leave the turn busy, or the engine re-arms the mic before the reply.
@@ -92,10 +109,17 @@ struct TurnAttribution {
         // turn's admission is not ours to match.
         ownAdmissionID = receipt.status == "steered" ? nil : receipt.admissionID
         if receipt.status == "queued", let admission = receipt.admissionID {
-            if let row = lastQueue?.first(where: { $0.admissionID == admission }) {
-                phase = Self.stillWaiting(row) ? .queued(seenQueued: true) : .awaitingOurStart
-            } else {
+            guard let row = lastQueue?.first(where: { $0.admissionID == admission }) else {
                 phase = .queued(seenQueued: false)
+                return
+            }
+            if Self.stillWaiting(row) {
+                phase = .queued(seenQueued: true)
+            } else if row.steering || row.status == .started {
+                // Steered in, or already claimed: our start has passed.
+                phase = .open
+            } else {
+                phase = .awaitingOurStart
             }
         } else if receipt.forwarded || receipt.status == "queued" {
             phase = .awaitingOurStart
@@ -104,48 +128,65 @@ struct TurnAttribution {
         }
     }
 
+    /// A submit is going out: a finished turn's gate must not hold its
+    /// events (its receipt may land after its start).
+    mutating func noteSubmitInFlight() {
+        if phase == .finished { phase = .open }
+    }
+
     /// `session.info.pending`. Returns the buffered events to feed the
-    /// tracker, in order, when this list shows the buffered turn is ours.
+    /// tracker, in order, when this list shows the buffered claim is ours.
     mutating func noteQueue(_ rows: [QueuedPrompt]) -> [GatewayEvent] {
+        decide(rows, fromSnapshot: false)
+    }
+
+    /// A reconnect resume's snapshot. A `pending` list decides a buffered
+    /// claim and the wait like a live list; without one the state stands
+    /// until the next `session.info`.
+    mutating func noteResume(queue rows: [QueuedPrompt]?) -> [GatewayEvent] {
+        guard let rows else { return [] }
+        return decide(rows, fromSnapshot: true)
+    }
+
+    private mutating func decide(_ rows: [QueuedPrompt], fromSnapshot: Bool) -> [GatewayEvent] {
         lastQueue = rows
         let buffered = claimBuffer
         claimBuffer = nil
-        guard case .queued(let seenQueued) = phase, let admission = ownAdmissionID else {
-            return []
-        }
+        guard let admission = ownAdmissionID else { return [] }
         let row = rows.first { $0.admissionID == admission }
-        if let row, Self.stillWaiting(row) {
-            // Still queued: a buffered start was someone else's claim.
-            phase = .queued(seenQueued: true)
-            return []
-        }
-        if let buffered {
-            // The list right behind a claim's start no longer queues our row:
-            // that claim was ours.
-            phase = .open
-            return buffered
-        }
-        if row != nil || seenQueued {
-            // Started, or gone (a cancel/steer settle may follow): the next
-            // start is ours.
-            phase = .awaitingOurStart
-        }
-        return []
-    }
-
-    /// A reconnect resume's snapshot. A `pending` list re-derives the wait
-    /// (our row still queued, or started/gone so the next start is ours);
-    /// without one the state stands until the next `session.info`.
-    mutating func noteResume(queue rows: [QueuedPrompt]?) {
-        claimBuffer = nil
-        guard let rows, let admission = ownAdmissionID else { return }
-        lastQueue = rows
         switch phase {
-        case .queued, .awaitingOurStart:
-            let row = rows.first { $0.admissionID == admission }
-            phase = row.map(Self.stillWaiting) == true ? .queued(seenQueued: true) : .awaitingOurStart
-        case .open:
-            break
+        case .queued(let seenQueued):
+            guard let row else {
+                // Gone: our claim would list us `started`, so a buffered start
+                // was someone else's. Our cancel/steer settle decides.
+                if seenQueued || buffered != nil || fromSnapshot { phase = .awaitingOurStart }
+                return []
+            }
+            if Self.stillWaiting(row) {
+                phase = .queued(seenQueued: true)
+                return []
+            }
+            if row.steering {
+                // Our text is going into the running turn: its output is ours.
+                phase = .open
+                return []
+            }
+            guard row.status == .started else {
+                phase = .awaitingOurStart
+                return []
+            }
+            // Listed `started` right behind a claim's start: that claim is
+            // ours. Without a buffer our start already passed.
+            phase = .open
+            return buffered ?? []
+        case .open, .awaitingOurStart, .finished:
+            if let row, Self.stillWaiting(row) {
+                // An undelivered steer went back to its queue place.
+                phase = .queued(seenQueued: true)
+            } else if let row, row.steering, phase == .awaitingOurStart {
+                phase = .open
+            }
+            return []
         }
     }
 
@@ -157,11 +198,6 @@ struct TurnAttribution {
         if !holdsQueuedPrompt { phase = .open }
     }
 
-    /// The socket dropped: a half-seen claim can't be decided any more.
-    mutating func noteConnectionLost() {
-        claimBuffer = nil
-    }
-
     mutating func classify(_ event: GatewayEvent) -> Verdict {
         let isStart = event.type == GatewayEvent.Kind.messageStart
 
@@ -171,28 +207,33 @@ struct TurnAttribution {
             let admission = event.payload["admission_id"]?.stringValue
         {
             guard admission == ownAdmissionID else { return .retiredRow }
-            switch (outcome, phase) {
-            case ("cancelled", .open):
-                // Ours was running: the cancel interrupted it — its end.
-                break
-            case ("cancelled", _):
-                phase = .open
-                ownAdmissionID = nil
+            switch phase {
+            case .queued, .awaitingOurStart:
                 claimBuffer = nil
-                return .ownQueuedPromptCancelled
-            default:
-                // Steered: our text joined the running turn. Its remaining
-                // output and its real complete are ours from here.
-                phase = .open
                 ownAdmissionID = nil
-                claimBuffer = nil
+                if outcome == "cancelled" {
+                    phase = .open
+                    return .ownQueuedPromptCancelled
+                }
+                phase = .finished
+                return .ownTurnAlreadyOver
+            case .open where outcome == "cancelled":
+                break  // ours was running: the cancel interrupted it — its end
+            case .open, .finished:
+                // A steered settle trails the turn our text ran in.
                 return .retiredRow
             }
         }
 
         switch phase {
         case .open:
+            if event.type == GatewayEvent.Kind.messageComplete, ownAdmissionID != nil {
+                // The turn our admission ran in ended: later claims are not ours.
+                phase = .finished
+            }
             return .feed
+        case .finished:
+            return .hold
         case .queued:
             // A start that names our admission is ours whatever the queue
             // last said.
