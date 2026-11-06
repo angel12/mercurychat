@@ -31,6 +31,13 @@ import MercuryKit
 /// MercuryKit 0.9.0's `GatewayEvent` does not keep it (parked kit follow-up).
 /// One `ownAdmissionID`: a second queued voice prompt replaces the first
 /// (parked; the earlier reply may go unspoken).
+///
+/// On an authority voice speaks only replies to its own prompts, so its idle
+/// phase there is `.finished`, not `.open`: at session open, after a tracker
+/// reset with no turn of ours running, after our queued prompt is cancelled
+/// and after a failed submit. Other apps' turns are then held, never fed —
+/// never spoken, never a reason to arm barge-in. A submit reopens as usual.
+/// The legacy wire has no attribution, so its idle phase stays `.open`.
 struct TurnAttribution {
     enum Phase: Equatable {
         /// Our turn (or a turn we did not submit through the queue) is
@@ -66,6 +73,9 @@ struct TurnAttribution {
     }
 
     private(set) var phase: Phase = .open
+    /// The socket speaks the session-authority wire (the connection's
+    /// `isSessionAuthority`, read at open and at each reconnect resume).
+    private(set) var onAuthority = false
     /// The admission our latest submit was given (authority only).
     private(set) var ownAdmissionID: String?
     /// While queued: the turn events since a `message.start`, awaiting the
@@ -82,6 +92,15 @@ struct TurnAttribution {
         }
     }
 
+    /// The turn the tracker is running (if any) is ours to cut short: only
+    /// while our own turn runs or our submit is going out. Waiting behind
+    /// another turn, `.finished`, or idle on an authority, `session.interrupt`
+    /// would stop another app's turn.
+    var mayInterrupt: Bool { phase == .open }
+
+    /// No turn of ours is running: other apps' turns are not ours to hear.
+    private var idlePhase: Phase { onAuthority ? .finished : .open }
+
     /// Our prompt is admitted but has not started: a tracker reset must
     /// leave the turn busy, or the engine re-arms the mic before the reply.
     var holdsQueuedPrompt: Bool {
@@ -97,11 +116,26 @@ struct TurnAttribution {
         row.status == .queued || row.status == .unknown
     }
 
+    /// A session was opened on a socket that does (or does not) speak the
+    /// authority wire: nothing of ours runs yet.
+    mutating func noteSessionOpened(authority: Bool) {
+        onAuthority = authority
+        claimBuffer = nil
+        phase = idlePhase
+    }
+
+    /// A reconnect landed on a socket that does (or does not) speak the
+    /// authority wire. `.finished` has no meaning without admission ids.
+    mutating func noteWire(authority: Bool) {
+        onAuthority = authority
+        if !authority, phase == .finished { phase = .open }
+    }
+
     /// A submit's outcome; nil when it threw (nothing of ours waits).
     mutating func noteReceipt(_ receipt: PromptSubmission?) {
         claimBuffer = nil
         guard let receipt else {
-            phase = .open
+            phase = idlePhase
             ownAdmissionID = nil
             return
         }
@@ -194,12 +228,25 @@ struct TurnAttribution {
         }
     }
 
-    /// The tracker was reset from a snapshot (no replay): whatever turn it
-    /// shows is the session's state now, so only a still-queued prompt of
-    /// ours keeps the gate.
-    mutating func noteTrackerReset() {
+    /// The tracker is being reset from a snapshot (no replay): whatever turn
+    /// it shows is the session's state now, so only a still-queued prompt of
+    /// ours keeps the gate. Returns whether the snapshot's `running` turn is
+    /// the tracker's to follow (its `busy` seed). On an authority that is
+    /// only a turn of ours already running (or released to us) before the
+    /// outage; anything else is another app's and is held.
+    mutating func noteTrackerReset(running: Bool) -> Bool {
         claimBuffer = nil
-        if !holdsQueuedPrompt { phase = .open }
+        if holdsQueuedPrompt { return false }
+        guard onAuthority else {
+            phase = .open
+            return running
+        }
+        if running, phase == .open || phase == .awaitingOurStart {
+            phase = .open
+            return true
+        }
+        phase = .finished
+        return false
     }
 
     mutating func classify(_ event: GatewayEvent) -> Verdict {
@@ -216,7 +263,7 @@ struct TurnAttribution {
                 claimBuffer = nil
                 ownAdmissionID = nil
                 if outcome == "cancelled" {
-                    phase = .open
+                    phase = idlePhase
                     return .ownQueuedPromptCancelled
                 }
                 phase = .finished
@@ -241,6 +288,13 @@ struct TurnAttribution {
         case .open:
             if event.type == GatewayEvent.Kind.messageComplete, ownAdmissionID != nil {
                 // The turn our admission ran in ended: later claims are not ours.
+                phase = .finished
+            } else if onAuthority,
+                event.type == GatewayEvent.Kind.messageComplete
+                    || event.type == GatewayEvent.Kind.error
+            {
+                // Our turn (a steer's joined turn, say) ended: on an
+                // authority the next turn is another app's until we submit.
                 phase = .finished
             }
             return .feed

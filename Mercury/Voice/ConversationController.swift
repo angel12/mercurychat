@@ -101,10 +101,22 @@ final class ConversationController {
     /// `forwarded` on the legacy wire. Not a failure — it runs once that turn
     /// ends. Clears at our own turn's `message.start` (see
     /// `TurnAttribution`), on a failed submit and on teardown; a reconnect
-    /// re-derives it (spec "Revision: authority wire").
-    var isWaitingForTurn: Bool { turnAttribution.isWaiting }
-    /// Which turn events on this runtime are this conversation's own.
-    private var turnAttribution = TurnAttribution()
+    /// re-derives it (spec "Revision: authority wire"). Stored, so views
+    /// observing it change only on transitions, not per turn event.
+    private(set) var isWaitingForTurn = false
+    /// Which turn events on this runtime are this conversation's own. Not
+    /// observed: `classify` mutates it on every turn event. What the views
+    /// and the engine read is mirrored on each change.
+    @ObservationIgnored private var turnAttribution = TurnAttribution() {
+        didSet { mirrorTurnAttribution() }
+    }
+
+    private func mirrorTurnAttribution() {
+        let waiting = turnAttribution.isWaiting
+        if isWaitingForTurn != waiting { isWaitingForTurn = waiting }
+        sessionBox.setBargeGate(
+            mayArm: !waiting, mayInterrupt: turnAttribution.mayInterrupt)
+    }
 
     // MARK: Shared-session coordination (Chat #112, spec §2)
 
@@ -228,6 +240,9 @@ final class ConversationController {
         private var _receipt: (@Sendable (_ receipt: PromptSubmission?) async -> Void)?
         private var _offeredSubmission: (text: String, id: String)?
         private var _submitsInFlight = 0
+        private var _bargeMayArm = true
+        private var _mayInterrupt = true
+        private var _interruptDropped = false
 
         var runtimeID: String? {
             get {
@@ -288,6 +303,37 @@ final class ConversationController {
         var submitsInFlight: Int { lock.withLock { _submitsInFlight } }
         func beginSubmit() { lock.withLock { _submitsInFlight += 1 } }
         func endSubmit() { lock.withLock { _submitsInFlight -= 1 } }
+
+        /// Barge-in may cut short only a turn that is ours (final review
+        /// item 1). Mirrored from `TurnAttribution` on the main actor; read
+        /// by the engine's `bargeInEnabled` and the tracker's closures.
+        func setBargeGate(mayArm: Bool, mayInterrupt: Bool) {
+            lock.withLock {
+                _bargeMayArm = mayArm
+                _mayInterrupt = mayInterrupt
+            }
+        }
+
+        /// Waiting behind another turn: the engine must not arm barge-in,
+        /// since the tracker's busy turn is not ours to interrupt.
+        var bargeMayArm: Bool { lock.withLock { _bargeMayArm } }
+
+        /// Whether the engine's interrupt may go out. A dropped one is
+        /// remembered so the barge capture's submit is not sent as an
+        /// interruption of a turn nobody interrupted.
+        func admitInterrupt() -> Bool {
+            lock.withLock {
+                _interruptDropped = !_mayInterrupt
+                return _mayInterrupt
+            }
+        }
+
+        func takeInterruptDropped() -> Bool {
+            lock.withLock {
+                defer { _interruptDropped = false }
+                return _interruptDropped
+            }
+        }
     }
 
     /// MainActor admits both events and resets to this one FIFO. A direct
@@ -342,6 +388,9 @@ final class ConversationController {
     /// Test hook: a 4007 recovery is about to await a reconnect resume;
     /// true when it joins one already in flight rather than starting its own.
     private let reattachRecoveryWillResume: (@MainActor @Sendable (Bool) -> Void)?
+    /// The user's barge-in setting; seamed so a test does not depend on the
+    /// host app's stored preference.
+    private let bargeInPreference: @Sendable () -> Bool
 
     init(
         connection: HermesConnection,
@@ -359,7 +408,9 @@ final class ConversationController {
             ) async throws -> PromptSubmission
         )? = nil,
         retryDelay: (@Sendable (Duration) async throws -> Void)? = nil,
-        reattachRecoveryWillResume: (@MainActor @Sendable (Bool) -> Void)? = nil
+        reattachRecoveryWillResume: (@MainActor @Sendable (Bool) -> Void)? = nil,
+        interruptSession: (@Sendable (_ sessionID: String) async throws -> Void)? = nil,
+        bargeInEnabled: (@Sendable () -> Bool)? = nil
     ) {
         self.connection = connection
         self.sessionService = sessionService ?? connection
@@ -368,6 +419,7 @@ final class ConversationController {
         self.trackerPumpWillJoin = trackerPumpWillJoin
         self.retryDelay = retryDelay ?? { try await Task.sleep(for: $0) }
         self.reattachRecoveryWillResume = reattachRecoveryWillResume
+        self.bargeInPreference = bargeInEnabled ?? { BargeInPreference.isEnabled }
         self.capture = capture ?? .shared
         self.profile = profile
         self.profileName = profile
@@ -390,6 +442,9 @@ final class ConversationController {
                 // authority admits a submission id once.
                 let submissionID =
                     box.takeSubmissionID(for: text) ?? UUID().uuidString.lowercased()
+                // A barge whose interrupt was dropped (the running turn was
+                // another app's) interrupted nothing: say so on the wire.
+                let interrupted = interrupted && !box.takeInterruptDropped()
                 @Sendable func send() async throws -> PromptSubmission {
                     guard let sid = box.runtimeID else { throw HermesError.notConnected }
                     if let submitPrompt {
@@ -421,7 +476,12 @@ final class ConversationController {
                 await box.receipt?(receipt)
             },
             interrupt: {
-                guard let sid = box.runtimeID else { return }
+                // Never stop a turn that isn't ours (final review item 1).
+                guard box.admitInterrupt(), let sid = box.runtimeID else { return }
+                if let interruptSession {
+                    try? await interruptSession(sid)
+                    return
+                }
                 try? await connection.interruptSession(sessionID: sid)
             })
 
@@ -613,7 +673,12 @@ final class ConversationController {
         usage = nil  // new session identity; the first turn re-reports
         lastSeenSeq = nil
         replayEpoch = await sessionService.replayEpoch
-        guard await resetTracker(busy: running) else {
+        // On an authority a turn already running is another app's: idle
+        // voice neither hears it nor waits on it (spec "Revision: authority
+        // wire"). The legacy wire follows it as before.
+        let authority = await sessionService.isSessionAuthority
+        turnAttribution.noteSessionOpened(authority: authority)
+        guard await resetTracker(busy: running && !authority) else {
             await closeSessionIfOpen()
             throw CancellationError()
         }
@@ -730,7 +795,11 @@ final class ConversationController {
                     return true
                 },
                 spokenSubmitFailure: AgentErrorCopy.spokenSubmitFailure,
-                bargeInEnabled: { BargeInPreference.isEnabled }),
+                bargeInEnabled: { [bargeInPreference, sessionBox] in
+                    // Not while waiting behind another app's turn: the
+                    // tracker is busy with our gate, not with a turn of ours.
+                    bargeInPreference() && sessionBox.bargeMayArm
+                }),
             clock: ContinuousClock())
         self.engine = engine
 
@@ -1831,6 +1900,8 @@ final class ConversationController {
             }
             sessionBox.runtimeID = handle.runtimeID
             sessionBox.storedID = handle.storedID
+            let authority = await sessionService.isSessionAuthority
+            turnAttribution.noteWire(authority: authority)
             // The authority's snapshot lists the shared queue: re-derive
             // whether our prompt still waits before any replayed turn event.
             // A claim buffered when the socket dropped is decided here too.
@@ -1882,13 +1953,15 @@ final class ConversationController {
                 // would swallow every frame after it.
                 lastSeenSeq = nil
                 let running = handle.raw["running"]?.truthy ?? false
+                // Whose turn the snapshot's `running` is: on an authority,
+                // only one of ours keeps the tracker busy.
+                let followsRunning = turnAttribution.noteTrackerReset(running: running)
                 // A submit still awaiting its ACK (a 4007 recovery's retry)
                 // owns a turn the snapshot cannot show yet; clearing `busy`
                 // under it would make the engine skip the reply.
                 let resetApplied = await resetTracker(
-                    busy: running || sessionBox.submitsInFlight > 0
+                    busy: followsRunning || sessionBox.submitsInFlight > 0
                         || turnAttribution.holdsQueuedPrompt)
-                turnAttribution.noteTrackerReset()
                 guard !isTornDown else {
                     await closeSessionIfOpen()
                     return false

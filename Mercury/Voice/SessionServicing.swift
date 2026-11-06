@@ -23,6 +23,10 @@ protocol SessionServicing: Sendable {
     /// `replay_epoch` of the current socket; nil while disconnected or
     /// against a backend without the replay contract.
     var replayEpoch: String? { get async }
+    /// Whether the current socket speaks the session-authority wire (kit
+    /// 0.9.0 `HermesConnection.isSessionAuthority`). Decides voice's idle
+    /// turn attribution (spec "Revision: authority wire").
+    var isSessionAuthority: Bool { get async }
 
     func createSession(cwd: String?, profile: String?, title: String?) async throws -> SessionHandle
     func resumeSession(storedID: String, profile: String?) async throws -> SessionHandle

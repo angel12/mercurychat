@@ -20,6 +20,7 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
     private var batches: [Result<EventReplayBatch, any Error>] = []
     private var activations: [Result<JSONValue, any Error>] = []
     private var _epoch: String?
+    private var _authority = false
     private var _epochOnActivate: String??
     private var _resumedIDs: [String] = []
     private var _createdCWDs: [String?] = []
@@ -106,6 +107,9 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
         lock.withLock { answerReplies.append(.failure(error)) }
     }
     func setEpoch(_ epoch: String?) { lock.withLock { _epoch = epoch } }
+    /// Whether the scripted socket speaks the session-authority wire.
+    /// Defaults to the legacy wire.
+    func setAuthority(_ authority: Bool) { lock.withLock { _authority = authority } }
     /// Epoch reported from the moment `activateSession` answers — a backend
     /// restart the fetch-time checks could not have seen.
     func setEpochAfterActivate(_ epoch: String?) {
@@ -141,6 +145,10 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
 
     var replayEpoch: String? {
         get async { lock.withLock { _epoch } }
+    }
+
+    var isSessionAuthority: Bool {
+        get async { lock.withLock { _authority } }
     }
 
     func createSession(cwd: String?, profile: String?, title: String?) async throws

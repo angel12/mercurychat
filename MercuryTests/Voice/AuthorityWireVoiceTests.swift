@@ -1,5 +1,6 @@
 import Foundation
 import MercuryKit
+import Observation
 import Testing
 
 /// Voice on the v0.23 session-authority wire (spec "Revision: authority
@@ -818,6 +819,188 @@ struct AuthorityWireVoiceTests {
         #expect(ids[2] != ids[1], "a successful send's id was reused")
         #expect(ids[3] != ids[2], "a different text reused the failed id")
         await controller.teardown()
+    }
+
+    // MARK: Idle voice on an authority (final review item 5)
+    //
+    // On an authority voice speaks only replies to its own prompts: idle, a
+    // turn on the shared session is another app's, so it is held — never
+    // fed, never spoken. The legacy wire keeps feeding it (no attribution).
+
+    private func foreignTurn(_ controller: ConversationController) {
+        controller.handle(event: start())
+        controller.handle(event: delta("theirs"))
+        controller.handle(event: complete("theirs"))
+    }
+
+    @Test func idleVoiceOnAnAuthorityDoesNotHearAnotherAppsTurn() async throws {
+        let service = ScriptedSessionService()
+        service.setAuthority(true)
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        let fed = FedEvents()
+        let controller = makeWireController(service, fed: fed) { _, _, _, _ in
+            PromptSubmission(status: "streaming", admissionID: "a1")
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+
+        foreignTurn(controller)
+        // A submit reopens as before: our own turn is spoken.
+        controller.submitTextPrompt("mine")
+        await controller.textSubmissionTask?.value
+        controller.handle(event: start())
+        controller.handle(event: delta("ours"))
+        controller.handle(event: complete("ours"))
+        await controller.diagnosticFinishTrackerEvents()
+
+        #expect(await fed.texts == ["ours", "ours"])
+        let state = await controller.diagnosticTrackerState()
+        #expect(state.pendingText == "ours")
+        #expect(!state.busy)
+        await controller.teardown()
+    }
+
+    /// A session opened while another app's turn runs: the tracker does not
+    /// take that turn as busy, or the mic would never open.
+    @Test func openingAnAuthoritySessionMidTurnDoesNotAdoptIt() async throws {
+        let service = ScriptedSessionService()
+        service.setAuthority(true)
+        service.enqueueCreate(
+            Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored", running: true))
+        let fed = FedEvents()
+        let controller = makeWireController(service, fed: fed) { _, _, _, _ in
+            PromptSubmission(status: "streaming", admissionID: "a1")
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+        #expect(!(await controller.diagnosticTrackerState().busy))
+        controller.handle(event: delta("theirs"))
+        controller.handle(event: complete("theirs"))
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types.isEmpty)
+        await controller.teardown()
+    }
+
+    @Test func afterAReconnectResetIdleVoiceStillHoldsAnotherAppsTurn() async throws {
+        let service = ScriptedSessionService()
+        service.setAuthority(true)
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        service.enqueueResume(
+            Fixtures.livePayload(
+                runtimeID: "runtime", sessionKey: "stored", running: true,
+                extra: ["stored_session_id": .string("stored"), "pending": .array([])]))
+        service.enqueueBatchFailure()
+        let fed = FedEvents()
+        let controller = makeWireController(service, fed: fed) { _, _, _, _ in
+            PromptSubmission(status: "streaming", admissionID: "a1")
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+        controller.connectionLost()
+        await controller.connectionBecameReady(isReconnect: true)
+        // The snapshot's running turn is another app's: not adopted as busy.
+        #expect(!(await controller.diagnosticTrackerState().busy))
+
+        controller.handle(event: delta("theirs"))
+        controller.handle(event: complete("theirs"))
+        foreignTurn(controller)
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types.isEmpty)
+        let state = await controller.diagnosticTrackerState()
+        #expect(state.pendingText == nil)
+        #expect(!state.busy)
+        await controller.teardown()
+    }
+
+    @Test func afterAFailedSubmitIdleVoiceOnAnAuthorityHoldsAnotherAppsTurn() async throws {
+        let service = ScriptedSessionService()
+        service.setAuthority(true)
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        let fed = FedEvents()
+        let controller = makeWireController(service, fed: fed) { _, _, _, _ in
+            throw HermesError.notConnected
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+        controller.submitTextPrompt("fails")
+        await controller.textSubmissionTask?.value
+        #expect(controller.failedText == "fails")
+
+        foreignTurn(controller)
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types.isEmpty)
+        await controller.teardown()
+    }
+
+    @Test func afterOurQueuedPromptIsCancelledIdleVoiceOnAnAuthorityHoldsTheNextTurn()
+        async throws
+    {
+        let service = ScriptedSessionService()
+        service.setAuthority(true)
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        let fed = FedEvents()
+        let controller = makeWireController(service, fed: fed) { _, _, _, _ in
+            PromptSubmission(status: "queued", admissionID: "a1")
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+        await submitQueued(controller)
+        controller.handle(event: queue(Self.row("a1", 1, "queued")))
+        controller.handle(event: queue())
+        controller.handle(event: settled("a1", "cancelled"))
+        #expect(!controller.isWaitingForTurn)
+
+        foreignTurn(controller)
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types.isEmpty)
+        await controller.teardown()
+    }
+
+    /// The legacy wire has no attribution: idle voice still hears the
+    /// session's turns, as before.
+    @Test func legacyIdleVoiceStillHearsTheSessionsTurns() async throws {
+        let service = ScriptedSessionService()
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        let fed = FedEvents()
+        let controller = makeWireController(service, fed: fed) { _, _, _, _ in
+            PromptSubmission(status: "streaming")
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+        foreignTurn(controller)
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.texts == ["theirs", "theirs"])
+        #expect(await controller.diagnosticTrackerState().pendingText == "theirs")
+        await controller.teardown()
+    }
+
+    // MARK: Waiting state is stored (final review item 8)
+
+    /// `isWaitingForTurn` is observed by the views: it changes on the
+    /// transitions only, not on every turn event the attribution classifies.
+    @Test func waitingStateChangesOnlyOnTransitions() async throws {
+        let controller = try await openedController(
+            receipt: PromptSubmission(status: "queued", admissionID: "a1"))
+        let changes = ObservationCounter()
+        changes.track { _ = controller.isWaitingForTurn }
+        controller.handle(event: delta("idle"))
+        #expect(changes.count == 0, "a fed event invalidated isWaitingForTurn")
+
+        await submitQueued(controller)
+        #expect(changes.count == 1)
+        changes.track { _ = controller.isWaitingForTurn }
+        controller.handle(event: start())
+        controller.handle(event: delta("theirs"))
+        #expect(changes.count == 1, "a held event invalidated isWaitingForTurn")
+        await controller.teardown()
+    }
+}
+
+/// Counts `withObservationTracking` invalidations of whatever `track` reads.
+@MainActor
+private final class ObservationCounter {
+    private(set) var count = 0
+
+    func track(_ read: @escaping @MainActor () -> Void) {
+        withObservationTracking {
+            read()
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated { self?.count += 1 }
+        }
     }
 }
 
