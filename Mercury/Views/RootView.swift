@@ -63,41 +63,52 @@ struct ConnectedView: View {
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300)
                 #endif
         } detail: {
-            switch navigation.route {
-            case .session(let session):
-                ChatView(mode: .resume(session), sessionKey: session.storedID)
-                    .id(session.storedID)
-            case .newSession(let cwd, let request):
-                // Keyed by the request, not the cwd (#97): every New Session
-                // action gets a fresh ChatView and create task, while view
-                // refreshes of the same request never create twice.
-                ChatView(mode: .create(cwd: cwd, title: nil), sessionKey: "new-\(request)")
-                    .id("new-session-\(request)")
-            case .botChat(let target):
-                // The canonical chat is resolved inside begin(.bot) by the
-                // exact-title registry lookup — never from the roster row,
-                // which can be stale. The row's sighting only rides along so
-                // an empty lookup that contradicts it fails closed.
-                ChatView(
-                    mode: .bot(
-                        profile: target.profile,
-                        expectCanonical: target.storedID != nil),
-                    sessionKey: "bot-\(target.profile)",
-                    botContext: .init(
-                        profile: target.profile, displayTitle: target.displayTitle,
-                        kickoff: target.kickoff)
-                )
-                .id("bot-\(target.profile)")
-            case nil:
-                ContentUnavailableView(
-                    "No Session Selected",
-                    systemImage: "bubble.left.and.bubble.right",
-                    description: Text("Pick a session from the sidebar or start a new one."))
-            }
+            detail
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let host = model.voiceConversation, navigation.route != .voice {
+                        VoiceConversationBar(host: host)
+                    }
+                }
         }
         .overlay(alignment: .bottom) {
             ConnectionBannerView()
         }
+        .keepScreenAwake(while: model.voiceConversation != nil)
     }
 
+    @ViewBuilder private var detail: some View {
+        switch navigation.route {
+        case .session(let session):
+            ChatView(mode: .resume(session), sessionKey: session.storedID)
+                .id(session.storedID)
+        case .newSession(let cwd, let request):
+            // Keyed by the request, not the cwd (#97): every New Session
+            // action gets a fresh ChatView and create task, while view
+            // refreshes of the same request never create twice.
+            ChatView(mode: .create(cwd: cwd, title: nil), sessionKey: "new-\(request)")
+                .id("new-session-\(request)")
+        case .botChat(let target):
+            // The canonical chat is resolved inside begin(.bot) by the
+            // exact-title registry lookup — never from the roster row,
+            // which can be stale. The row's sighting only rides along so
+            // an empty lookup that contradicts it fails closed.
+            ChatView(
+                mode: .bot(
+                    profile: target.profile,
+                    expectCanonical: target.storedID != nil),
+                sessionKey: "bot-\(target.profile)",
+                botContext: .init(
+                    profile: target.profile, displayTitle: target.displayTitle,
+                    kickoff: target.kickoff)
+            )
+            .id("bot-\(target.profile)")
+        case .voice:
+            VoiceConversationScreen()
+        case nil:
+            ContentUnavailableView(
+                "No Session Selected",
+                systemImage: "bubble.left.and.bubble.right",
+                description: Text("Pick a session from the sidebar or start a new one."))
+        }
+    }
 }

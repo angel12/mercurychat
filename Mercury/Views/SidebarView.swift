@@ -89,11 +89,9 @@ struct SidebarView: View {
     private var rootPage: some View {
         @Bindable var navigation = navigation
         return List(selection: $navigation.route) {
-            if model.botModeSupported == true {
-                tabSection
-            }
+            tabSection
 
-            if model.sidebarTab == .bots {
+            if model.resolvedSidebarTab == .bots {
                 botsSections
             } else {
                 profilesSection
@@ -101,16 +99,16 @@ struct SidebarView: View {
             }
         }
         .overlay {
-            if model.sidebarTab == .bots && model.botsLoading && model.bots.isEmpty {
+            if model.resolvedSidebarTab == .bots && model.botsLoading && model.bots.isEmpty {
                 ProgressView("Loading bots…")
             }
         }
         .navigationTitle(model.endpoint?.displayName ?? "Mercury Chat")
         .task(id: model.sidebarTab) {
-            if model.sidebarTab == .bots { await model.loadBots() }
+            if model.resolvedSidebarTab == .bots { await model.loadBots() }
         }
         .refreshable {
-            if model.sidebarTab == .bots {
+            if model.resolvedSidebarTab == .bots {
                 await model.loadBots(force: true)
             } else {
                 await model.refreshProjects()
@@ -142,9 +140,15 @@ struct SidebarView: View {
     private var tabSection: some View {
         @Bindable var model = model
         return Section {
-            Picker("Sidebar", selection: $model.sidebarTab) {
-                Text("Sessions").tag(AppModel.SidebarTab.sessions)
-                Text("Bots").tag(AppModel.SidebarTab.bots)
+            Picker(
+                "Sidebar",
+                selection: Binding(
+                    get: { model.resolvedSidebarTab },
+                    set: { model.sidebarTab = $0 })
+            ) {
+                ForEach(model.availableSidebarTabs, id: \.self) { tab in
+                    Text(tab.title).tag(tab)
+                }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -298,7 +302,7 @@ struct SidebarView: View {
         return List(selection: $navigation.route) {
             Section {
                 Button {
-                    model.requestNewSession(in: navigation)
+                    newSession(cwd: nil)
                 } label: {
                     Label("New session", systemImage: "square.and.pencil")
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -366,7 +370,7 @@ struct SidebarView: View {
             }
             if project.primaryPath != nil || project.isHomeBucket {
                 Button {
-                    model.requestNewSession(cwd: project.primaryPath, in: navigation)
+                    newSession(cwd: project.primaryPath)
                 } label: {
                     Label(
                         project.isHomeBucket ? "New session (no workspace)" : "New session in workspace",
@@ -394,10 +398,21 @@ struct SidebarView: View {
             // ⌘N lives on the menu command, which targets the focused
             // window (#112) — a shortcut here too would collide with it.
             Button {
-                model.requestNewSession(in: navigation)
+                newSession(cwd: nil)
             } label: {
                 Label("New Session", systemImage: "square.and.pencil")
             }
+        }
+    }
+
+    /// New session in the current tab's flow: a chat, or on the Voice tab a
+    /// fresh voice conversation.
+    private func newSession(cwd: String?) {
+        if model.resolvedSidebarTab == .voice {
+            model.openVoice(
+                .new(cwd: cwd, profile: model.selectedProfile, request: UUID()), in: navigation)
+        } else {
+            model.requestNewSession(cwd: cwd, in: navigation)
         }
     }
 
@@ -435,8 +450,40 @@ struct SidebarView: View {
         }
     }
 
+    @ViewBuilder
     private func sessionRow(_ session: SessionSummary) -> some View {
-        NavigationLink(value: AppModel.Route.session(session)) {
+        if model.resolvedSidebarTab == .voice {
+            Button {
+                model.openVoice(
+                    .session(
+                        storedID: session.storedID, title: session.title,
+                        profile: session.profile ?? model.selectedProfile),
+                    in: navigation)
+            } label: {
+                sessionRowLabel(session, glyph: "mic")
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .contextMenu { sessionContextMenu(session) }
+        } else {
+            NavigationLink(value: AppModel.Route.session(session)) {
+                sessionRowLabel(session, glyph: nil)
+            }
+            .contextMenu { sessionContextMenu(session) }
+        }
+    }
+
+    private func sessionRowLabel(_ session: SessionSummary, glyph: String?) -> some View {
+        HStack(spacing: 8) {
+            if let glyph {
+                Image(systemName: glyph).foregroundStyle(.tint)
+            }
+            sessionRowText(session)
+            if glyph != nil { Spacer(minLength: 0) }
+        }
+    }
+
+    private func sessionRowText(_ session: SessionSummary) -> some View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if session.pinned {
@@ -460,8 +507,11 @@ struct SidebarView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-        }
-        .contextMenu {
+    }
+
+    @ViewBuilder
+    private func sessionContextMenu(_ session: SessionSummary) -> some View {
+        Group {
             // Canonical Bot Chats resolve by their exact title — renaming one
             // severs its bot's forever-chat (AppModel.renameSession refuses
             // too; hiding the item explains less but confuses least). The
@@ -509,5 +559,15 @@ struct SidebarView: View {
         Binding(
             get: { deleteTarget != nil },
             set: { if !$0 { deleteTarget = nil } })
+    }
+}
+
+extension AppModel.SidebarTab {
+    var title: String {
+        switch self {
+        case .sessions: "Sessions"
+        case .bots: "Bots"
+        case .voice: "Voice"
+        }
     }
 }

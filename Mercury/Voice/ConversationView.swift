@@ -1,0 +1,664 @@
+import MercuryKit
+import SwiftUI
+import MercuryVoiceEngine
+
+/// The voice conversation screen: status orb, captions, tool ticker,
+/// controls, and the approval/clarify sheets.
+struct ConversationView: View {
+    let onEnd: () -> Void
+    let profileDisplayName: (String?) -> String?
+    @Bindable var controller: ConversationController
+    @State private var showDevChat = false
+    #if os(iOS)
+        @State private var showAudioDevices = false
+    #endif
+
+    /// All presentations share ONE sheet modifier. Stacking several
+    /// sheet/alert modifiers on the same node faults ("Invalid
+    /// Configuration") when two states overlap — approval and clarify can be
+    /// pending at once, and prompts arrive while the dev sheet is open.
+    /// Priority: approval > clarify > credential > dev.
+    private enum ActiveSheet: Identifiable {
+        case approval(ApprovalRequest)
+        case clarify(ClarifyRequest)
+        case credential(CredentialPrompt)
+        case dev
+        case audio
+
+        var id: String {
+            switch self {
+            case .approval(let request): return "approval-\(request.sessionID)"
+            case .clarify(let request): return "clarify-\(request.requestID)"
+            case .credential(let prompt): return "credential-\(prompt.id)"
+            case .dev: return "dev"
+            case .audio: return "audio"
+            }
+        }
+    }
+
+    private var activeSheet: Binding<ActiveSheet?> {
+        Binding(
+            get: {
+                if let approval = controller.approval { return .approval(approval) }
+                if let clarify = controller.clarify { return .clarify(clarify) }
+                if let credential = controller.currentCredentialPrompt {
+                    return .credential(credential)
+                }
+                if showDevChat { return .dev }
+                #if os(iOS)
+                    if showAudioDevices { return .audio }
+                #endif
+                return nil
+            },
+            set: { newValue in
+                // Only the dev and audio sheets are interactively
+                // dismissible; the prompt sheets clear through their respond
+                // buttons.
+                if newValue == nil {
+                    showDevChat = false
+                    #if os(iOS)
+                        showAudioDevices = false
+                    #endif
+                }
+            })
+    }
+
+    private var setupAlertPresented: Binding<Bool> {
+        Binding(
+            get: { controller.setupError != nil },
+            set: { presented in
+                if !presented { controller.clearSetupError() }
+            })
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Spacer()
+            if controller.voiceState.microphoneDenied {
+                microphoneDeniedPanel
+            } else {
+                StatusOrb(
+                    status: controller.voiceState.status,
+                    muted: controller.voiceState.muted,
+                    micLevel: controller.micLevel)
+                Text(statusLabel)
+                    .font(.title3.weight(.medium))
+                    .padding(.top, 12)
+                    .contentTransition(.opacity)
+                if let ticker = controller.toolTicker {
+                    Label(ticker, systemImage: "gearshape.2")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                }
+            }
+            Spacer()
+            captions
+            if !controller.voiceState.microphoneDenied {
+                controls
+            }
+        }
+        .padding()
+        .background(backgroundGradient.ignoresSafeArea())
+        .sheet(item: activeSheet) { sheet in
+            switch sheet {
+            case .approval(let request):
+                ApprovalSheet(request: request, controller: controller)
+                    .interactiveDismissDisabled()
+            case .clarify(let request):
+                VoiceClarifySheet(request: request, controller: controller)
+                    .interactiveDismissDisabled()
+            // Each sheet answers the prompt it shows, by id, never "the
+            // front" at send time.
+            case .credential(.sudo(let request)):
+                let id = CredentialPrompt.sudo(request).id
+                SudoSheet(
+                    request: request,
+                    submit: { await controller.answerCredential(id: id, $0) },
+                    decline: { await controller.declineCredential(id: id) }
+                )
+                .interactiveDismissDisabled()
+            case .credential(.secret(let request)):
+                let id = CredentialPrompt.secret(request).id
+                SecretSheet(
+                    request: request,
+                    submit: { await controller.answerCredential(id: id, $0) },
+                    decline: { await controller.declineCredential(id: id) }
+                )
+                .interactiveDismissDisabled()
+            case .dev:
+                DevChatView(controller: controller)
+            case .audio:
+                // Only reachable on iOS; macOS picks devices in Settings.
+                #if os(iOS)
+                    AudioDevicesSheet()
+                        .presentationDetents([.medium])
+                #else
+                    EmptyView()
+                #endif
+            }
+        }
+        .alert(
+            "Couldn't start the conversation",
+            isPresented: setupAlertPresented
+        ) {
+            Button("Back") { onEnd() }
+        } message: {
+            Text(controller.setupError ?? "")
+        }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(controller.sessionTitle ?? "New conversation")
+                    .font(.headline)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let profile = profileDisplayName(controller.profileName) {
+                        Label(profile, systemImage: "person.crop.circle")
+                    }
+                    if let project = controller.projectName {
+                        Label(project, systemImage: "folder")
+                    }
+                    if let percent = controller.usage?.contextPercent {
+                        // Live context-window fill (session.usage ticks,
+                        // settled by message.complete). Hidden when the
+                        // backend reports no real occupancy.
+                        Label("\(percent)%", systemImage: "gauge.with.needle")
+                            .foregroundStyle(contextTint(percent: percent))
+                            .help("Context window used")
+                    }
+                    if !controller.connectionHealthy {
+                        Label("reconnecting", systemImage: "wifi.exclamationmark")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            #if os(iOS)
+                // macOS has Settings (⌘,); iOS needs an in-conversation
+                // entry point.
+                Button {
+                    showAudioDevices = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                .help("Settings")
+            #endif
+            Button {
+                showDevChat = true
+            } label: {
+                Image(systemName: "keyboard")
+            }
+            .buttonStyle(.borderless)
+            .help("Text")
+            Button(role: .destructive) {
+                onEnd()
+            } label: {
+                Text("End")
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    // MARK: Microphone permission
+
+    /// The recoverable denial state (issue #23 §1.4): the system refused
+    /// microphone access, so instead of the orb we show the way to the
+    /// privacy setting and a retry. The text path (keyboard button in the
+    /// header) keeps working meanwhile.
+    private var microphoneDeniedPanel: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "mic.slash.circle")
+                .font(.system(size: 56))
+                .foregroundStyle(.red)
+            Text("Microphone access is off")
+                .font(.title3.weight(.medium))
+            Text(
+                "Mercury Voice needs the microphone to hear you. Allow it in your device's privacy settings, then try again. You can still type with the keyboard button above."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 360)
+            HStack(spacing: 12) {
+                Button("Open Settings") {
+                    SystemLinks.openMicrophonePrivacySettings()
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Try Again") {
+                    controller.retryMicrophone()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    // MARK: Captions
+
+    private var captions: some View {
+        VStack(spacing: 8) {
+            if let notice = controller.notice {
+                Label(notice, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .onTapGesture { controller.clearNotice() }
+            }
+            if let transcript = controller.voiceState.lastTranscript {
+                Text("“\(transcript)”")
+                    .font(.callout.italic())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            if !controller.assistantCaption.isEmpty {
+                ScrollView {
+                    AssistantMarkdownView(source: controller.assistantCaption, trailingCharacterLimit: 1500)
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 130)
+                .defaultScrollAnchor(.bottom)
+            }
+        }
+        .padding(.bottom, 16)
+    }
+
+    // MARK: Controls
+
+    private var controls: some View {
+        HStack(spacing: 28) {
+            ControlButton(
+                symbol: controller.voiceState.muted ? "mic.slash.fill" : "mic.fill",
+                label: controller.voiceState.muted ? "Unmute" : "Mute",
+                tint: controller.voiceState.muted ? .red : .primary
+            ) {
+                controller.toggleMute()
+            }
+
+            if canListen {
+                // After Stop the loop idles on purpose; this is the way back
+                // to listening without cycling mute (issue #17).
+                ControlButton(symbol: "waveform.circle.fill", label: "Listen", tint: .green) {
+                    controller.listenNow()
+                }
+            } else {
+                ControlButton(
+                    symbol: "checkmark.circle.fill",
+                    label: "End turn",
+                    tint: controller.voiceState.status == .listening ? .green : .secondary
+                ) {
+                    controller.endTurnNow()
+                }
+                .disabled(controller.voiceState.status != .listening)
+            }
+
+            ControlButton(symbol: "stop.circle.fill", label: "Stop", tint: .orange) {
+                controller.stopSpeech()
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    /// The idle lull (after Stop, or a paused screen left behind by an
+    /// audio interruption whose end never announced itself — issue #31):
+    /// the middle button flips from End turn to Listen. Hidden while an
+    /// approval/clarify prompt owns the pause; their sheets cover the
+    /// controls anyway, but a dismissal race must not offer a resume that
+    /// fights the prompt.
+    private var canListen: Bool {
+        controller.voiceState.status == .idle
+            && !controller.voiceState.muted
+            && controller.approval == nil
+            && controller.clarify == nil
+            && controller.currentCredentialPrompt == nil
+    }
+
+    private func contextTint(percent: Int) -> some ShapeStyle {
+        switch percent {
+        case 95...: return AnyShapeStyle(.red)
+        case 80...: return AnyShapeStyle(.orange)
+        default: return AnyShapeStyle(.secondary)
+        }
+    }
+
+    private var statusLabel: String {
+        if controller.isWaitingForTurn { return "Waiting for the current turn" }
+        if controller.voiceState.paused { return "Waiting for you…" }
+        if controller.voiceState.muted { return "Muted" }
+        switch controller.voiceState.status {
+        case .idle: return "Paused"
+        case .listening: return "Listening…"
+        case .transcribing: return "Transcribing…"
+        case .thinking: return "Thinking…"
+        case .speaking: return "Speaking"
+        }
+    }
+
+    private var backgroundGradient: some View {
+        LinearGradient(
+            colors: [statusColor.opacity(0.15), Color.clear],
+            startPoint: .top, endPoint: .center)
+    }
+
+    private var statusColor: Color {
+        switch controller.voiceState.status {
+        case .idle: return .gray
+        case .listening: return .green
+        case .transcribing: return .yellow
+        case .thinking: return .purple
+        case .speaking: return .blue
+        }
+    }
+}
+
+// MARK: - Status orb
+
+struct StatusOrb: View {
+    var status: ConversationStatus
+    var muted: Bool
+    var micLevel: Double
+
+    @State private var pulse = false
+
+    private var color: Color {
+        if muted { return .red }
+        switch status {
+        case .idle: return .gray
+        case .listening: return .green
+        case .transcribing: return .yellow
+        case .thinking: return .purple
+        case .speaking: return .blue
+        }
+    }
+
+    private var symbol: String {
+        if muted { return "mic.slash.fill" }
+        switch status {
+        case .idle: return "pause.fill"
+        case .listening: return "mic.fill"
+        case .transcribing: return "text.viewfinder"
+        case .thinking: return "brain"
+        case .speaking: return "speaker.wave.2.fill"
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            // Live level ring while listening.
+            Circle()
+                .fill(color.opacity(0.18))
+                .frame(width: 180, height: 180)
+                .scaleEffect(
+                    status == .listening
+                        ? 1 + min(0.35, micLevel * 1.2)
+                        : (pulse ? 1.12 : 0.96))
+                .animation(.easeOut(duration: 0.08), value: micLevel)
+                .animation(
+                    .easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: pulse)
+            Circle()
+                .fill(color.gradient)
+                .frame(width: 120, height: 120)
+                .shadow(color: color.opacity(0.45), radius: 24)
+            Image(systemName: symbol)
+                .font(.system(size: 42))
+                .foregroundStyle(.white)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .onAppear { pulse = true }
+    }
+}
+
+struct ControlButton: View {
+    var symbol: String
+    var label: String
+    var tint: Color
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 28))
+                Text(label).font(.caption)
+            }
+            .frame(width: 76, height: 68)
+        }
+        .buttonStyle(.bordered)
+        .tint(tint)
+    }
+}
+
+// MARK: - Approval / clarify sheets
+
+struct ApprovalSheet: View {
+    let request: ApprovalRequest
+    let controller: ConversationController
+
+    private func choiceLabel(_ choice: String) -> String {
+        switch choice {
+        case "once": return "Allow once"
+        case "session": return "Allow this session"
+        case "always": return "Always allow"
+        case "deny": return "Deny"
+        default: return choice
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Approval needed", systemImage: "exclamationmark.shield")
+                .font(.title2.bold())
+            if let description = request.description {
+                Text(description).foregroundStyle(.secondary)
+            }
+            if let command = request.command {
+                ScrollView(.horizontal) {
+                    Text(command)
+                        .font(.system(.callout, design: .monospaced))
+                        .padding(8)
+                }
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            }
+            VStack(spacing: 8) {
+                ForEach(request.choices, id: \.self) { choice in
+                    Button {
+                        controller.respondApproval(choice: choice)
+                    } label: {
+                        Text(choiceLabel(choice)).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(choice == "deny" ? .red : .accentColor)
+                }
+            }
+            .disabled(controller.promptResponseInFlight)
+            PromptSendStatus(controller: controller)
+        }
+        .padding(24)
+        #if os(macOS)
+            .frame(minWidth: 420)
+        #else
+            .presentationDetents([.medium])
+        #endif
+    }
+}
+
+/// Shared footer for the prompt sheets: a spinner while the response RPC is
+/// in flight, or the send failure with a retry hint (the prompt stays up, so
+/// tapping a choice again retries — issue #40).
+struct PromptSendStatus: View {
+    let controller: ConversationController
+
+    var body: some View {
+        if controller.promptResponseInFlight {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Sending…").font(.caption).foregroundStyle(.secondary)
+            }
+        } else if let error = controller.promptSendError {
+            Label(
+                "Couldn't send the response — try again. (\(error))",
+                systemImage: "wifi.exclamationmark"
+            )
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+    }
+}
+
+struct VoiceClarifySheet: View {
+    let request: ClarifyRequest
+    let controller: ConversationController
+    @State private var freeText = ""
+    @State private var selected: Set<String> = []
+    /// nil for a single-question request; `VoiceClarifySheet` never constructs
+    /// one in that case, and `submit` reaches straight for `respondClarify
+    /// (answer:)` instead of paging.
+    @State private var batch: ClarifyBatch?
+
+    init(request: ClarifyRequest, controller: ConversationController) {
+        self.request = request
+        self.controller = controller
+        _batch = State(initialValue: request.questions.isEmpty ? nil : ClarifyBatch(request))
+    }
+
+    /// The controller's current locks for *this* request, nil once the
+    /// controller holds a different (or no) clarify — so a sheet on its way
+    /// out never rebases on another request's locks (PR #126 review).
+    private var liveLockedAnswers: [String: String]? {
+        guard let live = controller.clarify, live.requestID == request.requestID else {
+            return nil
+        }
+        return live.lockedAnswers
+    }
+
+    /// The question on screen: the batch's current page, or the request's
+    /// own single question outside a batch.
+    private var question: String {
+        batch != nil ? (batch?.current?.question ?? "") : request.question
+    }
+    private var choices: [String] {
+        batch != nil ? (batch?.current?.choices ?? []) : request.choices
+    }
+    private var multiSelect: Bool {
+        batch != nil ? (batch?.current?.multiSelect ?? false) : request.multiSelect
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Hermes asks", systemImage: "questionmark.bubble")
+                .font(.title2.bold())
+            if let batch, !batch.isSingleQuestion {
+                Text("Question \(batch.questionNumber) of \(batch.totalQuestions)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(question)
+
+            if choices.isEmpty {
+                TextField("Your answer", text: $freeText)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { submit(freeText) }
+                Button("Send") { submit(freeText) }
+                    .buttonStyle(.borderedProminent)
+            } else if multiSelect {
+                ForEach(choices, id: \.self) { choice in
+                    Toggle(
+                        choice,
+                        isOn: Binding(
+                            get: { selected.contains(choice) },
+                            set: { on in
+                                if on { selected.insert(choice) } else { selected.remove(choice) }
+                            }))
+                }
+                Button("Send") { submit(picks: choices.filter(selected.contains)) }
+                .buttonStyle(.borderedProminent)
+                .disabled(selected.isEmpty)
+            } else {
+                ForEach(choices, id: \.self) { choice in
+                    Button {
+                        submit(choice)
+                    } label: {
+                        Text(choice).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+
+            if let batch, !batch.isSingleQuestion {
+                HStack {
+                    Button("Skip") { submit("") }
+                        .buttonStyle(.borderless)
+                    Spacer()
+                    Button("Skip all") { controller.respondClarify(answers: [:]) }
+                        .buttonStyle(.borderless)
+                }
+            } else if batch != nil {
+                // A one-question batch: Skip answers it "" (skipped), the
+                // same as skipping a page; no cancel-all.
+                Button("Skip") { submit("") }
+                    .buttonStyle(.borderless)
+            } else {
+                Button("Skip") { controller.respondClarify(answer: "") }
+                    .buttonStyle(.borderless)
+            }
+            PromptSendStatus(controller: controller)
+        }
+        .disabled(controller.promptResponseInFlight)
+        // The controller merges locks another client set into this same
+        // request in place (PR #126 review); the `@State` paging copy must
+        // follow, or it would still ask — and submit — a locked question.
+        // When the lock took the last open page, the rest are answered, so
+        // this submits exactly as answering that page would have.
+        //
+        // Read from the controller, not the `request` snapshot: that only
+        // refreshes if the parent re-renders, and the parent's body reads
+        // `controller.clarify` only inside the sheet binding's closure.
+        // Reading it here makes this view observe the locks itself.
+        .onChange(of: liveLockedAnswers) { _, locked in
+            guard let locked, var batch else { return }
+            if let completed = batch.rebase(lockedAnswers: locked) {
+                controller.respondClarify(answers: completed)
+            }
+            self.batch = batch
+        }
+        .padding(24)
+        #if os(macOS)
+            .frame(minWidth: 420)
+        #else
+            .presentationDetents([.medium])
+        #endif
+    }
+
+    /// Records `answer` for the question on screen. Inside a batch this
+    /// advances the paging state and only reaches the controller once every
+    /// question (locked ones included) has an answer; outside a batch it
+    /// answers immediately, as before. The input survives a send so a failed
+    /// one can be retried as-is (`ClarifySubmitStep.clearsInput`).
+    private func submit(_ answer: String) {
+        apply(ClarifySubmitStep(answer: answer, batch: batch))
+    }
+
+    private func submit(picks: [String]) {
+        apply(ClarifySubmitStep(picks: picks, batch: batch))
+    }
+
+    private func apply(_ step: ClarifySubmitStep) {
+        if step.clearsInput {
+            freeText = ""
+            selected = []
+        }
+        switch step {
+        case .nextPage(let next): batch = next
+        case .sendBatch(let answers): controller.respondClarify(answers: answers)
+        case .sendSingle(let answer): controller.respondClarify(answer: answer)
+        }
+    }
+}

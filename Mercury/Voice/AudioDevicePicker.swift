@@ -1,0 +1,151 @@
+import SwiftUI
+import MercuryVoiceEngine
+
+#if os(iOS)
+    import AVKit
+#endif
+
+/// Microphone selector shared by the macOS Settings pane and the iOS audio
+/// sheet. `nil` = system default; a vanished device shows as "Unavailable
+/// device" via `inputChoices` so the picker never has an unmatched tag.
+struct AudioInputPicker: View {
+    @Bindable var devices: AudioDeviceCatalog
+
+    var body: some View {
+        Picker("Microphone", selection: $devices.selectedInputUID) {
+            Text("System Default").tag(String?.none)
+            ForEach(devices.inputChoices) { device in
+                Text(device.name).tag(String?.some(device.uid))
+            }
+        }
+    }
+}
+
+/// End-of-turn pause control shared by the macOS Settings pane and the iOS
+/// settings sheet (issue #24). Binds the preference the voice engine reads
+/// at each mic arm, so a change applies from the next turn.
+struct TurnSilenceSlider: View {
+    @AppStorage(TurnSilencePreference.key) private var silence =
+        TurnSilencePreference.defaultSeconds
+
+    var body: some View {
+        LabeledContent("End-of-turn pause") {
+            Text("\(silence, format: .number.precision(.fractionLength(0...2))) s")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        Slider(
+            value: $silence, in: TurnSilencePreference.range, step: 0.25
+        ) {
+            Text("End-of-turn pause")
+        } minimumValueLabel: {
+            Text("0.5 s").font(.caption2)
+        } maximumValueLabel: {
+            Text("4 s").font(.caption2)
+        }
+        .labelsHidden()
+        Text(
+            "How long you can stay quiet before the app decides you're done talking. Also applies when you interrupt the agent mid-reply."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+}
+
+/// "Interrupt by speaking" (issue #146), shown beside the end-of-turn pause.
+/// The engine reads it each time it would start listening for barge-in, so
+/// a change applies from the next reply.
+struct BargeInToggle: View {
+    @AppStorage(BargeInPreference.key) private var enabled = BargeInPreference.defaultEnabled
+
+    var body: some View {
+        Toggle("Interrupt by speaking", isOn: $enabled)
+        Text(
+            "Talking while Hermes is thinking or replying stops it and sends what you said. Turn off if speaker playback keeps interrupting itself; Stop still works."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+}
+
+#if os(macOS)
+    /// Speaker selector — macOS only; iOS output routing belongs to the
+    /// system route picker.
+    struct AudioOutputPicker: View {
+        @Bindable var devices: AudioDeviceCatalog
+
+        var body: some View {
+            Picker("Output", selection: $devices.selectedOutputUID) {
+                Text("System Default").tag(String?.none)
+                ForEach(devices.outputChoices) { device in
+                    Text(device.name).tag(String?.some(device.uid))
+                }
+            }
+        }
+    }
+#endif
+
+#if os(iOS)
+    /// The system output route picker (AirPlay / Bluetooth / speaker) — iOS
+    /// offers no API to set an output device directly.
+    struct AudioRoutePicker: UIViewRepresentable {
+        func makeUIView(context: Context) -> AVRoutePickerView {
+            let view = AVRoutePickerView()
+            view.prioritizesVideoDevices = false
+            return view
+        }
+
+        func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+    }
+
+    /// The settings sheet opened from the conversation header: audio
+    /// devices, listening, and sounds.
+    struct AudioDevicesSheet: View {
+        var devices = AudioDeviceCatalog.shared
+        @Environment(\.dismiss) private var dismiss
+        @AppStorage(CuePreference.key) private var cuesEnabled = true
+
+        var body: some View {
+            NavigationStack {
+                Form {
+                    Section("Microphone") {
+                        AudioInputPicker(devices: devices)
+                            .pickerStyle(.inline)
+                            .labelsHidden()
+                    }
+                    Section("Output") {
+                        HStack {
+                            Text("Speaker or headphones")
+                            Spacer()
+                            AudioRoutePicker()
+                                .frame(width: 44, height: 44)
+                        }
+                        Text("Output is chosen with the system route picker.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Section("Listening") {
+                        TurnSilenceSlider()
+                        BargeInToggle()
+                    }
+                    Section("Sounds") {
+                        Toggle("Conversation cues", isOn: $cuesEnabled)
+                        Text(
+                            "A short blip confirms your speech was captured; a soft tick every few seconds means the agent is still thinking."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .navigationTitle("Settings")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
+                }
+            }
+            .onAppear { devices.refresh() }
+        }
+    }
+#endif

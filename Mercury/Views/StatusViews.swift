@@ -1,5 +1,6 @@
 import ChatCore
 import MercuryKit
+import MercuryVoiceEngine
 import SwiftUI
 
 /// Non-modal connection-state strip: reconnecting / disconnected / contract
@@ -79,8 +80,44 @@ struct ConnectionBannerView: View {
 #if os(macOS)
     struct SettingsView: View {
         @Environment(AppModel.self) private var model
+        var devices = AudioDeviceCatalog.shared
+        @AppStorage(CuePreference.key) private var cuesEnabled = true
 
         var body: some View {
+            TabView {
+                generalTab
+                    .tabItem { Label("General", systemImage: "gearshape") }
+                voiceTab
+                    .tabItem { Label("Voice", systemImage: "waveform") }
+            }
+            .frame(width: 440)
+        }
+
+        private var voiceTab: some View {
+            Form {
+                Section("Audio") {
+                    AudioInputPicker(devices: devices)
+                    AudioOutputPicker(devices: devices)
+                }
+                Section("Listening") {
+                    TurnSilenceSlider()
+                    BargeInToggle()
+                }
+                Section("Sounds") {
+                    Toggle("Conversation cues", isOn: $cuesEnabled)
+                    Text(
+                        "A short blip confirms your speech was captured; a soft tick every few seconds means the agent is still thinking."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+            .padding(.vertical)
+            .onAppear { devices.refresh() }
+        }
+
+        private var generalTab: some View {
             Form {
                 Section("Connection") {
                     LabeledContent("Server", value: model.endpoint?.displayName ?? "Not connected")
@@ -110,7 +147,6 @@ struct ConnectionBannerView: View {
                 }
             }
             .formStyle(.grouped)
-            .frame(width: 440)
             .padding(.vertical)
         }
 

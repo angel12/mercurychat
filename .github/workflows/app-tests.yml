@@ -17,7 +17,7 @@ concurrency:
 jobs:
   xcode-test:
     name: xcodebuild test (MercuryTests)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -64,7 +64,7 @@ jobs:
 
   ios-build:
     name: xcodebuild build (Mercury, iOS Simulator)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - name: Check out repository

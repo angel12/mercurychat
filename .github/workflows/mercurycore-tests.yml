@@ -17,7 +17,7 @@ concurrency:
 jobs:
   swift-test:
     name: swift test (Packages/MercuryCore)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - name: Check out repository

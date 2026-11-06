@@ -34,10 +34,19 @@ targets:
       - path: Mercury/Push/PushSettings.swift
       - path: Mercury/Push/PushCoordinator.swift
       - path: Mercury/Push/SessionActivityTracker.swift
+      - path: Mercury/Voice/ConversationController.swift
+      - path: Mercury/Voice/SessionServicing.swift
+      - path: Mercury/Voice/TurnAttribution.swift
+      - path: Mercury/Voice/CredentialPrompt.swift
+      - path: Mercury/Voice/VoiceConversationHost.swift
+      - path: Mercury/Voice/ClarifyBatch.swift
+      - path: Mercury/Voice/AssistantMarkdown.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryKit
         product: MercuryKit
+      - package: MercuryKit
+        product: MercuryVoiceEngine
       - package: MercuryCore
         product: ChatCore
     settings:
@@ -56,6 +65,8 @@ targets:
     dependencies:
       - package: MercuryKit
         product: MercuryKit
+      - package: MercuryKit
+        product: MercuryVoiceEngine
       - package: MercuryCore
         product: ChatCore
     settings:
@@ -84,6 +95,9 @@ targets:
         NSLocalNetworkUsageDescription: >-
           Mercury Chat connects to Hermes Agent servers running on your local
           network.
+        NSMicrophoneUsageDescription: >-
+          Mercury Chat listens in the Voice tab so you can talk with your
+          Hermes agent hands-free.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UILaunchScreen: {}
@@ -109,3 +123,6 @@ targets:
         # Sandboxed fileImporter on macOS returns security-scoped URLs
         # only with this; iOS/visionOS ignore it.
         com.apple.security.files.user-selected.read-only: true
+        # The Voice tab's microphone on macOS (sandboxed). iOS/visionOS
+        # ignore it and use NSMicrophoneUsageDescription.
+        com.apple.security.device.audio-input: true
