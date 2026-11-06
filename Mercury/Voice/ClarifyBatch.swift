@@ -11,7 +11,7 @@ import MercuryKit
 /// still included in the final submission `ConversationController
 /// .respondClarify(answers:)` sends.
 ///
-/// A non-batch (single-question) clarify has no paging to do; `ClarifySheet`
+/// A non-batch (single-question) clarify has no paging to do; `VoiceClarifySheet`
 /// keeps calling `respondClarify(answer:)` directly for that case and never
 /// constructs a `ClarifyBatch`.
 struct ClarifyBatch: Equatable {
@@ -75,7 +75,7 @@ struct ClarifyBatch: Equatable {
     }
 }
 
-/// What one press of a `ClarifySheet` answer control does — pulled out of the
+/// What one press of a `VoiceClarifySheet` answer control does — pulled out of the
 /// view so it can be tested without a view harness (PR #126 review).
 enum ClarifySubmitStep: Equatable {
     /// Another batch page is up. Purely local, so the input is cleared for it.

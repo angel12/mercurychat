@@ -27,7 +27,7 @@ extension SharedMeterTests {
 
         // MARK: Harness
 
-        private struct Harness {
+        struct Harness {
             let model: AppModel
             let server: HermesTestServer
             let voices: ConversationRecorder
@@ -38,7 +38,7 @@ extension SharedMeterTests {
         /// stored `stored-<x>`, where `<x>` comes from `ids[i]` (default
         /// `v<i>`). The ids line up with `MultiWindowChatTests.Script`, so a
         /// chat resuming `stored-a` lands on the voice launch's `rt-a`.
-        private func connected(
+        func connected(
             ids: [Int: String] = [:], gates: [Int: CallGate] = [:]
         ) async throws -> Harness {
             let script = MultiWindowChatTests.Script()
@@ -84,7 +84,7 @@ extension SharedMeterTests {
 
         /// Join every launch before the shared parent admits the next test,
         /// as R25's `finish` does.
-        private func finish(_ harness: Harness) async {
+        func finish(_ harness: Harness) async {
             await harness.model.pendingVoiceTeardown?.value
             harness.model.disconnect()
             await harness.model.pendingVoiceTeardown?.value
@@ -96,7 +96,7 @@ extension SharedMeterTests {
             harness.cleanup()
         }
 
-        private func session(_ id: String, profile: String? = nil)
+        func session(_ id: String, profile: String? = nil)
             -> VoiceConversationHost.Target
         {
             .session(storedID: "stored-\(id)", title: nil, profile: profile)

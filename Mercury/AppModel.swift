@@ -76,9 +76,20 @@ final class AppModel {
     // MARK: Bot Mode roster
 
     /// Which list the sidebar shows. Bots is offered only while
-    /// `botModeSupported == true`.
-    enum SidebarTab: String { case sessions, bots }
+    /// `botModeSupported == true`; Voice is always offered.
+    enum SidebarTab: String { case sessions, bots, voice }
     var sidebarTab: SidebarTab = .sessions
+
+    /// The tabs the sidebar's picker offers, in order.
+    var availableSidebarTabs: [SidebarTab] {
+        botModeSupported == true ? [.sessions, .bots, .voice] : [.sessions, .voice]
+    }
+
+    /// `sidebarTab`, or Sessions when that tab is not on offer (Bots after a
+    /// disconnect or a server without Bot Mode).
+    var resolvedSidebarTab: SidebarTab {
+        availableSidebarTabs.contains(sidebarTab) ? sidebarTab : .sessions
+    }
 
     private(set) var bots: [BotSummary] = []
     private(set) var botsLoading = false
@@ -141,6 +152,8 @@ final class AppModel {
         case session(SessionSummary)
         case newSession(cwd: String?, request: UUID)
         case botChat(BotChatTarget)
+        /// The app's voice conversation (Voice tab).
+        case voice
     }
 
     /// Every live window's navigation (#112). The route is per window — each
@@ -295,9 +308,22 @@ final class AppModel {
         }
     }
 
+    /// Open the voice conversation for `target` in `navigation`'s window. The
+    /// route moves first so the screen shows the starting state.
+    func openVoice(_ target: VoiceConversationHost.Target, in navigation: WindowNavigation) {
+        guard isConnected else { return }
+        navigation.route = .voice
+        Task { await startVoice(target) }
+    }
+
     /// End the voice conversation (End button, stop word, setup error's
     /// Back) and refresh the sidebar's recents.
-    func endVoice() { endVoice(refresh: true) }
+    /// Windows showing the conversation fall back to the empty detail; a
+    /// switch between targets (`startVoice`) keeps them on `.voice`.
+    func endVoice() {
+        for window in liveWindows where window.route == .voice { window.route = nil }
+        endVoice(refresh: true)
+    }
 
     /// The outgoing teardown runs in its own task: it ends with a
     /// `session.close` RPC, and a wedged gateway must not hold the caller.
