@@ -135,6 +135,9 @@ private struct ModelPickerView: View {
     @State private var switchError: String?
     @State private var confirming: (model: String, provider: String, message: String)?
     @State private var showAll: Set<String> = []
+    /// Providers whose models are shown. Starts with the one holding the
+    /// current model, so a long catalogue opens as a short list of headers.
+    @State private var expanded: Set<String> = []
     @State private var switching = false
 
     var body: some View {
@@ -145,28 +148,42 @@ private struct ModelPickerView: View {
             if let options {
                 ForEach(options.providers) { provider in
                     Section {
-                        ForEach(visibleModels(provider), id: \.self) { model in
-                            Button {
-                                pick(model, provider: provider.slug)
-                            } label: {
-                                HStack {
-                                    Text(model)
-                                        .foregroundStyle(provider.authenticated ? .primary : .secondary)
-                                    Spacer()
-                                    if isCurrent(model, provider: provider) {
-                                        Image(systemName: "checkmark").foregroundStyle(.tint)
+                        if expanded.contains(provider.slug) {
+                            ForEach(visibleModels(provider), id: \.self) { model in
+                                Button {
+                                    pick(model, provider: provider.slug)
+                                } label: {
+                                    HStack {
+                                        Text(model)
+                                            .foregroundStyle(provider.authenticated ? .primary : .secondary)
+                                        Spacer()
+                                        if isCurrent(model, provider: provider) {
+                                            Image(systemName: "checkmark").foregroundStyle(.tint)
+                                        }
                                     }
                                 }
+                                .disabled(!provider.authenticated || switching)
                             }
-                            .disabled(!provider.authenticated || switching)
-                        }
-                        if hiddenCount(provider) > 0 {
-                            Button("Show all \(provider.models.count) models") {
-                                showAll.insert(provider.slug)
+                            if hiddenCount(provider) > 0 {
+                                Button("Show all \(provider.models.count) models") {
+                                    showAll.insert(provider.slug)
+                                }
                             }
                         }
                     } header: {
-                        Text(provider.name)
+                        ProviderHeader(
+                            name: provider.name,
+                            count: provider.models.count,
+                            isExpanded: expanded.contains(provider.slug)
+                        ) {
+                            withAnimation {
+                                if expanded.contains(provider.slug) {
+                                    expanded.remove(provider.slug)
+                                } else {
+                                    expanded.insert(provider.slug)
+                                }
+                            }
+                        }
                     } footer: {
                         if !provider.authenticated {
                             Text("Not signed in on the server.")
@@ -184,7 +201,9 @@ private struct ModelPickerView: View {
         .navigationTitle("Model")
         .task {
             do {
-                options = try await controller.loadModelOptions()
+                let loaded = try await controller.loadModelOptions()
+                expanded = initiallyExpanded(loaded)
+                options = loaded
             } catch {
                 loadError = (error as? HermesError)?.errorDescription ?? error.localizedDescription
             }
@@ -201,10 +220,30 @@ private struct ModelPickerView: View {
         }
     }
 
-    private func isCurrent(_ model: String, provider: ModelOptions.Provider) -> Bool {
-        let current = controller.store.model ?? options?.currentModel
-        let currentProvider = controller.store.provider ?? options?.currentProvider
+    /// The provider of the current model; failing that the first one the
+    /// server is signed in to.
+    private func initiallyExpanded(_ options: ModelOptions) -> Set<String> {
+        if let current = options.providers.first(where: { provider in
+            provider.models.contains { isCurrent($0, provider: provider, in: options) }
+        }) {
+            return [current.slug]
+        }
+        if let first = options.providers.first(where: \.authenticated) ?? options.providers.first {
+            return [first.slug]
+        }
+        return []
+    }
+
+    private func isCurrent(
+        _ model: String, provider: ModelOptions.Provider, in options: ModelOptions
+    ) -> Bool {
+        let current = controller.store.model ?? options.currentModel
+        let currentProvider = controller.store.provider ?? options.currentProvider
         return model == current && (currentProvider == nil || currentProvider == provider.slug)
+    }
+
+    private func isCurrent(_ model: String, provider: ModelOptions.Provider) -> Bool {
+        options.map { isCurrent(model, provider: provider, in: $0) } ?? false
     }
 
     /// The provider's featured short list first, like Desktop; every model
@@ -242,5 +281,34 @@ private struct ModelPickerView: View {
                 switchError = message
             }
         }
+    }
+}
+
+/// A provider's section header that folds its model list away.
+private struct ProviderHeader: View {
+    let name: String
+    let count: Int
+    let isExpanded: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack {
+                Text(name)
+                Spacer()
+                if !isExpanded {
+                    Text("\(count)")
+                        .monospacedDigit()
+                }
+                Image(systemName: "chevron.right")
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(name)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed, \(count) models")
+        .accessibilityHint(isExpanded ? "Hides its models" : "Shows its models")
     }
 }
