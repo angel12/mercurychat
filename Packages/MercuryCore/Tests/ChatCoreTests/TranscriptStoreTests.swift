@@ -1602,4 +1602,77 @@ struct TranscriptToolDetailTests {
         #expect(notice.text == "/btw why?\n\nBecause.")
         #expect(store.running)
     }
+
+    // MARK: Session authority
+
+    @Test func authorityPromptEventsOpenAndSettleCards() {
+        let store = TranscriptStore()
+        store.apply(event("approval.request", #"{"prompt_id": "p1", "execution_generation": 2, "command": "rm x", "choices": ["once", "deny"]}"#))
+        #expect(store.pendingApproval?.requestID == "p1")
+        #expect(store.pendingApproval?.executionGeneration == 2)
+        #expect(store.pendingApproval?.serverRequestID == nil)
+        store.apply(event("approval.settled", #"{"prompt_id": "other"}"#))
+        #expect(store.pendingApproval != nil)
+        store.apply(event("approval.settled", #"{"prompt_id": "p1"}"#))
+        #expect(store.pendingApproval == nil)
+
+        store.apply(event("clarify.request", #"{"prompt_id": "c1", "execution_generation": 2, "question": "A?"}"#))
+        #expect(store.pendingClarify?.requestID == "c1")
+        store.apply(event("clarify.settled", #"{"prompt_id": "c1"}"#))
+        #expect(store.pendingClarify == nil)
+    }
+
+    @Test func queuedEchoesFollowTheSharedQueue() {
+        let store = TranscriptStore()
+        let first = store.appendUserMessage("one", state: .sending)
+        let second = store.appendUserMessage("two", state: .sending)
+        store.bindEcho(first, admissionID: "a1")
+        store.bindEcho(second, admissionID: "a2")
+        store.apply(event("session.info", #"{"revision": 1, "pending": [{"admission_id": "a1", "sequence": 1, "status": "queued", "text": "one", "controls": ["steer", "replace"]}, {"admission_id": "a2", "sequence": 2, "status": "queued", "text": "two", "controls": ["steer", "replace"]}]}"#))
+        #expect(store.queue.map(\.admissionID) == ["a1", "a2"])
+        #expect(store.waitingRow(forEcho: second)?.admissionID == "a2")
+
+        // The first starts: its echo is sent, the second is still waiting.
+        store.apply(event("message.start"))
+        store.apply(event("session.info", #"{"running": true, "pending": [{"admission_id": "a1", "sequence": 1, "status": "started", "text": "one", "controls": []}, {"admission_id": "a2", "sequence": 2, "status": "queued", "text": "two", "controls": ["steer", "replace"]}]}"#))
+        #expect(user(store, first)?.sendState == .sent)
+        #expect(user(store, second)?.sendState == .queued)
+        #expect(store.waitingRow(forEcho: first) == nil)
+
+        // Removing the waiting one retires its echo without ending the running turn.
+        store.apply(event("message.complete", #"{"admission_id": "a2", "outcome": "cancelled", "status": "complete", "text": ""}"#))
+        #expect(user(store, second) == nil)
+        #expect(store.running)
+    }
+
+    @Test func aReplacedPromptKeepsItsEchoWithTheNewText() {
+        let store = TranscriptStore()
+        let echo = store.appendUserMessage("draft", state: .sending)
+        store.bindEcho(echo, admissionID: "a1")
+        store.apply(event("session.info", #"{"pending": [{"admission_id": "a1", "sequence": 1, "status": "queued", "text": "draft", "controls": ["replace"]}]}"#))
+        store.replaceEcho(echo, text: "final", admissionID: "a9")
+        store.apply(event("message.complete", #"{"admission_id": "a1", "outcome": "cancelled", "status": "complete"}"#))
+        #expect(user(store, echo)?.text == "final")
+        #expect(store.admissionID(forEcho: echo) == "a9")
+    }
+
+    @Test func aCancellationReportedAfterTheRowLeftStillRetiresTheEcho() {
+        // Live order on v0.23: the owner drops the row from `pending` first,
+        // then reports the cancelled admission.
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        let echo = store.appendUserMessage("later", state: .sending)
+        store.bindEcho(echo, admissionID: "a2")
+        store.apply(event("session.info", #"{"running": true, "pending": [{"admission_id": "a2", "sequence": 2, "status": "queued", "text": "later", "controls": ["steer", "replace"]}]}"#))
+        store.apply(event("message.delta", #"{"text": "streaming"}"#))
+        store.apply(event("session.info", #"{"running": true, "pending": []}"#))
+        store.apply(event("message.complete", #"{"admission_id": "a2", "outcome": "cancelled", "status": "complete"}"#))
+        #expect(user(store, echo) == nil)
+        #expect(store.running)
+    }
+
+    private func user(_ store: TranscriptStore, _ id: String) -> UserMessage? {
+        for item in store.items { if case .user(let m) = item, m.id == id { return m } }
+        return nil
+    }
 }

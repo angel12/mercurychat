@@ -79,6 +79,7 @@ final class HermesTestServer: @unchecked Sendable {
     private var connections: [Connection] = []
     private var capturedRPCs: [TestRPCRequest] = []
     private var readyEpoch: String?
+    private var readyAuthority = false
     private(set) var port: UInt16 = 0
 
     /// `replay_epoch` carried by the `gateway.ready` sent on each upgrade
@@ -87,6 +88,20 @@ final class HermesTestServer: @unchecked Sendable {
     var replayEpoch: String? {
         get { lock.withLock { readyEpoch } }
         set { lock.withLock { readyEpoch = newValue } }
+    }
+
+    /// `gateway.ready` says `session_authority: true` on the next upgrade:
+    /// the socket is a v0.23 gateway listener's (canonical wire).
+    var sessionAuthority: Bool {
+        get { lock.withLock { readyAuthority } }
+        set { lock.withLock { readyAuthority = newValue } }
+    }
+
+    fileprivate var readyPayload: String {
+        var fields: [String: JSONValue] = [:]
+        if let epoch = replayEpoch { fields["replay_epoch"] = .string(epoch) }
+        if sessionAuthority { fields["session_authority"] = .bool(true) }
+        return JSONValue.object(fields).encodedString()
     }
 
     /// The JSON-RPC requests received over the WebSocket, in arrival order.
@@ -133,7 +148,7 @@ final class HermesTestServer: @unchecked Sendable {
             guard let self else { return }
             let connection = Connection(
                 nwConnection, handler: self.handler,
-                readyEpoch: { [weak self] in self?.replayEpoch }
+                readyPayload: { [weak self] in self?.readyPayload ?? "{}" }
             ) { [weak self] method, params in
                 guard let self else { return .result(.object([:])) }
                 self.lock.withLock {
@@ -225,7 +240,7 @@ final class HermesTestServer: @unchecked Sendable {
     private final class Connection: @unchecked Sendable {
         private let nwConnection: NWConnection
         private let handler: @Sendable (TestHTTPRequest) -> TestHTTPResponse
-        private let readyEpoch: @Sendable () -> String?
+        private let readyPayload: @Sendable () -> String
         /// Captures each WS JSON-RPC request and yields its scripted reply.
         private let rpcSink: @Sendable (String, JSONValue) -> TestRPCReply
         private var buffer = Data()
@@ -239,12 +254,12 @@ final class HermesTestServer: @unchecked Sendable {
         init(
             _ nwConnection: NWConnection,
             handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse,
-            readyEpoch: @escaping @Sendable () -> String?,
+            readyPayload: @escaping @Sendable () -> String,
             rpcSink: @escaping @Sendable (String, JSONValue) -> TestRPCReply
         ) {
             self.nwConnection = nwConnection
             self.handler = handler
-            self.readyEpoch = readyEpoch
+            self.readyPayload = readyPayload
             self.rpcSink = rpcSink
         }
 
@@ -332,7 +347,7 @@ final class HermesTestServer: @unchecked Sendable {
                     nwConnection.send(
                         content: Self.handshakeResponse(head: head),
                         isComplete: true, completion: .idempotent)
-                    let payload = readyEpoch().map { #"{"replay_epoch": "\#($0)"}"# } ?? "{}"
+                    let payload = readyPayload()
                     sendText(
                         #"{"jsonrpc": "2.0", "method": "event", "params": {"type": "gateway.ready", "payload": "#
                             + payload + "}}")

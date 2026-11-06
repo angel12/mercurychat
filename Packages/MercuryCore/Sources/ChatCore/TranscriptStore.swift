@@ -53,6 +53,19 @@ public final class TranscriptStore {
     public private(set) var yolo: Bool?
     public private(set) var approvalMode: String?
     public private(set) var profileName: String?
+
+    /// Session authority (hermes v0.23 gateway listener): the chat's shared
+    /// queue from `session.info.pending`, oldest first. It is the chat's, not
+    /// this device's: prompts other apps queued are listed too. Always empty
+    /// on the legacy wire, which has no visible queue.
+    public private(set) var queue: [QueuedPrompt] = []
+    /// This device's echoes and the admission each became (authority only).
+    private var echoAdmissions: [String: String] = [:]
+    /// Admissions seen waiting (`queued`) and not yet seen starting. A
+    /// `message.complete` that cancels one of these only retires a queue row;
+    /// it isn't the running turn's end. Kept across snapshots: the owner may
+    /// drop the row from `pending` before it reports the cancellation.
+    private var waitingAdmissions: Set<String> = []
     /// Durable id observed in `session.info.stored_session_id` (re-anchor).
     public private(set) var storedSessionID: String?
 
@@ -621,14 +634,72 @@ public final class TranscriptStore {
         appendUserMessage(text, state: .queued)
     }
 
-    /// A new turn starting means the queued prompt drained into it.
+    /// A new turn starting means the queued prompt drained into it. Echoes
+    /// tied to an authority admission follow the queue instead
+    /// (`syncEchoesWithQueue`): there the second of two queued prompts is
+    /// still waiting when the first one starts.
     private func markQueuedPromptsStarted() {
+        let tracked = Set(echoAdmissions.keys)
         for (index, item) in items.enumerated() {
-            if case .user(var message) = item, message.sendState == .queued {
+            if case .user(var message) = item, message.sendState == .queued, !tracked.contains(message.id) {
                 message.sendState = .sent
                 items[index] = .user(message)
             }
         }
+    }
+
+    // MARK: Shared queue (session authority)
+
+    /// Tie a sent echo to the admission the owner gave it, so the queue can
+    /// show it while it waits and its bubble appears once it runs.
+    public func bindEcho(_ echoID: String, admissionID: String) {
+        echoAdmissions[echoID] = admissionID
+        syncEchoesWithQueue()
+    }
+
+    public func admissionID(forEcho echoID: String) -> String? {
+        echoAdmissions[echoID]
+    }
+
+    /// The queue row this echo is waiting as, or nil once it runs (or when it
+    /// isn't an authority admission). A waiting echo is shown in the queue,
+    /// not the transcript.
+    public func waitingRow(forEcho echoID: String) -> QueuedPrompt? {
+        guard let admission = echoAdmissions[echoID] else { return nil }
+        return queue.first { $0.admissionID == admission && $0.status == .queued }
+    }
+
+    /// The echo bound to an admission, if this device sent it.
+    public func echoID(forAdmission admissionID: String) -> String? {
+        echoAdmissions.first { $0.value == admissionID }?.key
+    }
+
+    /// After `prompt.replace_queued`: the echo now stands for the new
+    /// admission and its edited text.
+    public func replaceEcho(_ echoID: String, text: String, admissionID: String) {
+        echoAdmissions[echoID] = admissionID
+        if let index = items.firstIndex(where: { $0.id == echoID }), case .user(var message) = items[index] {
+            message.text = text
+            items[index] = .user(message)
+        }
+        syncEchoesWithQueue()
+    }
+
+    private func syncEchoesWithQueue() {
+        for (echoID, admission) in echoAdmissions {
+            guard let row = queue.first(where: { $0.admissionID == admission }) else { continue }
+            setUserMessageState(id: echoID, row.status == .queued ? .queued : .sent)
+        }
+    }
+
+    /// A queued admission left the queue without running (removed or
+    /// replaced): drop this device's echo of it, unless a replace already
+    /// moved the echo to the new admission.
+    private func retireCancelledAdmission(_ admission: String) {
+        waitingAdmissions.remove(admission)
+        guard let echoID = echoID(forAdmission: admission) else { return }
+        echoAdmissions[echoID] = nil
+        items.removeAll { $0.id == echoID }
     }
 
     /// Visible one-liner in the transcript (blocking-prompt expiry and other
@@ -657,7 +728,17 @@ public final class TranscriptStore {
             sealInterim(event.payload)
 
         case GatewayEvent.Kind.messageComplete:
-            completeTurnMessage(event.payload)
+            // A queued admission that was cancelled or replaced never ran: its
+            // completion only retires the row. Treating it as the turn's end
+            // would seal the bubble of whatever turn is running.
+            if let admission = event.payload["admission_id"]?.stringValue,
+                event.payload["outcome"]?.stringValue == "cancelled",
+                waitingAdmissions.contains(admission)
+            {
+                retireCancelledAdmission(admission)
+            } else {
+                completeTurnMessage(event.payload)
+            }
 
         case GatewayEvent.Kind.toolGenerating:
             generatingToolName = event.payload["name"]?.stringValue ?? "tool"
@@ -680,6 +761,30 @@ public final class TranscriptStore {
 
         case GatewayEvent.Kind.sessionInfo:
             applySessionInfo(event.payload)
+
+        // A session authority raises approval and single clarify prompts as
+        // events carrying `prompt_id` (answered by approval/clarify.respond),
+        // not as server requests; `*.settled` closes them for every viewer.
+        // The contract-6 events of the same names (`request_id`, no
+        // `prompt_id`) come from a backend below Chat's minimum and stay
+        // ignored.
+        case GatewayEvent.Kind.approvalRequest where event.payload["prompt_id"] != nil:
+            if let prompt = ApprovalRequest(event: event) { pendingApproval = prompt }
+
+        case GatewayEvent.Kind.clarifyRequest where event.payload["prompt_id"] != nil:
+            if let prompt = ClarifyRequest(event: event) { pendingClarify = prompt }
+
+        case GatewayEvent.Kind.approvalSettled:
+            let id = event.payload["prompt_id"]?.stringValue ?? event.payload["request_id"]?.stringValue
+            if let id, pendingApproval?.serverRequestID == nil, pendingApproval?.requestID == id {
+                pendingApproval = nil
+            }
+
+        case GatewayEvent.Kind.clarifySettled:
+            let id = event.payload["prompt_id"]?.stringValue ?? event.payload["request_id"]?.stringValue
+            if let id, pendingClarify?.serverRequestID == nil, pendingClarify?.requestID == id {
+                pendingClarify = nil
+            }
 
         case GatewayEvent.Kind.btwComplete:
             // A /btw answer: the running turn keeps going, so it lands as a
@@ -1060,6 +1165,17 @@ public final class TranscriptStore {
         }
         if let value = payload["yolo"]?.boolValue { yolo = value }
         if let value = payload["approval_mode"]?.stringValue, !value.isEmpty { approvalMode = value }
+        if let rows = QueuedPrompt.list(from: payload) {
+            queue = rows
+            for row in rows {
+                if row.status == .queued {
+                    waitingAdmissions.insert(row.admissionID)
+                } else {
+                    waitingAdmissions.remove(row.admissionID)
+                }
+            }
+            syncEchoesWithQueue()
+        }
         if let profile = payload["profile_name"]?.stringValue, !profile.isEmpty {
             profileName = profile
         }

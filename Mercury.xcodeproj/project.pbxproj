@@ -74,7 +74,9 @@
 		C029DF6E28A3950A40013491 /* ChatEchoAttachmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E79A6A236A9462B5F3B2A2 /* ChatEchoAttachmentTests.swift */; };
 		C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB97969196F04F2B48FCB03E /* ChatController.swift */; };
 		CED739D997A85C49B4F77C2A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */; };
+		D5152E08917774917EF2DDCE /* QueuePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 295AE0DDB21A194494D08AD6 /* QueuePanel.swift */; };
 		D5245B27591F8A6DDB021053 /* FileAttachmentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C7D11718D49275BD388B653 /* FileAttachmentWire.swift */; };
+		D7EE370834F4DF70AFAFACBE /* AuthorityChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08D5F1FEED83F4550E69A141 /* AuthorityChatTests.swift */; };
 		D86E59AA62A689A4F8074046 /* AppModelBrowseScopingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8398CDBDA28D2F1ACE4FE082 /* AppModelBrowseScopingTests.swift */; };
 		DA2AA34E4B0CDD6757AE8F28 /* AppModelKeychainAdoptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */; };
 		DA8927A5AC75E60E2436DA94 /* PushSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD6FD450217A735105CD8110 /* PushSystem.swift */; };
@@ -95,6 +97,7 @@
 
 /* Begin PBXFileReference section */
 		04889686DBD2B442B100A913 /* AppModelExpiredPumpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelExpiredPumpTests.swift; sourceTree = "<group>"; };
+		08D5F1FEED83F4550E69A141 /* AuthorityChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthorityChatTests.swift; sourceTree = "<group>"; };
 		0A4D31C14EEC3FDD12DF7885 /* PushTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushTestSupport.swift; sourceTree = "<group>"; };
 		0C99AB79C63CE492D73E34BE /* MercuryTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MercuryTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1001C476642F8E648E05E2E4 /* AppModelKeychainAdoptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelKeychainAdoptionTests.swift; sourceTree = "<group>"; };
@@ -109,6 +112,7 @@
 		261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptItemView.swift; sourceTree = "<group>"; };
 		26E38B4DB1B688BED024CB77 /* ReplayLosslessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplayLosslessTests.swift; sourceTree = "<group>"; };
 		26F0A1567A15C6816DB59D53 /* PushCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushCoordinator.swift; sourceTree = "<group>"; };
+		295AE0DDB21A194494D08AD6 /* QueuePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanel.swift; sourceTree = "<group>"; };
 		2D01072AAEDA445A543D4065 /* TranscriptScrollStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptScrollStateTests.swift; sourceTree = "<group>"; };
 		2DD7E841EFF1CE6E70B38582 /* SessionActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityTests.swift; sourceTree = "<group>"; };
 		31F7DAA740A01BE642F7A9F5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -216,6 +220,7 @@
 				F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */,
 				95372298CE4EB18C2FDACD29 /* AppModelPasswordSignInTests.swift */,
 				DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */,
+				08D5F1FEED83F4550E69A141 /* AuthorityChatTests.swift */,
 				7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */,
 				90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */,
 				B91B9951C249787DEC11894E /* BotRefreshCoalescingTests.swift */,
@@ -280,6 +285,7 @@
 				6E00A47B190797DCB7210F77 /* MarkdownBlocks.swift */,
 				E5F4A67BA4AAA2CDE152FD20 /* MarkdownText.swift */,
 				7A3E9A556ED764A655CD5EA9 /* NotificationSettingsView.swift */,
+				295AE0DDB21A194494D08AD6 /* QueuePanel.swift */,
 				C5AB9D4B96A47F2A0E24656A /* RootView.swift */,
 				80AEAC07FD3089D1CEF8B377 /* SessionSettingsView.swift */,
 				CD7A5E0A36F16FD09E767AE6 /* SidebarView.swift */,
@@ -442,6 +448,7 @@
 				EE76E4F46A5DF58DFD13C57F /* PushCoordinator.swift in Sources */,
 				865FB2BBC58F6243AA53997E /* PushSettings.swift in Sources */,
 				4985C29D68FE36BE25F82A0F /* PushSystem.swift in Sources */,
+				D5152E08917774917EF2DDCE /* QueuePanel.swift in Sources */,
 				56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */,
 				88077A1B0EB07C92F63C8541 /* SessionActivityTracker.swift in Sources */,
 				2C5B9FE15CEA65481D2DA972 /* SessionSettingsView.swift in Sources */,
@@ -469,6 +476,7 @@
 				1A9E4F4EF4638278B612882B /* AppModelOAuthFormTests.swift in Sources */,
 				9CB010695A73DB41BE1CE5E6 /* AppModelPasswordSignInTests.swift in Sources */,
 				356B7E4BCBE0D1CC7C5B0F6E /* AppModelTokenEndpointBindingTests.swift in Sources */,
+				D7EE370834F4DF70AFAFACBE /* AuthorityChatTests.swift in Sources */,
 				66BF4F028E62E698A078D2AA /* BotAdvancedEditorTests.swift in Sources */,
 				8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */,
 				66BEC0EA880906671E1A1D8A /* BotRefreshCoalescingTests.swift in Sources */,
@@ -784,7 +792,7 @@
 			repositoryURL = "https://github.com/angel12/mercurykit";
 			requirement = {
 				kind = exactVersion;
-				version = 0.7.0;
+				version = 0.9.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
