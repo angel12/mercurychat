@@ -74,25 +74,22 @@ final class ConversationController {
     /// into the sheet already on screen — the same prompt, so its notice
     /// must survive, as with `stampingApprovalInPlace` (PR #126 review).
     private var mergingClarifyLocksInPlace = false
-    /// Server requests this app can only show and offer to decline (issue
-    /// #130), oldest first; the sheet shows the first. A change of the
-    /// front request retires its notice and announces the next one.
-    private(set) var unanswerable: [UnanswerableRequest] = [] {
+    /// Sudo and secret requests waiting for the user's value, oldest first;
+    /// the sheet shows the first. A change of the front request retires its
+    /// notice and announces the next one.
+    private(set) var credentialPrompts: [CredentialPrompt] = [] {
         didSet {
-            guard oldValue.first?.id != unanswerable.first?.id else { return }
-            if let next = unanswerable.first {
-                announce(.unanswerable(id: next.id, text: next.spokenNotice))
+            guard oldValue.first?.id != credentialPrompts.first?.id else { return }
+            if let next = credentialPrompts.first {
+                announce(.credential(id: next.id, text: next.spokenNotice))
             } else {
-                unanswerableAnnouncement?.cancel()
+                credentialAnnouncement?.cancel()
             }
         }
     }
-    var currentUnanswerable: UnanswerableRequest? { unanswerable.first }
-    /// Requests the user closed with Not now. They stay open server-side, so
-    /// a reconnect's `open_requests` would otherwise put them straight back.
-    private var dismissedUnanswerableIDs: Set<String> = []
+    var currentCredentialPrompt: CredentialPrompt? { credentialPrompts.first }
     /// True while any prompt sheet holds the voice loop paused.
-    private var hasPrompt: Bool { approval != nil || clarify != nil || !unanswerable.isEmpty }
+    private var hasPrompt: Bool { approval != nil || clarify != nil || !credentialPrompts.isEmpty }
     /// Ends the conversation view when the user speaks a stop word.
     var didEndByStopWord = false
     /// Set by the host (`AppModel`): the user spoke a stop word. The
@@ -555,7 +552,7 @@ final class ConversationController {
         textSubmissionTask?.cancel()
         approvalAnnouncement?.cancel()
         clarifyAnnouncement?.cancel()
-        unanswerableAnnouncement?.cancel()
+        credentialAnnouncement?.cancel()
     }
 
     func begin(mode: Mode) async {
@@ -779,7 +776,7 @@ final class ConversationController {
         stateTask?.cancel()
         approvalAnnouncement?.cancel()
         clarifyAnnouncement?.cancel()
-        unanswerableAnnouncement?.cancel()
+        credentialAnnouncement?.cancel()
         releaseLevelMeterIfOwned()
         #if os(iOS)
             stopAudioKeepalive()
@@ -1211,8 +1208,8 @@ final class ConversationController {
                 present(approval: approvalRequest)
             } else if let clarifyRequest = ClarifyRequest(serverRequest: request) {
                 present(clarify: clarifyRequest)
-            } else if let unanswerableRequest = UnanswerableRequest(serverRequest: request) {
-                present(unanswerable: unanswerableRequest)
+            } else if let credential = CredentialPrompt(serverRequest: request) {
+                present(credential: credential)
             }
 
         case GatewayEvent.Kind.requestCancel:
@@ -1233,9 +1230,8 @@ final class ConversationController {
                 clarify = nil
                 withdrew = true
             }
-            dismissedUnanswerableIDs.remove(id)
-            if unanswerable.contains(where: { $0.id == id }) {
-                unanswerable.removeAll { $0.id == id }
+            if credentialPrompts.contains(where: { $0.id == id }) {
+                credentialPrompts.removeAll { $0.id == id }
                 withdrew = true
             }
             if withdrew {
@@ -1477,19 +1473,11 @@ final class ConversationController {
         )
     }
 
-    /// Queue an unanswerable request (issue #130). Idempotent by srq id —
-    /// a reconnect reports a still-open request again — and a request the
-    /// user closed with Not now is not brought back.
-    ///
-    /// Known residual: an approval srq this app cannot decode may also be
-    /// reported as a legacy `pending_approval`, which does decode, so both
-    /// sheets can show for one approval. Only the srq's `request.answer` —
-    /// this sheet's Decline — resolves it on a contract ≥ 7 backend.
-    private func present(unanswerable request: UnanswerableRequest) {
-        guard !dismissedUnanswerableIDs.contains(request.id),
-            !unanswerable.contains(where: { $0.id == request.id })
-        else { return }
-        unanswerable.append(request)
+    /// Queue a credential prompt. Idempotent by srq id — a reconnect
+    /// reports a still-open request again.
+    private func present(credential prompt: CredentialPrompt) {
+        guard !credentialPrompts.contains(where: { $0.id == prompt.id }) else { return }
+        credentialPrompts.append(prompt)
         promptSendError = nil
     }
 
@@ -1507,8 +1495,8 @@ final class ConversationController {
         /// sends even a lone question as a one-entry batch (5eea87882a).
         /// `remainingQuestions` is the unlocked count.
         case clarify(requestID: String, remainingQuestions: Int, isBatch: Bool)
-        /// The front unanswerable request (issue #130), by srq id.
-        case unanswerable(id: String, text: String)
+        /// The front credential prompt, by srq id. Fixed text only.
+        case credential(id: String, text: String)
 
         var text: String {
             switch self {
@@ -1517,7 +1505,7 @@ final class ConversationController {
                 isBatch && remaining > 1
                     ? "Hermes has \(remaining) questions for you."
                     : "Hermes has a question for you."
-            case .unanswerable(_, let text): text
+            case .credential(_, let text): text
             }
         }
     }
@@ -1528,7 +1516,7 @@ final class ConversationController {
     /// at teardown reaches all of it, and so does awaiting them.
     private var approvalAnnouncement: Task<Void, Never>?
     private var clarifyAnnouncement: Task<Void, Never>?
-    private var unanswerableAnnouncement: Task<Void, Never>?
+    private var credentialAnnouncement: Task<Void, Never>?
 
     /// A notice is only ever replaced by the next notice for the *same*
     /// sheet. The two sheets are independent state — a payload can carry both
@@ -1539,8 +1527,8 @@ final class ConversationController {
             approvalAnnouncement = queue(notice, replacing: approvalAnnouncement)
         case .clarify:
             clarifyAnnouncement = queue(notice, replacing: clarifyAnnouncement)
-        case .unanswerable:
-            unanswerableAnnouncement = queue(notice, replacing: unanswerableAnnouncement)
+        case .credential:
+            credentialAnnouncement = queue(notice, replacing: credentialAnnouncement)
         }
     }
 
@@ -1598,7 +1586,7 @@ final class ConversationController {
         switch notice {
         case .approval(let epoch): return approval != nil && approvalEpoch == epoch
         case .clarify(let requestID, _, _): return clarify?.requestID == requestID
-        case .unanswerable(let id, _): return currentUnanswerable?.id == id
+        case .credential(let id, _): return currentCredentialPrompt?.id == id
         }
     }
 
@@ -1609,7 +1597,7 @@ final class ConversationController {
     func awaitPromptAnnouncements() async {
         await approvalAnnouncement?.value
         await clarifyAnnouncement?.value
-        await unanswerableAnnouncement?.value
+        await credentialAnnouncement?.value
     }
 
     /// Adopt the `pending_approval` / `pending_clarify` fields of a
@@ -1670,17 +1658,15 @@ final class ConversationController {
             clarify = nil
         }
 
-        // Unanswerable requests (issue #130) exist only as srq entries, so
-        // `open_requests` is their whole authority: on a re-read, anything
-        // no longer listed was answered elsewhere, withdrawn or died with
-        // the backend.
-        let openUnanswerable = openRequests.compactMap(UnanswerableRequest.init(serverRequest:))
+        // Credential prompts exist only as srq entries, so `open_requests`
+        // is their whole authority: on a re-read, anything no longer listed
+        // was answered elsewhere, withdrawn or died with the backend.
+        let openCredentials = openRequests.compactMap(CredentialPrompt.init(serverRequest:))
         if clearStale {
-            let openIDs = Set(openUnanswerable.map(\.id))
-            unanswerable.removeAll { !openIDs.contains($0.id) }
-            dismissedUnanswerableIDs.formIntersection(openIDs)
+            let openIDs = Set(openCredentials.map(\.id))
+            credentialPrompts.removeAll { !openIDs.contains($0.id) }
         }
-        for request in openUnanswerable { present(unanswerable: request) }
+        for prompt in openCredentials { present(credential: prompt) }
 
         if clearStale { resumeIfUnprompted() }
     }
@@ -2132,30 +2118,37 @@ final class ConversationController {
         }
     }
 
-    /// Decline the front unanswerable request (issue #130) with the
-    /// backend's own "skipped" answer, so the agent moves on now instead of
-    /// at the deadline. Same keep-until-confirmed and `.expired` rules as
-    /// the other prompt responses.
-    func declineUnanswerable() {
-        guard let request = currentUnanswerable, !promptResponseInFlight else { return }
-        let id = request.id
-        sendPromptResponse(settling: id) {
-            _ = try await $0.answerServerRequest(id: id, result: request.declineResult)
-        } onConfirmed: { [weak self] in
-            self?.unanswerable.removeAll { $0.id == id }
-        } applyError: { [weak self] in
-            self?.currentUnanswerable?.id == id
+    /// Answer the front credential prompt with `value`. The value goes only
+    /// into the `request.answer` result: never logged, never spoken. Kept
+    /// until confirmed; `.expired` counts as delivered (the backend moved on).
+    func answerCredential(_ value: String) async -> CredentialSubmitOutcome {
+        guard let prompt = currentCredentialPrompt else { return .done }
+        guard !promptResponseInFlight else {
+            return .failed("Another answer is still being sent.")
         }
+        let id = prompt.id
+        promptResponseInFlight = true
+        promptSendError = nil
+        defer { promptResponseInFlight = false }
+        // The runtime the request arrived on; a reconnect may re-anchor the
+        // box before the answer returns.
+        let runtimeID = sessionBox.runtimeID
+        do {
+            _ = try await sessionService.answerServerRequest(
+                id: id, result: ServerRequestResult.value(value))
+        } catch {
+            return .failed(
+                (error as? HermesError)?.errorDescription ?? error.localizedDescription)
+        }
+        credentialPrompts.removeAll { $0.id == id }
+        if let runtimeID { serverRequestSettled?(id, runtimeID) }
+        resumeIfUnprompted()
+        return .done
     }
 
-    /// Not now: close the front unanswerable request without answering it,
-    /// leaving it for another client or the backend's deadline.
-    func dismissUnanswerable() {
-        guard let request = currentUnanswerable, !promptResponseInFlight else { return }
-        dismissedUnanswerableIDs.insert(request.id)
-        unanswerable.removeFirst()
-        promptSendError = nil
-        resumeIfUnprompted()
+    /// Chat's decline: an empty value, which the backend reads as skipped.
+    func declineCredential() async -> CredentialSubmitOutcome {
+        await answerCredential("")
     }
 
     /// The in-flight prompt response, kept only so a test can await it.
