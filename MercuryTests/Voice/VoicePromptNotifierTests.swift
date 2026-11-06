@@ -8,7 +8,13 @@ final class FakeVoiceNotificationCenter: VoiceNotificationCenter {
     private(set) var removed: [String] = []
     var deliveredNotes: [DeliveredNotification] = []
     private(set) var authorizationRequests = 0
-    func add(_ request: VoiceNotificationRequest) async { added.append(request) }
+    /// When set, `add` suspends on it before landing (to model the add window).
+    var addGate: (@MainActor () async -> Void)?
+    func add(_ request: VoiceNotificationRequest) async {
+        added.append(request)
+        await addGate?()
+        deliveredNotes.append(DeliveredNotification(id: request.id, push: nil))
+    }
     func remove(ids: [String]) {
         removed += ids
         deliveredNotes.removeAll { ids.contains($0.id) }
@@ -79,7 +85,7 @@ struct VoicePromptNotifierTests {
         let notifier = VoicePromptNotifier(center: center, isAppActive: { false }, sleep: { _ in })
         notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
         notifier.promptChanged(nil, title: "Plan", storedSessionID: nil)
-        #expect(center.removed.contains("voice-prompt.credential-s1"))
+        #expect(await eventually { center.removed.contains("voice-prompt.credential-s1") })
     }
 
     @Test func foregroundRemovesPosted() async {
@@ -88,7 +94,7 @@ struct VoicePromptNotifierTests {
         notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
         #expect(await eventually { center.added.count == 1 })
         notifier.appBecameActive()
-        #expect(center.removed.contains("voice-prompt.credential-s1"))
+        #expect(await eventually { center.removed.contains("voice-prompt.credential-s1") })
     }
 
     @Test func conversationEndRemovesPosted() async {
@@ -96,7 +102,7 @@ struct VoicePromptNotifierTests {
         let notifier = VoicePromptNotifier(center: center, isAppActive: { false }, sleep: { _ in })
         notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
         notifier.conversationEnded()
-        #expect(center.removed.contains("voice-prompt.credential-s1"))
+        #expect(await eventually { center.removed.contains("voice-prompt.credential-s1") })
     }
 
     @Test func sweepRemovesOnlyMatchingPushApprovals() async {
@@ -121,6 +127,54 @@ struct VoicePromptNotifierTests {
         let notifier = VoicePromptNotifier(center: center, isAppActive: { false }, sleep: { _ in })
         notifier.promptChanged(approval, title: "Plan", storedSessionID: "s1")
         #expect(await eventually { center.removed.contains("same-session") })
+    }
+
+    @Test func settlingInsideAddWindowLeavesNothingBehind() async {
+        let center = FakeVoiceNotificationCenter()
+        let release = VoiceNotifierActiveFlag(false)
+        center.addGate = { while !release.value { try? await Task.sleep(for: .milliseconds(5)) } }
+        let notifier = VoicePromptNotifier(center: center, isAppActive: { false }, sleep: { _ in })
+        notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
+        #expect(await eventually { center.added.count == 1 })
+        notifier.promptChanged(nil, title: "Plan", storedSessionID: nil)
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(center.removed.isEmpty)  // remove waits for the add
+        release.value = true
+        #expect(await eventually { center.removed == ["voice-prompt.credential-s1"] })
+        #expect(center.deliveredNotes.isEmpty)
+    }
+
+    @Test func foregroundInsideAddWindowLeavesNothingBehind() async {
+        let center = FakeVoiceNotificationCenter()
+        let release = VoiceNotifierActiveFlag(false)
+        center.addGate = { while !release.value { try? await Task.sleep(for: .milliseconds(5)) } }
+        let notifier = VoicePromptNotifier(center: center, isAppActive: { false }, sleep: { _ in })
+        notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
+        #expect(await eventually { center.added.count == 1 })
+        notifier.appBecameActive()
+        release.value = true
+        #expect(await eventually { center.removed.contains("voice-prompt.credential-s1") })
+        #expect(center.deliveredNotes.isEmpty)
+    }
+
+    @Test func keyChangeWithdrawsOldAndPostsNew() async {
+        let center = FakeVoiceNotificationCenter()
+        let notifier = VoicePromptNotifier(center: center, isAppActive: { false }, sleep: { _ in })
+        notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
+        #expect(await eventually { center.added.count == 1 })
+        notifier.promptChanged(approval, title: "Plan", storedSessionID: "s1")
+        #expect(await eventually { center.added.count == 2 && center.removed.contains("voice-prompt.credential-s1") })
+        #expect(center.added[1].id == "voice-prompt.approval-1")
+    }
+
+    @Test func repeatedSameKeyPostsOnce() async {
+        let center = FakeVoiceNotificationCenter()
+        let notifier = VoicePromptNotifier(center: center, isAppActive: { false }, sleep: { _ in })
+        notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
+        notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
+        notifier.promptChanged(sudo, title: "Plan", storedSessionID: nil)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(center.added.count == 1)
     }
 
     @Test func actionIdentifiersMap() {

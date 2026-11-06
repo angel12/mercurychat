@@ -58,6 +58,8 @@ final class VoicePromptNotifier {
     }
     private var current: Current?
     private var posted: Set<String> = []
+    private var adds: [String: Task<Void, Never>] = [:]
+    private var sweeps: [String: Task<Void, Never>] = [:]
 
     init(
         center: (any VoiceNotificationCenter)?, isAppActive: @escaping @MainActor () -> Bool,
@@ -87,9 +89,7 @@ final class VoicePromptNotifier {
     }
 
     func appBecameActive() {
-        guard let center, !posted.isEmpty else { return }
-        center.remove(ids: Array(posted))
-        posted = []
+        for id in posted { withdrawID(id) }
     }
 
     func conversationEnded() {
@@ -102,10 +102,19 @@ final class VoicePromptNotifier {
         Task { await center.requestAuthorizationIfUndetermined() }
     }
 
-    private func withdraw(_ key: String) {
-        let id = Self.identifier(key)
+    private func withdraw(_ key: String) { withdrawID(Self.identifier(key)) }
+
+    /// Every removal waits for that id's add to land, so a prompt that settles
+    /// inside the add window can't leave a stale notification behind.
+    private func withdrawID(_ id: String) {
         guard posted.remove(id) != nil else { return }
-        center?.remove(ids: [id])
+        sweeps.removeValue(forKey: id)?.cancel()
+        let add = adds.removeValue(forKey: id)
+        guard let center else { return }
+        Task {
+            await add?.value
+            center.remove(ids: [id])
+        }
     }
 
     private func post() {
@@ -120,11 +129,16 @@ final class VoicePromptNotifier {
         let session = current.storedSessionID
         let delay = sweepDelay
         let sleep = self.sleep
-        Task { [weak self] in
-            await center.add(request)
-            guard prompt.kind == .approval else { return }
+        let add = Task { await center.add(request) }
+        adds[id] = add
+        sweeps[id]?.cancel()
+        guard prompt.kind == .approval else { return }
+        sweeps[id] = Task { [weak self] in
+            await add.value
+            guard !Task.isCancelled else { return }
             await self?.sweepPushApprovals(for: prompt, session: session)
             await sleep(delay)
+            guard !Task.isCancelled else { return }
             await self?.sweepPushApprovals(for: prompt, session: session)
         }
     }
@@ -140,6 +154,6 @@ final class VoicePromptNotifier {
             guard let session else { return nil }
             return push.sessionID == session ? note.id : nil
         }
-        if !ids.isEmpty { center.remove(ids: ids) }
+        if !ids.isEmpty, !Task.isCancelled { center.remove(ids: ids) }
     }
 }
