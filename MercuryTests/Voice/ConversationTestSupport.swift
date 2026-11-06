@@ -53,6 +53,9 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
     /// after being recorded — the window in which teardown/close must be
     /// able to complete without waiting on it (issue #125, Task 9 review).
     var ttsLeaseAcquireGate: CallGate?
+    /// When set, `closeSession` runs this after recording the close — a
+    /// test reads what else is true at the moment the close goes out.
+    var onClose: (@Sendable (String) async -> Void)?
 
     /// A prompt response the controller sent, in the shape it reached the
     /// wire. `request.answer` is recorded as its full params object so a test
@@ -197,6 +200,7 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
     @discardableResult
     func closeSession(sessionID: String) async -> SessionCloseOutcome {
         lock.withLock { _closedIDs.append(sessionID) }
+        if let onClose { await onClose(sessionID) }
         return .closed
     }
 

@@ -27,8 +27,9 @@ final class VoiceConversationHost {
 
     let target: Target
     let controller: ConversationController
-    /// `AppModel.voiceGeneration` when this host was made; a begin that
-    /// finishes after the generation moved on tears itself down.
+    /// `AppModel.voiceGeneration` when this host was made. Informational:
+    /// `startVoice` compares its own captured generation (and the host's
+    /// identity) against the model's, not this field.
     let generation: Int
 
     init(target: Target, controller: ConversationController, generation: Int) {

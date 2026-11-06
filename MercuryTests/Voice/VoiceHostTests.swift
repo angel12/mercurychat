@@ -1,6 +1,6 @@
 import Foundation
 import MercuryKit
-import MercuryVoiceEngine
+@testable import MercuryVoiceEngine
 import Testing
 
 /// The Voice tab's app-wide conversation (spec §1–§2): `AppModel` owns at
@@ -92,6 +92,7 @@ extension SharedMeterTests {
                 await launch.controller.teardown()
             }
             #expect(ConversationController.levelMeterOwner == nil)
+            #expect(!AudioCaptureService.shared.hasLevelHandler)
             harness.cleanup()
         }
 
@@ -121,6 +122,19 @@ extension SharedMeterTests {
                 $0.method == "session.close"
                     && $0.params["session_id"]?.stringValue == runtimeID
             }.count
+        }
+
+        private func projectRefreshes(_ server: HermesTestServer) -> Int {
+            server.rpcRequests.filter { $0.method == "projects.tree" }.count
+        }
+
+        /// `closeChat` refreshes the sidebar once the chat's teardown is done,
+        /// over the same socket: when that refresh reaches the server, any
+        /// `session.close` the teardown sent already has.
+        private func closeChatAndJoin(_ h: Harness, _ chat: ChatController) async {
+            let before = projectRefreshes(h.server)
+            h.model.closeChat(chat)
+            #expect(await eventually { projectRefreshes(h.server) > before })
         }
 
         // MARK: One conversation, app-wide
@@ -369,6 +383,31 @@ extension SharedMeterTests {
             await finish(h)
         }
 
+        /// A teardown already pending from `endVoice()` still closes its
+        /// session before a disconnect right behind it stops the socket.
+        @Test func disconnectStopsTheSocketAfterAPendingEndsClose() async throws {
+            let h = try await connected(ids: [0: "a"])
+            await h.model.startVoice(session("a"))
+            let connection = try #require(h.model.connection)
+            let launch = h.voices.launches[0]
+            let phaseAtClose = PhaseBox()
+            launch.service.onClose = { _ in phaseAtClose.set(await connection.phase) }
+
+            h.model.endVoice()
+            h.model.disconnect()
+            await h.model.pendingVoiceTeardown?.value
+
+            #expect(launch.service.closedIDs == ["rt-a"])
+            let atClose = try #require(phaseAtClose.value)
+            if case .stopped = atClose {
+                Issue.record("the socket stopped before the pending end's session.close")
+            }
+            if case .stopped = await connection.phase {} else {
+                Issue.record("the connection was not stopped")
+            }
+            await finish(h)
+        }
+
         /// R25 `disconnectingDuringAnInFlightLaunchLeavesNothingRunning`.
         @Test func disconnectingDuringAnInFlightLaunchLeavesNothingRunning() async throws {
             let open = CallGate()
@@ -433,14 +472,34 @@ extension SharedMeterTests {
             await finish(h)
         }
 
+        /// Two targets on one stored session (the title differs, so they are
+        /// distinct targets): the successor resumes the same runtime, so the
+        /// outgoing conversation must not close it out from under it.
+        @Test func switchingTargetsOnTheSameStoredSessionKeepsTheRuntime() async throws {
+            let h = try await connected(ids: [0: "a", 1: "a"])
+            let model = h.model
+
+            await model.startVoice(.session(storedID: "stored-a", title: nil, profile: nil))
+            let outgoing = h.voices.launches[0]
+            await model.startVoice(.session(storedID: "stored-a", title: "Foo", profile: nil))
+            await model.pendingVoiceTeardown?.value
+            let successor = h.voices.launches[1]
+
+            #expect(outgoing.service.closedIDs.isEmpty, "the outgoing launch closed the successor's runtime")
+            #expect(outgoing.service.sttLeaseCalls.contains { !$0.active })
+            #expect(model.voiceConversation?.controller === successor.controller)
+            #expect(successor.controller.runtimeID == "rt-a")
+            #expect(successor.service.closedIDs.isEmpty)
+            await finish(h)
+        }
+
         @Test func chatTeardownSkipsCloseWhenVoiceHoldsTheRuntime() async throws {
             let h = try await connected(ids: [0: "a"])
             await h.model.startVoice(session("a"))
             let chat = try await resumedChat(h.model, "stored-a")
             #expect(chat.runtimeID == "rt-a")
 
-            h.model.closeChat(chat)
-            try await Task.sleep(for: .milliseconds(500))
+            await closeChatAndJoin(h, chat)
             #expect(closes(h.server, "rt-a") == 0, "the chat closed voice's runtime")
 
             // Without voice holding it, the chat's close goes out as before.
@@ -459,13 +518,31 @@ extension SharedMeterTests {
             let launch = Task { await h.model.startVoice(session("a")) }
             await open.waitUntilEntered()
 
-            h.model.closeChat(chat)
-            try await Task.sleep(for: .milliseconds(500))
+            await closeChatAndJoin(h, chat)
             #expect(closes(h.server, "rt-a") == 0, "the chat closed the runtime voice is resuming")
 
             await open.release()
             await launch.value
             await finish(h)
+        }
+
+        /// The in-flight claim lasts only as long as the resume: one that
+        /// fails stops claiming the stored session.
+        @Test func aFailedResumeStopsClaimingTheStoredSession() async throws {
+            let service = ScriptedSessionService()
+            let gate = CallGate()
+            service.resumeGate = gate
+            service.enqueueResumeFailure(URLError(.notConnectedToInternet))
+            let controller = makeController(service: service)
+
+            let open = Task { try await controller.openSession(mode: .resume(storedID: "stored-a")) }
+            await gate.waitUntilEntered()
+            #expect(controller.sessionClaims == [.stored("stored-a")])
+
+            await gate.release()
+            await #expect(throws: (any Error).self) { try await open.value }
+            #expect(controller.sessionClaims.isEmpty)
+            await controller.teardown()
         }
 
         @Test func voiceSettlingARequestWithdrawsItFromChatsOnTheRuntime() async throws {
@@ -525,24 +602,40 @@ extension SharedMeterTests {
         /// `anotherFixtureCanOwnTheMeterWhenR25CleanupReturns`, through the
         /// host: a superseded controller's late teardown leaves the
         /// replacement's meter alone.
+        ///
+        /// As in R25, the assertions are on the capture service itself, not
+        /// on the ownership bookkeeping alone: an unconditional
+        /// `setLevelHandler(nil)` leaves `hasLevelHandler == false`.
         @Test func delayedCleanupCannotTakeTheLevelMeterFromTheReplacement() async throws {
             let h = try await connected(ids: [0: "a", 1: "b"])
             await h.model.startVoice(session("a"))
             let superseded = h.voices.launches[0].controller
             #expect(ConversationController.levelMeterOwner === superseded)
+            #expect(AudioCaptureService.shared.hasLevelHandler)
 
             await h.model.startVoice(session("b"))
             await h.model.pendingVoiceTeardown?.value
             let replacement = h.voices.launches[1].controller
             #expect(ConversationController.levelMeterOwner === replacement)
+            #expect(AudioCaptureService.shared.hasLevelHandler)
 
             await superseded.teardown()
             #expect(ConversationController.levelMeterOwner === replacement)
+            #expect(AudioCaptureService.shared.hasLevelHandler)
 
             h.model.endVoice()
             await h.model.pendingVoiceTeardown?.value
             #expect(ConversationController.levelMeterOwner == nil)
+            #expect(!AudioCaptureService.shared.hasLevelHandler)
             await finish(h)
         }
     }
+}
+
+/// The connection phase a scripted close saw, read from the test.
+private final class PhaseBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var phase: HermesConnection.Phase?
+    var value: HermesConnection.Phase? { lock.withLock { phase } }
+    func set(_ phase: HermesConnection.Phase) { lock.withLock { self.phase = phase } }
 }

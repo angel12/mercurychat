@@ -303,8 +303,12 @@ final class AppModel {
     /// `session.close` RPC, and a wedged gateway must not hold the caller.
     private func endVoice(refresh: Bool) {
         guard let outgoing = releaseVoice() else { return }
+        // Joining this task joins every earlier teardown too, so a
+        // disconnect chained after it stops the socket after all of them.
+        let prior = pendingVoiceTeardown
         pendingVoiceTeardown = Task {
             await outgoing.teardown()
+            await prior?.value
             if refresh { await refreshProjects() }
         }
     }
@@ -322,8 +326,16 @@ final class AppModel {
     /// Join Chat's multi-chat coordination (#112). Weak captures only: the
     /// controller is owned through `voiceConversation`.
     private func wireVoiceCoordination(_ controller: ConversationController) {
-        controller.isHeldElsewhere = { [weak self] claims in
+        controller.isHeldElsewhere = { [weak self, weak controller] claims in
             guard let self else { return false }
+            // A successor conversation counts too: switching between two
+            // targets on one stored session (a different title, say) hands
+            // the successor the same runtime this one would close.
+            if let current = self.voiceConversation?.controller, current !== controller,
+                !current.sessionClaims.isDisjoint(with: claims)
+            {
+                return true
+            }
             return self.openChats.contains { !$0.sessionClaims.isDisjoint(with: claims) }
         }
         controller.serverRequestSettled = { [weak self] requestID, runtimeID in
@@ -741,12 +753,15 @@ final class AppModel {
         updatePump = nil
         let connection = connection
         let voice = releaseVoice()
+        let priorTeardown = pendingVoiceTeardown
         self.connection = nil
-        if let voice {
-            // The voice teardown closes its session over the gateway, so it
+        if voice != nil || priorTeardown != nil {
+            // A voice teardown closes its session over the gateway, so every
+            // one — this one and any still pending from an end or a switch —
             // must finish before the connection stops (Voice's disconnect).
             pendingVoiceTeardown = Task {
-                await voice.teardown()
+                await voice?.teardown()
+                await priorTeardown?.value
                 await connection?.stop()
             }
         } else if let connection {

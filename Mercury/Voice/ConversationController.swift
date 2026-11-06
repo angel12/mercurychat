@@ -527,7 +527,13 @@ final class ConversationController {
                 cwd: cwd, profile: profile, title: title)
         case .resume(let storedID):
             requestedStoredID = storedID
-            handle = try await sessionService.resumeSession(storedID: storedID, profile: profile)
+            do {
+                handle = try await sessionService.resumeSession(storedID: storedID, profile: profile)
+            } catch {
+                // Nothing was opened: stop claiming the session.
+                requestedStoredID = nil
+                throw error
+            }
         }
         sessionBox.runtimeID = handle.runtimeID
         sessionBox.storedID = handle.storedID
