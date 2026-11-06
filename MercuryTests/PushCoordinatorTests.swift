@@ -246,7 +246,9 @@ struct PushCoordinatorTests {
     }
 
     @Test func operationsQueuedBeforeAResetWriteNoStatus() async throws {
-        let h = try await Self.harness(); defer { h.server.stop() }
+        // Not a timeout test: a long token wait so a slow runner can't time
+        // out before the delayed token lands (it did on macos-26 CI).
+        let h = try await Self.harness(tokenTimeout: .seconds(30)); defer { h.server.stop() }
         h.system.onRegister = { [weak coordinator = h.coordinator] in
             Task {
                 try? await Task.sleep(for: .milliseconds(300))
