@@ -27,6 +27,8 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Mercury Chat connects to Hermes Agent servers running on your local network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mercury Chat listens in the Voice tab so you can talk with your Hermes agent hands-free.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
