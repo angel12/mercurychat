@@ -436,9 +436,14 @@ extension SharedMeterTests {
             let h = try await connected(ids: [0: "a"])
             await h.model.startVoice(session("a"))
 
+            let navigation = WindowNavigation()
+            h.model.register(navigation)
+            navigation.route = .voice
+
             await h.model.handleUpdateForTesting(.phase(.unreachable(reason: "gone")))
 
             #expect(h.model.voiceConversation == nil)
+            #expect(navigation.route == nil, "window left on the Voice route")
             await h.model.pendingVoiceTeardown?.value
             #expect(h.voices.launches[0].service.closedIDs == ["rt-a"])
             await finish(h)
@@ -448,9 +453,14 @@ extension SharedMeterTests {
             let h = try await connected(ids: [0: "a"])
             await h.model.startVoice(session("a"))
 
+            let navigation = WindowNavigation()
+            h.model.register(navigation)
+            navigation.route = .voice
+
             await h.model.handleUpdateForTesting(.phase(.refused(reason: nil)))
 
             #expect(h.model.voiceConversation == nil)
+            #expect(navigation.route == nil, "window left on the Voice route")
             await finish(h)
         }
 

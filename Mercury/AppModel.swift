@@ -290,7 +290,7 @@ final class AppModel {
     func startVoice(_ target: VoiceConversationHost.Target) async {
         if let current = voiceConversation, current.target == target { return }
         guard let connection else { return }
-        endVoice(refresh: false)
+        endVoice(refresh: false, keepingVoiceRoutes: true)
         voiceGeneration += 1
         let generation = voiceGeneration
         let controller = makeVoiceController(connection, target.profile ?? selectedProfile)
@@ -321,13 +321,18 @@ final class AppModel {
     /// Windows showing the conversation fall back to the empty detail; a
     /// switch between targets (`startVoice`) keeps them on `.voice`.
     func endVoice() {
-        for window in liveWindows where window.route == .voice { window.route = nil }
-        endVoice(refresh: true)
+        endVoice(refresh: true, keepingVoiceRoutes: false)
     }
 
     /// The outgoing teardown runs in its own task: it ends with a
     /// `session.close` RPC, and a wedged gateway must not hold the caller.
-    private func endVoice(refresh: Bool) {
+    /// Every end path clears `.voice` routes (a window left on the route would
+    /// show "No voice conversation"); only `startVoice`'s target switch keeps
+    /// them, since the next conversation fills the same screen.
+    private func endVoice(refresh: Bool, keepingVoiceRoutes: Bool = false) {
+        if !keepingVoiceRoutes {
+            for window in liveWindows where window.route == .voice { window.route = nil }
+        }
         guard let outgoing = releaseVoice() else { return }
         // Joining this task joins every earlier teardown too, so a
         // disconnect chained after it stops the socket after all of them.

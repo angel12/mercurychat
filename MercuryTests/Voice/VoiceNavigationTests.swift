@@ -22,6 +22,8 @@ extension SharedMeterTests.VoiceHostTests {
             let model = AppModel(tokenStore: KeychainTokenStore(service: "com.mercury.tokens.tests"))
             model.sidebarTab = .bots
             #expect(model.resolvedSidebarTab == .sessions)
+            // The picker displays `resolvedSidebarTab`: it must be a segment on offer.
+            #expect(model.availableSidebarTabs.contains(model.resolvedSidebarTab))
             model.sidebarTab = .voice
             #expect(model.resolvedSidebarTab == .voice)
         }

@@ -121,7 +121,12 @@ struct SidebarView: View {
     private var tabSection: some View {
         @Bindable var model = model
         return Section {
-            Picker("Sidebar", selection: $model.sidebarTab) {
+            Picker(
+                "Sidebar",
+                selection: Binding(
+                    get: { model.resolvedSidebarTab },
+                    set: { model.sidebarTab = $0 })
+            ) {
                 ForEach(model.availableSidebarTabs, id: \.self) { tab in
                     Text(tab.title).tag(tab)
                 }
