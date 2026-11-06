@@ -45,6 +45,13 @@ public final class TranscriptStore {
     /// Session metadata from `session.info` / `session.title`.
     public private(set) var title: String?
     public private(set) var model: String?
+    /// The live session's provider, reasoning effort, YOLO switch and the
+    /// profile's approval mode (`session.info`). Nil until the agent reports
+    /// them: a lazy session carries none.
+    public private(set) var provider: String?
+    public private(set) var reasoningEffort: String?
+    public private(set) var yolo: Bool?
+    public private(set) var approvalMode: String?
     public private(set) var profileName: String?
     /// Durable id observed in `session.info.stored_session_id` (re-anchor).
     public private(set) var storedSessionID: String?
@@ -206,8 +213,9 @@ public final class TranscriptStore {
             switch state {
             // Settled: a persisted row is what these BECAME.
             case .sent, .queued: return 0
-            // In flight: the server may already have persisted it.
-            case .sending: return 1
+            // In flight: the server may already have persisted it. So may
+            // an unconfirmed forward, which the owner may have queued.
+            case .sending, .unconfirmed: return 1
             // Never reached the server, so it claims a row only if nothing
             // else can — and keeps its retry affordance when it doesn't.
             case .failed: return 2
@@ -673,6 +681,16 @@ public final class TranscriptStore {
         case GatewayEvent.Kind.sessionInfo:
             applySessionInfo(event.payload)
 
+        case GatewayEvent.Kind.btwComplete:
+            // A /btw answer: the running turn keeps going, so it lands as a
+            // note rather than an assistant bubble.
+            let answer = event.payload["text"]?.stringValue ?? ""
+            if let question = event.payload["question"]?.stringValue, !question.isEmpty {
+                appendNotice("/btw \(question)\n\n\(answer)")
+            } else {
+                appendNotice("/btw\n\n\(answer)")
+            }
+
         case GatewayEvent.Kind.sessionTitle:
             if let newTitle = event.payload["title"]?.stringValue, !newTitle.isEmpty {
                 title = newTitle
@@ -1036,6 +1054,12 @@ public final class TranscriptStore {
 
         if let newTitle = payload["title"]?.stringValue, !newTitle.isEmpty { title = newTitle }
         if let newModel = payload["model"]?.stringValue, !newModel.isEmpty { model = newModel }
+        if let value = payload["provider"]?.stringValue, !value.isEmpty { provider = value }
+        if let value = payload["reasoning_effort"]?.stringValue, !value.isEmpty {
+            reasoningEffort = value
+        }
+        if let value = payload["yolo"]?.boolValue { yolo = value }
+        if let value = payload["approval_mode"]?.stringValue, !value.isEmpty { approvalMode = value }
         if let profile = payload["profile_name"]?.stringValue, !profile.isEmpty {
             profileName = profile
         }

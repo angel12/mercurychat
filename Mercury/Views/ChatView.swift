@@ -100,12 +100,15 @@ struct ChatView: View {
 
 /// Rendered once the controller exists.
 private struct ChatContentView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(WindowNavigation.self) private var navigation
     @Bindable var controller: ChatController
     @Binding var activeSheet: ChatView.ChatSheet?
     /// Set for a canonical Bot Chat: captions the chat with the bot's name
     /// (desktop parity) and offers the Routines sheet from the toolbar.
     var botContext: ChatView.BotChatContext?
     @State private var routinesShown = false
+    @State private var settingsShown = false
 
     private var titleOverride: String? { botContext?.displayTitle }
     @State private var composerText = ""
@@ -133,6 +136,26 @@ private struct ChatContentView: View {
         .overlay { dropTarget }
         .onChange(of: composerText) { _, text in
             controller.hasUnsentDraft = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        // Slash commands that need the view: bare /model or /reasoning open
+        // the settings, /undo hands back a draft, /new opens a fresh chat.
+        .onChange(of: controller.settingsRequested) { _, requested in
+            guard requested else { return }
+            controller.settingsRequested = false
+            settingsShown = true
+        }
+        .onChange(of: controller.composerPrefill) { _, prefill in
+            guard let prefill else { return }
+            controller.composerPrefill = nil
+            composerText = prefill
+        }
+        .onAppear {
+            controller.onNewChatRequested = { [model, navigation] in
+                model.requestNewSession(in: navigation)
+            }
+        }
+        .sheet(isPresented: $settingsShown) {
+            SessionSettingsView(controller: controller)
         }
         .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
         // The drop destination sits on the WHOLE chat surface, not just the
@@ -543,11 +566,27 @@ private struct ChatContentView: View {
                     ProgressView().controlSize(.small)
                 }
                 if let model = controller.store.model {
-                    Text(model)
+                    Button {
+                        settingsShown = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(model)
+                            if let effort = controller.store.reasoningEffort {
+                                Text(effort).foregroundStyle(.secondary)
+                            }
+                            if controller.store.yolo == true {
+                                Image(systemName: "bolt.fill").foregroundStyle(.orange)
+                            }
+                        }
                         .font(.caption)
+                        .lineLimit(1)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(.quaternary, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Model, reasoning and approvals for this chat")
+                    .accessibilityLabel("Session settings, model \(model)")
                 }
                 if let usage = controller.store.sessionUsage, usage.totalTokens > 0 {
                     // The `session.usage` ticker refreshes this live during
@@ -572,6 +611,7 @@ private struct ChatContentView: View {
                             renameShown = true
                         }
                     }
+                    Button("Session Settings…") { settingsShown = true }
                     if botContext != nil {
                         Button("Routines…") { routinesShown = true }
                     }
@@ -609,6 +649,8 @@ private struct ComposerView: View {
     @Bindable var attachments: ComposerAttachments
     @FocusState private var focused: Bool
     @State private var showingFileImporter = false
+    /// `complete.slash` rows for the `/` token being typed.
+    @State private var slashCompletions: SlashCompletions?
     #if os(iOS) || os(visionOS)
         @State private var photoSelection: [PhotosPickerItem] = []
         @State private var showingPhotoPicker = false
@@ -633,6 +675,13 @@ private struct ComposerView: View {
             }
             if !attachments.items.isEmpty {
                 AttachmentTray(attachments: $attachments.items)
+            }
+            if let slashCompletions, !slashCompletions.items.isEmpty {
+                SlashSuggestions(completions: slashCompletions) { completion in
+                    text = slashCompletions.applying(completion, to: text)
+                    self.slashCompletions = nil
+                    focused = true
+                }
             }
             HStack(alignment: .bottom, spacing: 8) {
                 attachMenu
@@ -692,6 +741,20 @@ private struct ComposerView: View {
         }
         .padding(10)
         .background(.bar)
+        // Ask while a single-line `/` command is being typed; the task id
+        // restarts (and cancels) the lookup on every keystroke, and the
+        // short sleep debounces it.
+        .task(id: slashQuery) {
+            guard let query = slashQuery else {
+                slashCompletions = nil
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            let result = await controller.slashCompletions(for: query)
+            guard !Task.isCancelled else { return }
+            slashCompletions = result
+        }
         #if os(macOS)
             // Secondary path only: this fires for Edit ▸ Paste when focus is
             // NOT in the message field (e.g. on the send button). The common
@@ -824,7 +887,14 @@ private struct ComposerView: View {
         .help("Attach files")
     }
 
+    /// The composer text while it is a one-line slash command, else nil.
+    private var slashQuery: String? {
+        guard text.hasPrefix("/"), !text.contains("\n"), text.count <= 80 else { return nil }
+        return text
+    }
+
     private func send() {
+        slashCompletions = nil
         let message = text
         let outgoing = attachments.items
         // Same gate as `canSend` — ⌘⏎ and ⏎ reach `send()` directly.
@@ -953,6 +1023,44 @@ private struct ComposerView: View {
 #endif
 
 /// Horizontal strip of staged attachments with per-item remove.
+/// The completion list above the composer while a `/` command is typed.
+private struct SlashSuggestions: View {
+    let completions: SlashCompletions
+    let pick: (SlashCompletion) -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(completions.items.prefix(30)) { completion in
+                    Button {
+                        pick(completion)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(completion.display)
+                                .font(.callout.monospaced())
+                            if !completion.meta.isEmpty {
+                                Text(completion.meta)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                }
+            }
+        }
+        .frame(maxHeight: 220)
+        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+}
+
 private struct AttachmentTray: View {
     @Binding var attachments: [PendingAttachment]
 

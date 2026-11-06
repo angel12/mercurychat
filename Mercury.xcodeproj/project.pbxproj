@@ -21,8 +21,10 @@
 		1A9E4F4EF4638278B612882B /* AppModelOAuthFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */; };
 		21A656ABC237B3E540CC7FB3 /* HermesTestServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */; };
 		257EFBACB7807D64FF46BCA1 /* MarkdownBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E00A47B190797DCB7210F77 /* MarkdownBlocks.swift */; };
+		2C5B9FE15CEA65481D2DA972 /* SessionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80AEAC07FD3089D1CEF8B377 /* SessionSettingsView.swift */; };
 		2E07BC82FD414262CFCE88B3 /* AppModelAuthExpiredTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE84A4573D4C31E09178C736 /* AppModelAuthExpiredTests.swift */; };
 		356B7E4BCBE0D1CC7C5B0F6E /* AppModelTokenEndpointBindingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */; };
+		36CF6AA938B8CC7299F61A3E /* SlashCommandControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F42879978FB79190FBF9DFCE /* SlashCommandControllerTests.swift */; };
 		36EC6983D79D6DAC1F1CE947 /* HermesTestServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203F65924516F37DA6C2B1C2 /* HermesTestServerTests.swift */; };
 		373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10C155E77B1833A19AAA2F00 /* StatusViews.swift */; };
 		37A5E79B1C80835F1B78E3F1 /* PrivacyManifestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 191088CD8A5C97C17FC4C649 /* PrivacyManifestTests.swift */; };
@@ -127,6 +129,7 @@
 		7B9DD001247C04AD1EED0C86 /* MarkdownBlocksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlocksTests.swift; sourceTree = "<group>"; };
 		7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewBotTests.swift; sourceTree = "<group>"; };
 		7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesTestServer.swift; sourceTree = "<group>"; };
+		80AEAC07FD3089D1CEF8B377 /* SessionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSettingsView.swift; sourceTree = "<group>"; };
 		8398CDBDA28D2F1ACE4FE082 /* AppModelBrowseScopingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelBrowseScopingTests.swift; sourceTree = "<group>"; };
 		8DF179C9F278DF4C94236661 /* ConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectView.swift; sourceTree = "<group>"; };
 		90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotChatControllerTests.swift; sourceTree = "<group>"; };
@@ -162,6 +165,7 @@
 		E5F4A67BA4AAA2CDE152FD20 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplaySupersessionTests.swift; sourceTree = "<group>"; };
 		F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelOAuthFormTests.swift; sourceTree = "<group>"; };
+		F42879978FB79190FBF9DFCE /* SlashCommandControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandControllerTests.swift; sourceTree = "<group>"; };
 		FBDB93486105B7024469A675 /* AbandonedCreateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbandonedCreateTests.swift; sourceTree = "<group>"; };
 		FDB791832F7A5EDCF9BCA81C /* BotViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -238,6 +242,7 @@
 				70298A3FB29008EA90770D28 /* ServerRequestAdoptionTests.swift */,
 				2DD7E841EFF1CE6E70B38582 /* SessionActivityTests.swift */,
 				98AF4A66F4D858DC50F05CEA /* SessionEditTests.swift */,
+				F42879978FB79190FBF9DFCE /* SlashCommandControllerTests.swift */,
 				2D01072AAEDA445A543D4065 /* TranscriptScrollStateTests.swift */,
 			);
 			path = MercuryTests;
@@ -276,6 +281,7 @@
 				E5F4A67BA4AAA2CDE152FD20 /* MarkdownText.swift */,
 				7A3E9A556ED764A655CD5EA9 /* NotificationSettingsView.swift */,
 				C5AB9D4B96A47F2A0E24656A /* RootView.swift */,
+				80AEAC07FD3089D1CEF8B377 /* SessionSettingsView.swift */,
 				CD7A5E0A36F16FD09E767AE6 /* SidebarView.swift */,
 				10C155E77B1833A19AAA2F00 /* StatusViews.swift */,
 				261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */,
@@ -438,6 +444,7 @@
 				4985C29D68FE36BE25F82A0F /* PushSystem.swift in Sources */,
 				56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */,
 				88077A1B0EB07C92F63C8541 /* SessionActivityTracker.swift in Sources */,
+				2C5B9FE15CEA65481D2DA972 /* SessionSettingsView.swift in Sources */,
 				0031121B30D2FAE2CA4A217C /* SidebarView.swift in Sources */,
 				373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */,
 				DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */,
@@ -498,6 +505,7 @@
 				067880B85CADE97CB73B8612 /* SessionActivityTests.swift in Sources */,
 				A03A96E645005E57AA128D46 /* SessionActivityTracker.swift in Sources */,
 				8ED0297795230890F3E9979D /* SessionEditTests.swift in Sources */,
+				36CF6AA938B8CC7299F61A3E /* SlashCommandControllerTests.swift in Sources */,
 				8E8E6C1FBE5F7502DB582C2B /* TranscriptScrollState.swift in Sources */,
 				9E567F18B5A5C8B7417B5E93 /* TranscriptScrollStateTests.swift in Sources */,
 			);
@@ -776,7 +784,7 @@
 			repositoryURL = "https://github.com/angel12/mercurykit";
 			requirement = {
 				kind = exactVersion;
-				version = 0.6.1;
+				version = 0.7.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

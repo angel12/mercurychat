@@ -93,6 +93,12 @@ private struct UserBubble: View {
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.red)
+                case .unconfirmed:
+                    // No retry: the chat's gateway may already have queued it.
+                    Label("Maybe queued — check the chat before sending again",
+                          systemImage: "questionmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 case .sending, .sent:
                     EmptyView()
                 }
@@ -293,11 +299,26 @@ private struct NoticeRow: View {
     let notice: SystemNotice
 
     var body: some View {
-        Label(notice.text, systemImage: notice.level == .error
-            ? "exclamationmark.triangle" : "info.circle")
-            .font(.callout)
-            .foregroundStyle(notice.level == .error ? .red : .secondary)
+        if notice.level == .output {
+            // Slash command output is drawn for a terminal (boxes, aligned
+            // columns): keep it monospaced and let wide lines scroll.
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(notice.text)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(10)
+            }
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal)
+        } else {
+            Label(notice.text, systemImage: notice.level == .error
+                ? "exclamationmark.triangle" : "info.circle")
+                .font(.callout)
+                .foregroundStyle(notice.level == .error ? .red : .secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+        }
     }
 }

@@ -31,6 +31,10 @@ public struct UserMessage: Sendable, Equatable, Identifiable {
         case queued
         /// The submit RPC failed; the message never reached the server.
         case failed
+        /// The gateway that owns this chat didn't confirm the prompt in time
+        /// (`SESSION_OWNER_UNCONFIRMED`). It may already be queued there, so
+        /// it offers no retry: a second copy would run.
+        case unconfirmed
     }
 
     public var id: String
@@ -157,6 +161,8 @@ public struct SystemNotice: Sendable, Equatable, Identifiable {
     public enum Level: Sendable, Equatable {
         case info
         case error
+        /// A slash command's output: terminal-formatted, shown monospaced.
+        case output
     }
 
     public var id: String
