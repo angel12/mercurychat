@@ -289,12 +289,12 @@ struct TurnAttribution {
             if event.type == GatewayEvent.Kind.messageComplete, ownAdmissionID != nil {
                 // The turn our admission ran in ended: later claims are not ours.
                 phase = .finished
-            } else if onAuthority,
-                event.type == GatewayEvent.Kind.messageComplete
-                    || event.type == GatewayEvent.Kind.error
-            {
+            } else if onAuthority, event.type == GatewayEvent.Kind.messageComplete {
                 // Our turn (a steer's joined turn, say) ended: on an
                 // authority the next turn is another app's until we submit.
+                // Only `message.complete` ends a turn: hermes raises `error`
+                // mid-turn (a model switch needing confirmation, a failed
+                // compression) and the turn carries on.
                 phase = .finished
             }
             return .feed

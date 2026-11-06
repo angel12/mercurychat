@@ -833,6 +833,35 @@ struct AuthorityWireVoiceTests {
         controller.handle(event: complete("theirs"))
     }
 
+    /// hermes v0.23 raises non-terminal `error` events inside a running turn
+    /// (a model switch needing confirmation, a failed compression) and the
+    /// turn carries on; only `message.complete` ends it. An error must not
+    /// close our turn on an authority.
+    @Test func anErrorInsideOurTurnDoesNotEndIt() async throws {
+        let service = ScriptedSessionService()
+        service.setAuthority(true)
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        let fed = FedEvents()
+        let controller = makeWireController(service, fed: fed) { _, _, _, _ in
+            PromptSubmission(status: "streaming")
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+
+        controller.submitTextPrompt("mine")
+        await controller.textSubmissionTask?.value
+        controller.handle(event: start())
+        controller.handle(event: turnEvent(GatewayEvent.Kind.error, ["message": .string("confirm model")]))
+        controller.handle(event: delta("ours"))
+        controller.handle(event: complete("ours"))
+        await controller.diagnosticFinishTrackerEvents()
+
+        #expect(await fed.types == [
+            GatewayEvent.Kind.messageStart, GatewayEvent.Kind.error,
+            GatewayEvent.Kind.messageDelta, GatewayEvent.Kind.messageComplete,
+        ])
+        await controller.teardown()
+    }
+
     @Test func idleVoiceOnAnAuthorityDoesNotHearAnotherAppsTurn() async throws {
         let service = ScriptedSessionService()
         service.setAuthority(true)
