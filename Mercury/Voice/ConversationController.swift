@@ -228,9 +228,7 @@ final class ConversationController {
         private var _runtimeID: String?
         private var _storedID: String?
         private var _recover: (@Sendable (_ reResume: Bool) async -> Bool)?
-        private var _receipt:
-            (@Sendable (_ receipt: PromptSubmission?, _ turnWasRunning: Bool) async -> Void)?
-        private var _turnInProgress = false
+        private var _receipt: (@Sendable (_ receipt: PromptSubmission?) async -> Void)?
         private var _offeredSubmission: (text: String, id: String)?
         private var _submitsInFlight = 0
 
@@ -268,20 +266,10 @@ final class ConversationController {
         }
 
         /// Hands each submit's outcome back to the controller: the receipt,
-        /// or nil when the submit threw, and whether a turn was running as
-        /// it went out. Set once in init, like `recover`.
-        var receipt:
-            (@Sendable (_ receipt: PromptSubmission?, _ turnWasRunning: Bool) async -> Void)?
-        {
+        /// or nil when the submit threw. Set once in init, like `recover`.
+        var receipt: (@Sendable (_ receipt: PromptSubmission?) async -> Void)? {
             get { lock.withLock { _receipt } }
             set { lock.withLock { _receipt = newValue } }
-        }
-
-        /// `TurnAttribution.turnInProgress`, mirrored by the controller so the
-        /// submit closure can read it as the prompt goes out.
-        var turnInProgress: Bool {
-            get { lock.withLock { _turnInProgress } }
-            set { lock.withLock { _turnInProgress = newValue } }
         }
 
         /// The submission id an explicit retry of `text` must reuse; taken
@@ -405,9 +393,6 @@ final class ConversationController {
                 // authority admits a submission id once.
                 let submissionID =
                     box.takeSubmissionID(for: text) ?? UUID().uuidString.lowercased()
-                // A barge-in interrupts our own turn; otherwise a running turn
-                // is the one a forwarded prompt waits behind.
-                let turnWasRunning = !interrupted && box.turnInProgress
                 @Sendable func send() async throws -> PromptSubmission {
                     guard let sid = box.runtimeID else { throw HermesError.notConnected }
                     if let submitPrompt {
@@ -433,10 +418,10 @@ final class ConversationController {
                         receipt = try await send()
                     }
                 } catch {
-                    await box.receipt?(nil, turnWasRunning)
+                    await box.receipt?(nil)
                     throw error
                 }
-                await box.receipt?(receipt, turnWasRunning)
+                await box.receipt?(receipt)
             },
             interrupt: {
                 guard let sid = box.runtimeID else { return }
@@ -446,8 +431,8 @@ final class ConversationController {
         box.recover = { [weak self] reResume in
             await self?.recoverRefusedSubmit(reResume: reResume) ?? false
         }
-        box.receipt = { [weak self] receipt, turnWasRunning in
-            await self?.noteSubmitReceipt(receipt, turnWasRunning: turnWasRunning)
+        box.receipt = { [weak self] receipt in
+            await self?.noteSubmitReceipt(receipt)
         }
 
         let (stream, continuation) = AsyncStream.makeStream(of: TrackerInput.self)
@@ -563,7 +548,6 @@ final class ConversationController {
     func supersede() {
         isTornDown = true
         turnAttribution = TurnAttribution()
-        sessionBox.turnInProgress = false
         trackerResets.retire()
         trackerEventContinuation?.finish()
         trackerEventPump?.cancel()
@@ -629,7 +613,6 @@ final class ConversationController {
             )
         }
         let running = handle.raw["running"]?.truthy ?? false
-        noteTurnTrackerReset(running: running)
         usage = nil  // new session identity; the first turn re-reports
         lastSeenSeq = nil
         replayEpoch = await sessionService.replayEpoch
@@ -1114,15 +1097,15 @@ final class ConversationController {
             GatewayEvent.Kind.error:
             // Only this conversation's own turn reaches the tracker: the turn
             // a queued prompt waits behind belongs to another app.
-            let verdict = turnAttribution.classify(event)
-            sessionBox.turnInProgress = turnAttribution.turnInProgress
-            switch verdict {
+            switch turnAttribution.classify(event) {
             case .feed:
                 trackerEventContinuation?.yield(.event(event))
-            case .drop:
+            case .hold:
+                // Someone else's turn, or our claim awaiting the `pending`
+                // list that releases it (flushed from `sessionInfo`).
                 break
-            case .dropCancelledRow:
-                // A queued row that never ran: no turn ended.
+            case .retiredRow:
+                // A queued row's cancel/steer settle: no turn ended.
                 return
             case .ownQueuedPromptCancelled:
                 // Our prompt will never run. Same FIFO enqueue as
@@ -1271,7 +1254,11 @@ final class ConversationController {
                 // Session authority: the shared queue, which says when our
                 // queued prompt starts.
                 if let rows = QueuedPrompt.list(from: event.payload) {
-                    turnAttribution.noteQueue(rows)
+                    // A claim's start precedes the list that releases our
+                    // row: the turn buffered since that start is ours.
+                    for buffered in turnAttribution.noteQueue(rows) {
+                        trackerEventContinuation?.yield(.event(buffered))
+                    }
                 }
             }
 
@@ -1903,7 +1890,7 @@ final class ConversationController {
                 let resetApplied = await resetTracker(
                     busy: running || sessionBox.submitsInFlight > 0
                         || turnAttribution.holdsQueuedPrompt)
-                noteTurnTrackerReset(running: running)
+                turnAttribution.noteTrackerReset()
                 guard !isTornDown else {
                     await closeSessionIfOpen()
                     return false
@@ -2002,21 +1989,18 @@ final class ConversationController {
         return snapshot
     }
 
-    /// Keeps the turn attribution: the reconnect resume re-derives it.
+    /// Keeps the wait: the reconnect resume re-derives it. A half-seen
+    /// claim can't be decided any more, so its buffer goes.
     func connectionLost() {
         connectionHealthy = false
+        turnAttribution.noteConnectionLost()
     }
 
     /// A submit's outcome (nil: it threw). Queued behind another turn is a
     /// wait, not a failure (spec "Revision: authority wire").
-    private func noteSubmitReceipt(_ receipt: PromptSubmission?, turnWasRunning: Bool) {
+    private func noteSubmitReceipt(_ receipt: PromptSubmission?) {
         guard !isTornDown else { return }
-        turnAttribution.noteReceipt(receipt, turnWasRunning: turnWasRunning)
-    }
-
-    private func noteTurnTrackerReset(running: Bool) {
-        turnAttribution.noteTrackerReset(running: running)
-        sessionBox.turnInProgress = turnAttribution.turnInProgress
+        turnAttribution.noteReceipt(receipt)
     }
 
     // MARK: User controls

@@ -75,10 +75,11 @@ struct AuthorityWireVoiceTests {
         return turnEvent(GatewayEvent.Kind.messageComplete, payload)
     }
 
-    private func cancelledComplete(_ admission: String) -> GatewayEvent {
+    /// A queued row's settling complete (`cancelled` or `steered`).
+    private func settled(_ admission: String, _ outcome: String) -> GatewayEvent {
         turnEvent(
             GatewayEvent.Kind.messageComplete,
-            ["admission_id": .string(admission), "outcome": .string("cancelled")])
+            ["admission_id": .string(admission), "outcome": .string(outcome)])
     }
 
     private static func row(_ admission: String, _ sequence: Int, _ status: String) -> JSONValue {
@@ -141,8 +142,15 @@ struct AuthorityWireVoiceTests {
     }
 
     // MARK: Turn attribution
+    //
+    // Fixtures follow the authority's real order (hermes v0.23): a claim
+    // publishes the turn's `message.start` FIRST and then the `pending` list
+    // showing the claimed row started or gone; a cancel/steer publishes the
+    // `pending` list FIRST and then the row's settling `message.complete`.
 
-    @Test func aQueuedPromptDoesNotSpeakTheTurnAheadOfIt() async throws {
+    /// The brief's real-order case: our own start precedes the list that
+    /// releases our row.
+    @Test func ourTurnInRealWireOrderIsSpoken() async throws {
         let fed = FedEvents()
         let controller = try await openedController(
             receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
@@ -154,9 +162,9 @@ struct AuthorityWireVoiceTests {
         controller.handle(event: complete("theirs"))
         #expect(controller.isWaitingForTurn, "the turn ahead ended our wait")
 
-        controller.handle(event: queue())
-        #expect(controller.isWaitingForTurn, "the wait ends at our start, not the queue")
-        controller.handle(event: start())
+        controller.handle(event: start())  // our claim…
+        #expect(controller.isWaitingForTurn, "nothing says this start is ours yet")
+        controller.handle(event: queue(Self.row("a1", 1, "started")))  // …then its list
         #expect(!controller.isWaitingForTurn)
         controller.handle(event: delta("ours"))
         controller.handle(event: complete("ours"))
@@ -173,6 +181,57 @@ struct AuthorityWireVoiceTests {
         await controller.teardown()
     }
 
+    /// Each claim ahead of ours is a start followed by a list that still
+    /// queues our row: those buffers are discarded; ours is flushed.
+    @Test func aQueuedPromptDoesNotSpeakTheTurnAheadOfIt() async throws {
+        let fed = FedEvents()
+        let controller = try await openedController(
+            receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
+        await submitQueued(controller)
+        controller.handle(event: queue(Self.row("b1", 1, "queued"), Self.row("a1", 2, "queued")))
+
+        controller.handle(event: start())
+        controller.handle(event: queue(Self.row("b1", 1, "started"), Self.row("a1", 2, "queued")))
+        controller.handle(event: delta("theirs"))
+        controller.handle(event: complete("theirs"))
+        #expect(controller.isWaitingForTurn)
+
+        controller.handle(event: start())
+        controller.handle(event: delta("ours"))  // may land before the list
+        controller.handle(event: queue())
+        #expect(!controller.isWaitingForTurn)
+        controller.handle(event: complete("ours"))
+
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.texts.allSatisfy { !$0.contains("theirs") })
+        #expect(await fed.types == [
+            GatewayEvent.Kind.messageStart, GatewayEvent.Kind.messageDelta,
+            GatewayEvent.Kind.messageComplete,
+        ])
+        let state = await controller.diagnosticTrackerState()
+        #expect(state.pendingText == "ours")
+        #expect(!state.busy)
+        await controller.teardown()
+    }
+
+    @Test func aForeignStartFollowedByAListStillQueuingUsIsDiscarded() async throws {
+        let fed = FedEvents()
+        let controller = try await openedController(
+            receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
+        await submitQueued(controller)
+        controller.handle(event: queue(Self.row("a1", 1, "queued")))
+        controller.handle(event: start())
+        controller.handle(event: delta("theirs"))
+        controller.handle(event: queue(Self.row("a1", 1, "queued")))
+        controller.handle(event: delta(" more"))
+        controller.handle(event: complete("theirs more"))
+        #expect(controller.isWaitingForTurn)
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types.isEmpty)
+        #expect(await controller.diagnosticTrackerState().busy)
+        await controller.teardown()
+    }
+
     /// The receipt can land after the `pending` list that already shows the
     /// row; the list is kept for it.
     @Test func aQueueListBeforeTheReceiptStillCounts() async throws {
@@ -181,8 +240,9 @@ struct AuthorityWireVoiceTests {
             receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
         controller.handle(event: queue(Self.row("a1", 1, "queued")))
         await submitQueued(controller)
-        controller.handle(event: queue())
+        #expect(controller.isWaitingForTurn)
         controller.handle(event: start())
+        controller.handle(event: queue())
         #expect(!controller.isWaitingForTurn)
         controller.handle(event: delta("ours"))
         await controller.diagnosticFinishTrackerEvents()
@@ -190,14 +250,41 @@ struct AuthorityWireVoiceTests {
         await controller.teardown()
     }
 
+    /// `unknown` (the owner restarted mid-turn) keeps the wait.
+    @Test func anUnknownRowKeepsWaiting() async throws {
+        let fed = FedEvents()
+        let controller = try await openedController(
+            receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
+        await submitQueued(controller)
+        controller.handle(event: queue(Self.row("a1", 1, "queued")))
+        controller.handle(event: queue(Self.row("a1", 1, "unknown")))
+        #expect(controller.isWaitingForTurn)
+        controller.handle(event: start())
+        controller.handle(event: queue(Self.row("a1", 1, "unknown")))
+        controller.handle(event: delta("theirs"))
+        #expect(controller.isWaitingForTurn)
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types.isEmpty)
+        await controller.teardown()
+    }
+
     @Test func aForeignCancelledCompleteDoesNotEndOurTurn() async throws {
+        try await foreignSettleDoesNotEndOurTurn(outcome: "cancelled")
+    }
+
+    @Test func aForeignSteeredCompleteDoesNotEndOurTurn() async throws {
+        try await foreignSettleDoesNotEndOurTurn(outcome: "steered")
+    }
+
+    private func foreignSettleDoesNotEndOurTurn(outcome: String) async throws {
         let fed = FedEvents()
         let controller = try await openedController(
             receipt: PromptSubmission(status: "streaming", admissionID: "a1"), fed: fed)
         await submitQueued(controller)
         controller.handle(event: start())
         controller.handle(event: delta("ours"))
-        controller.handle(event: cancelledComplete("b9"))
+        controller.handle(event: queue())
+        controller.handle(event: settled("b9", outcome))
         controller.handle(event: delta(" still"))
         controller.handle(event: complete("ours still"))
 
@@ -207,7 +294,32 @@ struct AuthorityWireVoiceTests {
             GatewayEvent.Kind.messageDelta, GatewayEvent.Kind.messageComplete,
         ])
         let state = await controller.diagnosticTrackerState()
-        #expect(state.pendingText == "ours still", "the cancelled row sealed our bubble")
+        #expect(state.pendingText == "ours still", "the \(outcome) row sealed our bubble")
+        #expect(!state.busy)
+        await controller.teardown()
+    }
+
+    /// Our queued row was steered into the running turn: that turn's
+    /// remaining output and its real complete are ours.
+    @Test func aSteeredQueuedRowJoinsTheRunningTurn() async throws {
+        let fed = FedEvents()
+        let controller = try await openedController(
+            receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
+        await submitQueued(controller)
+        controller.handle(event: queue(Self.row("a1", 1, "queued")))
+        controller.handle(event: delta("before the steer"))
+        controller.handle(event: queue())
+        controller.handle(event: settled("a1", "steered"))
+        #expect(!controller.isWaitingForTurn)
+        controller.handle(event: delta("after"))
+        controller.handle(event: complete("after"))
+
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types == [
+            GatewayEvent.Kind.messageDelta, GatewayEvent.Kind.messageComplete,
+        ])
+        let state = await controller.diagnosticTrackerState()
+        #expect(state.pendingText == "after")
         #expect(!state.busy)
         await controller.teardown()
     }
@@ -218,7 +330,8 @@ struct AuthorityWireVoiceTests {
             receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
         await submitQueued(controller)
         controller.handle(event: queue(Self.row("a1", 1, "queued")))
-        controller.handle(event: cancelledComplete("a1"))
+        controller.handle(event: queue())
+        controller.handle(event: settled("a1", "cancelled"))
 
         #expect(!controller.isWaitingForTurn)
         #expect(controller.notice == "Your message was removed from the queue.")
@@ -236,12 +349,12 @@ struct AuthorityWireVoiceTests {
             receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
         await submitQueued(controller)
         controller.handle(event: queue(Self.row("b1", 1, "queued"), Self.row("a1", 2, "queued")))
-        controller.handle(event: queue(Self.row("b1", 1, "started"), Self.row("a1", 2, "queued")))
         controller.handle(event: start())
+        controller.handle(event: queue(Self.row("b1", 1, "started"), Self.row("a1", 2, "queued")))
         controller.handle(event: delta("b1's reply"))
         #expect(controller.isWaitingForTurn)
-        controller.handle(event: queue(Self.row("a1", 2, "queued")))
         controller.handle(event: complete("b1's reply"))
+        controller.handle(event: queue(Self.row("a1", 2, "queued")))
         #expect(controller.isWaitingForTurn)
         await controller.diagnosticFinishTrackerEvents()
         #expect(await fed.types.isEmpty)
@@ -278,8 +391,8 @@ struct AuthorityWireVoiceTests {
         // The turn ahead still finishes without reaching the tracker.
         controller.handle(event: delta("theirs"))
         controller.handle(event: complete("theirs"))
-        controller.handle(event: queue())
         controller.handle(event: start())
+        controller.handle(event: queue())
         #expect(!controller.isWaitingForTurn)
         controller.handle(event: delta("ours"))
         await controller.diagnosticFinishTrackerEvents()
@@ -312,8 +425,8 @@ struct AuthorityWireVoiceTests {
         await controller.teardown()
     }
 
-    /// Legacy wire: no admission ids. The turn running when we submitted is
-    /// foreign until its complete; the next start is ours.
+    /// Legacy wire: no admission ids. Everything before the next start
+    /// belongs to the turn ahead; that start is ours.
     @Test func forwardedReceiptSkipsTheRunningTurn() async throws {
         let fed = FedEvents()
         let controller = try await openedController(
