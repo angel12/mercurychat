@@ -54,6 +54,7 @@
 		56DEB0E5454D3BB45F87A835 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5AB9D4B96A47F2A0E24656A /* RootView.swift */; };
 		584BF8743978889C3AD32FC5 /* ImageAttachmentPreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2385853D812F0AEB3C05FE /* ImageAttachmentPreparer.swift */; };
 		58BD3CFACCFE2DCE7971B59F /* PushRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1C5BE77A81AB99F57C9CE6 /* PushRoutingTests.swift */; };
+		5ABD6AB475A470CFD79CA385 /* VoiceCallHooksTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F335C603BD8B003FAFE3FE26 /* VoiceCallHooksTests.swift */; };
 		5B65C1530850A83B3FDF13D6 /* OlderPageGenerationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF196FBEA9ECF7A9ECFDD2C6 /* OlderPageGenerationTests.swift */; };
 		5DE804BE1E680AEE1A28F301 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 100C35A23B0A18D00444F5E1 /* ChatCore */; };
 		5E3BC16D2DE54FF712742E04 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 39C57500F981C503D4C31DD8 /* ChatCore */; };
@@ -253,6 +254,7 @@
 		E7B5FE90CA2DC47F81B0751A /* R34SubmitRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R34SubmitRecoveryTests.swift; sourceTree = "<group>"; };
 		ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplaySupersessionTests.swift; sourceTree = "<group>"; };
 		F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelOAuthFormTests.swift; sourceTree = "<group>"; };
+		F335C603BD8B003FAFE3FE26 /* VoiceCallHooksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallHooksTests.swift; sourceTree = "<group>"; };
 		F42879978FB79190FBF9DFCE /* SlashCommandControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandControllerTests.swift; sourceTree = "<group>"; };
 		FBDB93486105B7024469A675 /* AbandonedCreateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbandonedCreateTests.swift; sourceTree = "<group>"; };
 		FDB791832F7A5EDCF9BCA81C /* BotViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotViews.swift; sourceTree = "<group>"; };
@@ -452,6 +454,7 @@
 				DDE916C48DBE988AF96DB1A1 /* TestSignals.swift */,
 				1015EE2BE11FD55EBBE24D6A /* TTSLeaseControllerTests.swift */,
 				BA164D294547912511700A73 /* VoiceBargeGateTests.swift */,
+				F335C603BD8B003FAFE3FE26 /* VoiceCallHooksTests.swift */,
 				9C7C415AB587F37CED6EFC6E /* VoiceHostTests.swift */,
 				34BFD9952AD539145128A23E /* VoiceNavigationTests.swift */,
 			);
@@ -701,6 +704,7 @@
 				9E567F18B5A5C8B7417B5E93 /* TranscriptScrollStateTests.swift in Sources */,
 				656011C8FDF505347DB6E9FD /* TurnAttribution.swift in Sources */,
 				1B06232F34E46CC916052F79 /* VoiceBargeGateTests.swift in Sources */,
+				5ABD6AB475A470CFD79CA385 /* VoiceCallHooksTests.swift in Sources */,
 				B4D02D33B0F6458B3A5F960C /* VoiceConversationHost.swift in Sources */,
 				FED9E99A76F0D10EAE933B23 /* VoiceHostTests.swift in Sources */,
 				36A204D164E10AEB49A61379 /* VoiceNavigationTests.swift in Sources */,

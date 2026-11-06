@@ -43,7 +43,11 @@ final class ConversationController {
     private(set) var assistantCaption: String = ""
     private(set) var toolTicker: String?
     private(set) var micLevel: Double = 0
-    private(set) var setupError: String?
+    private(set) var setupError: String? {
+        didSet {
+            if let setupError, setupError != oldValue { onSetupError?(setupError) }
+        }
+    }
     private(set) var notice: String?
     private(set) var connectionHealthy = true
     /// Latest usage snapshot: live `session.usage` ticks mid-turn, settled by
@@ -817,18 +821,23 @@ final class ConversationController {
         stateTask = Task { [weak self] in
             for await state in await engine.uiStates() {
                 guard let self else { return }
-                #if os(iOS) || os(visionOS)
-                    let wasMuted = self.voiceState.muted
-                #endif
+                let wasMuted = self.voiceState.muted
                 self.voiceState = state
-                #if os(iOS) || os(visionOS)
-                    if state.muted != wasMuted {
+                if state.muted != wasMuted {
+                    #if os(iOS) || os(visionOS)
                         self.applyMuteToCapture(muted: state.muted)
-                    }
-                #endif
+                    #endif
+                    self.onMuteChanged?(state.muted)
+                }
             }
         }
         takeLevelMeter()
+        // A CallKit call's audio session must be active before the mic arms
+        // (sub-project 3); the host's hook returns at once without a call.
+        if let audioReady {
+            await audioReady()
+            guard !isTornDown else { return }
+        }
         #if os(iOS) || os(visionOS)
             startAudioKeepalive()
             observeAudioInterruptions()
@@ -2080,6 +2089,45 @@ final class ConversationController {
 
     func toggleMute() {
         Task { await engine?.toggleMute() }
+    }
+
+    // MARK: System call (sub-project 3)
+
+    static let callUnavailableNotice = "Couldn't start as a call, so voice stops if you leave the app."
+
+    /// Set by the host before `begin`: awaited after the engine is built
+    /// and before the mic arms.
+    @ObservationIgnored var audioReady: (@MainActor () async -> Void)?
+    /// Set by the host: the conversation's mute changed (any source).
+    @ObservationIgnored var onMuteChanged: ((Bool) -> Void)?
+    /// Set by the host: a new setup error appeared.
+    @ObservationIgnored var onSetupError: ((String) -> Void)?
+
+    /// Idempotent mute for the system call UI; `toggleMute` stays for buttons.
+    func setMuted(_ muted: Bool) {
+        Task {
+            guard let engine, voiceState.muted != muted else { return }
+            await engine.toggleMute()
+        }
+    }
+
+    /// The call's audio session was taken (another call, hold): pause like
+    /// an interruption.
+    func audioSuspended() {
+        #if os(iOS) || os(visionOS)
+            audioInterruption(began: true)
+        #endif
+    }
+
+    /// The call's audio session is back: same recovery as a system call ending.
+    func audioResumed() {
+        #if os(iOS) || os(visionOS)
+            systemCallsEnded()
+        #endif
+    }
+
+    func noteCallUnavailable() {
+        setNotice(Self.callUnavailableNotice)
     }
 
     func endTurnNow() {
