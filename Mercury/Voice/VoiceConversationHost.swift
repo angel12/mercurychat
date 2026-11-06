@@ -1,5 +1,6 @@
 import Foundation
 import MercuryKit
+import MercuryVoiceEngine
 import Observation
 
 /// The app's single voice conversation (Voice tab). Owned by `AppModel`;
@@ -35,6 +36,31 @@ final class VoiceConversationHost {
         self.target = target
         self.controller = controller
         self.profile = profile
+    }
+
+    static let needsInputStatus = "Needs your input"
+
+    /// The background bar's status line.
+    var barStatus: String {
+        Self.barStatus(
+            needsInput: controller.needsInput, waiting: controller.isWaitingForTurn,
+            state: controller.voiceState)
+    }
+
+    /// A prompt waiting on the user outranks everything: from another
+    /// screen it is the only sign the conversation is blocked on them.
+    static func barStatus(needsInput: Bool, waiting: Bool, state: ConversationUIState) -> String {
+        if needsInput { return needsInputStatus }
+        if waiting { return "Waiting" }
+        if state.paused { return "Paused" }
+        if state.muted { return "Muted" }
+        switch state.status {
+        case .idle: return "Paused"
+        case .listening: return "Listening"
+        case .transcribing: return "Transcribing"
+        case .thinking: return "Thinking"
+        case .speaking: return "Speaking"
+        }
     }
 
     /// Whether `target` is this conversation: the same target, or the row

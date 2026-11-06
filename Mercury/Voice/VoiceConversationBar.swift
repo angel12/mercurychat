@@ -16,7 +16,7 @@ struct VoiceConversationBar: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 0) {
                 Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
-                Text(statusWord).font(.caption).foregroundStyle(.secondary)
+                Text(host.barStatus).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             Button {
@@ -50,18 +50,5 @@ struct VoiceConversationBar: View {
         if let title = controller.sessionTitle, !title.isEmpty { return title }
         if case .session(_, let title?, _) = host.target, !title.isEmpty { return title }
         return "Voice conversation"
-    }
-
-    private var statusWord: String {
-        if controller.isWaitingForTurn { return "Waiting" }
-        if controller.voiceState.paused { return "Paused" }
-        if controller.voiceState.muted { return "Muted" }
-        switch controller.voiceState.status {
-        case .idle: return "Paused"
-        case .listening: return "Listening"
-        case .transcribing: return "Transcribing"
-        case .thinking: return "Thinking"
-        case .speaking: return "Speaking"
-        }
     }
 }

@@ -90,6 +90,9 @@ final class ConversationController {
     var currentCredentialPrompt: CredentialPrompt? { credentialPrompts.first }
     /// True while any prompt sheet holds the voice loop paused.
     private var hasPrompt: Bool { approval != nil || clarify != nil || !credentialPrompts.isEmpty }
+    /// An approval, clarify or credential prompt is waiting on the user:
+    /// what the background bar shows instead of its usual status.
+    var needsInput: Bool { hasPrompt }
     /// Ends the conversation view when the user speaks a stop word.
     var didEndByStopWord = false
     /// Set by the host (`AppModel`): the user spoke a stop word. The
@@ -2122,11 +2125,11 @@ final class ConversationController {
             // resolved by `request.answer`. `.expired` counts as confirmed:
             // the backend has already moved on, so the sheet closes.
             if let serverRequestID = request.serverRequestID {
-                _ = try await $0.answerServerRequest(
+                return try await $0.answerServerRequest(
                     id: serverRequestID, result: .object(["choice": .string(choice)]))
-            } else {
-                try await $0.respondApproval(request, choice: choice)
             }
+            try await $0.respondApproval(request, choice: choice)
+            return nil
         } onConfirmed: { [weak self] in
             guard let self, self.approvalEpoch == epoch else { return }
             self.approval = nil
@@ -2143,11 +2146,11 @@ final class ConversationController {
         sendPromptResponse(settling: serverRequestID) {
             // Same routing and `.expired` rule as `respondApproval`.
             if let serverRequestID {
-                _ = try await $0.answerServerRequest(
+                return try await $0.answerServerRequest(
                     id: serverRequestID, result: .object(["answer": .string(answer)]))
-            } else {
-                try await $0.respondClarify(request, answer: answer)
             }
+            try await $0.respondClarify(request, answer: answer)
+            return nil
         } onConfirmed: { [weak self] in
             guard let self, self.clarify?.requestID == requestID else { return }
             self.clarify = nil
@@ -2182,7 +2185,7 @@ final class ConversationController {
             ? .object([:])
             : .object(["answers": .object(submitted.mapValues(JSONValue.string))])
         sendPromptResponse(settling: serverRequestID) {
-            _ = try await $0.answerServerRequest(id: serverRequestID, result: result)
+            try await $0.answerServerRequest(id: serverRequestID, result: result)
         } onConfirmed: { [weak self] in
             guard let self, self.clarify?.requestID == requestID else { return }
             self.clarify = nil
@@ -2191,23 +2194,30 @@ final class ConversationController {
         }
     }
 
-    /// Answer the front credential prompt with `value`. The value goes only
-    /// into the `request.answer` result: never logged, never spoken. Kept
-    /// until confirmed; `.expired` counts as delivered (the backend moved on).
-    func answerCredential(_ value: String) async -> CredentialSubmitOutcome {
-        guard let prompt = currentCredentialPrompt else { return .done }
+    /// Shown when an answer arrived after its request expired: the agent
+    /// never saw it. Fixed copy, never the server's text or the value.
+    static let expiredAnswerNotice = "The request expired before your answer reached Hermes."
+
+    /// Answer the credential prompt `id` — the one the sheet showed — with
+    /// `value`. A prompt no longer present (withdrawn or answered while the
+    /// user typed) is over: nothing is sent, so the value can never reach
+    /// whatever prompt is now in front. The value goes only into the
+    /// `request.answer` result: never logged, never spoken. Kept until
+    /// confirmed; `.expired` counts as delivered (the backend moved on).
+    func answerCredential(id: String, _ value: String) async -> CredentialSubmitOutcome {
+        guard credentialPrompts.contains(where: { $0.id == id }) else { return .done }
         guard !promptResponseInFlight else {
             return .failed("Another answer is still being sent.")
         }
-        let id = prompt.id
         promptResponseInFlight = true
         promptSendError = nil
         defer { promptResponseInFlight = false }
         // The runtime the request arrived on; a reconnect may re-anchor the
         // box before the answer returns.
         let runtimeID = sessionBox.runtimeID
+        let status: PromptResponseStatus
         do {
-            _ = try await sessionService.answerServerRequest(
+            status = try await sessionService.answerServerRequest(
                 id: id, result: ServerRequestResult.value(value))
         } catch {
             return .failed(
@@ -2215,13 +2225,14 @@ final class ConversationController {
         }
         credentialPrompts.removeAll { $0.id == id }
         if let runtimeID { serverRequestSettled?(id, runtimeID) }
+        if status == .expired { setNotice(Self.expiredAnswerNotice) }
         resumeIfUnprompted()
         return .done
     }
 
     /// Chat's decline: an empty value, which the backend reads as skipped.
-    func declineCredential() async -> CredentialSubmitOutcome {
-        await answerCredential("")
+    func declineCredential(id: String) async -> CredentialSubmitOutcome {
+        await answerCredential(id: id, "")
     }
 
     /// The in-flight prompt response, kept only so a test can await it.
@@ -2240,7 +2251,7 @@ final class ConversationController {
     /// way) the host is told, so chats on the same runtime drop their copy.
     private func sendPromptResponse(
         settling serverRequestID: String? = nil,
-        _ send: @escaping (any SessionServicing) async throws -> Void,
+        _ send: @escaping (any SessionServicing) async throws -> PromptResponseStatus?,
         onConfirmed: @escaping @MainActor () -> Void,
         applyError: @escaping @MainActor () -> Bool
     ) {
@@ -2252,8 +2263,9 @@ final class ConversationController {
         promptResponseTask = Task {
             defer { promptResponseInFlight = false }
             do {
-                try await send(sessionService)
+                let status = try await send(sessionService)
                 onConfirmed()
+                if status == .expired { setNotice(Self.expiredAnswerNotice) }
                 if let serverRequestID, let runtimeID {
                     serverRequestSettled?(serverRequestID, runtimeID)
                 }

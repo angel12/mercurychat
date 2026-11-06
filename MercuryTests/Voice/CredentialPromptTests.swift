@@ -1,5 +1,6 @@
 import Foundation
 import MercuryKit
+import MercuryVoiceEngine
 import Testing
 
 /// Sudo and secret server requests are collected on screen and answered
@@ -136,7 +137,7 @@ struct CredentialPromptTests {
 
         let gate = CallGate()
         service.promptResponseGate = gate
-        async let outcome = controller.answerCredential("pw")
+        async let outcome = controller.answerCredential(id: "srq-s1", "pw")
         await gate.waitUntilEntered()
         #expect(controller.currentCredentialPrompt != nil)  // kept until the reply lands
         #expect(controller.promptResponseInFlight)
@@ -164,7 +165,7 @@ struct CredentialPromptTests {
         controller.serverRequestSettled = { id, _ in settled.append(id) }
         controller.handle(event: Fixtures.serverRequestEvent(secret()))
 
-        #expect(await controller.declineCredential() == .done)
+        #expect(await controller.declineCredential(id: "srq-k1") == .done)
         #expect(
             service.promptResponses == [
                 .requestAnswer(
@@ -181,8 +182,10 @@ struct CredentialPromptTests {
         controller.handle(event: Fixtures.serverRequestEvent(sudo()))
         service.enqueueAnswerReply(.expired)
 
-        #expect(await controller.answerCredential("pw") == .done)
+        #expect(await controller.answerCredential(id: "srq-s1", "pw") == .done)
         #expect(controller.currentCredentialPrompt == nil)
+        #expect(controller.notice == ConversationController.expiredAnswerNotice)
+        #expect(!(controller.notice ?? "").contains("pw"))
         await controller.teardown()
     }
 
@@ -194,7 +197,7 @@ struct CredentialPromptTests {
         controller.handle(event: Fixtures.serverRequestEvent(sudo()))
         service.enqueueAnswerFailure()
 
-        let outcome = await controller.answerCredential("pw")
+        let outcome = await controller.answerCredential(id: "srq-s1", "pw")
         guard case .failed(let message) = outcome else {
             Issue.record("expected .failed, got \(outcome)")
             return
@@ -205,7 +208,7 @@ struct CredentialPromptTests {
         #expect(settled.isEmpty)
 
         // The retry delivers.
-        #expect(await controller.answerCredential("pw") == .done)
+        #expect(await controller.answerCredential(id: "srq-s1", "pw") == .done)
         #expect(controller.currentCredentialPrompt == nil)
         await controller.teardown()
     }
@@ -217,7 +220,7 @@ struct CredentialPromptTests {
         controller.handle(event: Fixtures.serverRequestEvent(sudo()))
         controller.handle(event: Fixtures.serverRequestEvent(secret()))
 
-        #expect(await controller.answerCredential("pw") == .done)
+        #expect(await controller.answerCredential(id: "srq-s1", "pw") == .done)
         #expect(controller.currentCredentialPrompt?.id == "srq-k1")
         await controller.awaitPromptAnnouncements()
         #expect(speech.spoken.last == Self.secretNotice)
@@ -275,5 +278,78 @@ struct CredentialPromptTests {
         let controller = try await openedController(service: service, openRequests: [secret()])
         #expect(controller.currentCredentialPrompt?.id == "srq-k1")
         await controller.teardown()
+    }
+
+    // MARK: The answer goes to the prompt the sheet showed (item 4)
+
+    /// The front prompt changes between the tap and the send (the sudo was
+    /// withdrawn): the value typed for it must not go to the secret now in
+    /// front.
+    @Test func anAnswerForAWithdrawnPromptIsNotSentToTheNewFront() async throws {
+        let service = ScriptedSessionService()
+        let controller = try await openedController(service: service)
+        controller.handle(event: Fixtures.serverRequestEvent(sudo()))
+        controller.handle(event: Fixtures.serverRequestEvent(secret()))
+        controller.handle(event: cancel("srq-s1", seq: 11))
+        try #require(controller.currentCredentialPrompt?.id == "srq-k1")
+
+        #expect(await controller.answerCredential(id: "srq-s1", "pw") == .done)
+        #expect(await controller.declineCredential(id: "srq-s1") == .done)
+        #expect(service.promptResponses.isEmpty, "the sudo password went to the secret")
+        #expect(controller.currentCredentialPrompt?.id == "srq-k1")
+        await controller.teardown()
+    }
+
+    // MARK: An expired answer says so (item 7)
+
+    @Test func anExpiredServerRequestApprovalShowsANotice() async throws {
+        let service = ScriptedSessionService()
+        let controller = try await openedController(service: service)
+        controller.handle(
+            event: Fixtures.serverRequestEvent(
+                Fixtures.approvalServerRequest(
+                    id: "srq-a1", sessionID: Self.runtimeID, command: "rm -rf build",
+                    requestID: "a1")))
+        try #require(controller.approval != nil)
+        service.enqueueAnswerReply(.expired)
+
+        controller.respondApproval(choice: "deny")
+        await controller.awaitPromptResponse()
+
+        #expect(controller.approval == nil)
+        #expect(controller.notice == ConversationController.expiredAnswerNotice)
+        await controller.teardown()
+    }
+
+    // MARK: The background bar (item 3)
+
+    @Test func theBarSaysWhenTheConversationNeedsInput() async throws {
+        let service = ScriptedSessionService()
+        let controller = try await openedController(service: service)
+        let host = VoiceConversationHost(
+            target: .session(storedID: Self.storedID, title: nil, profile: nil),
+            controller: controller, profile: nil)
+        #expect(host.barStatus != VoiceConversationHost.needsInputStatus)
+
+        controller.handle(event: Fixtures.serverRequestEvent(sudo()))
+        #expect(host.barStatus == VoiceConversationHost.needsInputStatus)
+        controller.withdrawSettledRequest("srq-s1")
+        #expect(host.barStatus != VoiceConversationHost.needsInputStatus)
+        await controller.teardown()
+    }
+
+    @Test func needsInputOutranksEveryOtherBarStatus() {
+        let paused = ConversationUIState(
+            status: .idle, enabled: true, muted: true, paused: true,
+            lastTranscript: nil, microphoneDenied: false)
+        #expect(
+            VoiceConversationHost.barStatus(needsInput: true, waiting: true, state: paused)
+                == "Needs your input")
+        #expect(
+            VoiceConversationHost.barStatus(needsInput: false, waiting: false, state: paused)
+                == "Paused")
+        #expect(
+            VoiceConversationHost.barStatus(needsInput: false, waiting: true, state: paused)
+                == "Waiting")
     }
 }

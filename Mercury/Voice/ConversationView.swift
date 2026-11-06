@@ -109,18 +109,22 @@ struct ConversationView: View {
             case .clarify(let request):
                 VoiceClarifySheet(request: request, controller: controller)
                     .interactiveDismissDisabled()
+            // Each sheet answers the prompt it shows, by id, never "the
+            // front" at send time.
             case .credential(.sudo(let request)):
+                let id = CredentialPrompt.sudo(request).id
                 SudoSheet(
                     request: request,
-                    submit: { await controller.answerCredential($0) },
-                    decline: { await controller.declineCredential() }
+                    submit: { await controller.answerCredential(id: id, $0) },
+                    decline: { await controller.declineCredential(id: id) }
                 )
                 .interactiveDismissDisabled()
             case .credential(.secret(let request)):
+                let id = CredentialPrompt.secret(request).id
                 SecretSheet(
                     request: request,
-                    submit: { await controller.answerCredential($0) },
-                    decline: { await controller.declineCredential() }
+                    submit: { await controller.answerCredential(id: id, $0) },
+                    decline: { await controller.declineCredential(id: id) }
                 )
                 .interactiveDismissDisabled()
             case .dev:
