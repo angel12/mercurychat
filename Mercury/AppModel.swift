@@ -301,6 +301,14 @@ final class AppModel {
         wireVoiceCoordination(controller)
         let host = VoiceConversationHost(target: target, controller: controller, profile: profile)
         voiceConversation = host
+        voiceCallCenter.startCall(displayName: host.callDisplayName)
+        let calls = voiceCallCenter
+        controller.audioReady = { [weak controller] in
+            switch await calls.waitForAudio() {
+            case .timedOut, .failed: controller?.noteCallUnavailable()
+            case .activated, .unavailable: break
+            }
+        }
         await controller.begin(mode: target.mode)
         guard generation == voiceGeneration, voiceConversation === host else {
             // Superseded or ended while the session was opening: whoever took
@@ -356,6 +364,7 @@ final class AppModel {
         voiceGeneration += 1
         guard let host = voiceConversation else { return nil }
         voiceConversation = nil
+        voiceCallCenter.endCall()
         host.controller.supersede()
         return host.controller
     }
@@ -387,6 +396,22 @@ final class AppModel {
             else { return }
             self.endVoice()
         }
+        controller.onMuteChanged = { [weak self, weak controller] muted in
+            guard let self, let controller, self.voiceConversation?.controller === controller
+            else { return }
+            self.voiceCallCenter.syncMute(muted)
+        }
+        controller.onSetupError = { [weak self, weak controller] _ in
+            guard let self, let controller, self.voiceConversation?.controller === controller
+            else { return }
+            self.voiceCallCenter.reportFailed()
+        }
+    }
+
+    /// The voice conversation's system call (sub-project 3). Settable for tests.
+    @ObservationIgnored
+    var voiceCallCenter = VoiceCallCenter(system: VoiceCallCenter.makeSystem()) {
+        didSet { voiceCallCenter.delegate = self }
     }
 
     private let tokenStore: KeychainTokenStore
@@ -410,6 +435,7 @@ final class AppModel {
         self.push.onReregistered = { [weak self] in
             Task { await self?.syncPush() }
         }
+        voiceCallCenter.delegate = self
     }
 
     /// Monotonic guard for the connect flow: `connect()` suspends across the
@@ -1687,4 +1713,11 @@ final class WindowNavigation {
     init(route: AppModel.Route? = nil) {
         self.route = route
     }
+}
+
+extension AppModel: VoiceCallCenterDelegate {
+    func voiceCallEndedBySystem() { endVoice() }
+    func voiceCallSetMuted(_ muted: Bool) { voiceConversation?.controller.setMuted(muted) }
+    func voiceCallAudioSuspended() { voiceConversation?.controller.audioSuspended() }
+    func voiceCallAudioResumed() { voiceConversation?.controller.audioResumed() }
 }

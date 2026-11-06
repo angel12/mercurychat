@@ -102,6 +102,7 @@
 		A29125012BAD3A49FB29CCA3 /* VoiceConversationBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57DC9CDD8C18EF8487C58B0 /* VoiceConversationBar.swift */; };
 		A3498399CA3BC4D680FB5D0E /* OpenRequestReconcileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4529C08F9865AA34CDA050F3 /* OpenRequestReconcileTests.swift */; };
 		A9518D13DF29336C88CD89AD /* MercuryKit in Frameworks */ = {isa = PBXBuildFile; productRef = 270DCD916107ED2451EA4BB3 /* MercuryKit */; };
+		AACF56073A0380B4F09B30F7 /* VoiceCallHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCF68FA4461E3CBA4AE5CE7 /* VoiceCallHostTests.swift */; };
 		AF9D93B14BD5D0101A1AF4D8 /* ReplaySupersessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */; };
 		B00173E8CE2B188A405CD230 /* R05ReplayGapSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 620D4CFFB407E930DB22D8C7 /* R05ReplayGapSafetyTests.swift */; };
 		B1F2270D0B5C6923F354216B /* TTSLeaseControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1015EE2BE11FD55EBBE24D6A /* TTSLeaseControllerTests.swift */; };
@@ -271,6 +272,7 @@
 		F335C603BD8B003FAFE3FE26 /* VoiceCallHooksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallHooksTests.swift; sourceTree = "<group>"; };
 		F42879978FB79190FBF9DFCE /* SlashCommandControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandControllerTests.swift; sourceTree = "<group>"; };
 		FBDB93486105B7024469A675 /* AbandonedCreateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbandonedCreateTests.swift; sourceTree = "<group>"; };
+		FCCF68FA4461E3CBA4AE5CE7 /* VoiceCallHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallHostTests.swift; sourceTree = "<group>"; };
 		FDB791832F7A5EDCF9BCA81C /* BotViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotViews.swift; sourceTree = "<group>"; };
 		FF29FA61E6755C592640D754 /* ApprovalCancelledTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalCancelledTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -473,6 +475,7 @@
 				BA164D294547912511700A73 /* VoiceBargeGateTests.swift */,
 				03113ECB60530DA15F87A586 /* VoiceCallCenterTests.swift */,
 				F335C603BD8B003FAFE3FE26 /* VoiceCallHooksTests.swift */,
+				FCCF68FA4461E3CBA4AE5CE7 /* VoiceCallHostTests.swift */,
 				6C4EE2C81BEFB76C4C4ED40D /* VoiceCallTestSupport.swift */,
 				9C7C415AB587F37CED6EFC6E /* VoiceHostTests.swift */,
 				34BFD9952AD539145128A23E /* VoiceNavigationTests.swift */,
@@ -730,6 +733,7 @@
 				278D1A0E7679FAD69C893562 /* VoiceCallCenter.swift in Sources */,
 				5D4EDCDD7E485DD8031A306A /* VoiceCallCenterTests.swift in Sources */,
 				5ABD6AB475A470CFD79CA385 /* VoiceCallHooksTests.swift in Sources */,
+				AACF56073A0380B4F09B30F7 /* VoiceCallHostTests.swift in Sources */,
 				8F3D2D656E0135147A952147 /* VoiceCallTestSupport.swift in Sources */,
 				B4D02D33B0F6458B3A5F960C /* VoiceConversationHost.swift in Sources */,
 				FED9E99A76F0D10EAE933B23 /* VoiceHostTests.swift in Sources */,
