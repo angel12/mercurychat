@@ -302,6 +302,7 @@ final class AppModel {
         let host = VoiceConversationHost(target: target, controller: controller, profile: profile)
         voiceConversation = host
         voiceCallCenter.startCall(displayName: host.callDisplayName)
+        voicePromptNotifier.requestAuthorizationIfNeeded()
         let calls = voiceCallCenter
         controller.audioReady = { [weak controller] in
             switch await calls.waitForAudio() {
@@ -365,6 +366,7 @@ final class AppModel {
         guard let host = voiceConversation else { return nil }
         voiceConversation = nil
         voiceCallCenter.endCall()
+        voicePromptNotifier.conversationEnded()
         host.controller.supersede()
         return host.controller
     }
@@ -401,11 +403,44 @@ final class AppModel {
             else { return }
             self.voiceCallCenter.syncMute(muted)
         }
+        controller.onSessionActivity = { [weak self] storedID, profile in
+            self?.claimPushSession(storedID: storedID, profile: profile)
+        }
+        controller.onFrontPromptChanged = { [weak self, weak controller] prompt in
+            guard let self, let controller, let host = self.voiceConversation,
+                host.controller === controller
+            else { return }
+            let title =
+                controller.sessionTitle.flatMap { $0.isEmpty ? nil : $0 } ?? host.callDisplayName
+            self.voicePromptNotifier.promptChanged(
+                prompt, title: title, storedSessionID: controller.storedSessionID)
+        }
         controller.onSetupError = { [weak self, weak controller] _ in
             guard let self, let controller, self.voiceConversation?.controller === controller
             else { return }
             self.voiceCallCenter.reportFailed()
         }
+    }
+
+    /// Lock-screen notifications for the voice conversation's prompts. Settable for tests.
+    @ObservationIgnored
+    var voicePromptNotifier = VoicePromptNotifier(
+        center: AppModel.makeVoiceNotificationCenter(), isAppActive: { AppModel.applicationIsActive })
+
+    private static func makeVoiceNotificationCenter() -> (any VoiceNotificationCenter)? {
+        #if os(iOS) || os(visionOS)
+            SystemVoiceNotificationCenter()
+        #else
+            nil
+        #endif
+    }
+
+    static var applicationIsActive: Bool {
+        #if os(iOS) || os(visionOS)
+            UIApplication.shared.applicationState == .active
+        #else
+            true
+        #endif
     }
 
     /// The voice conversation's system call (sub-project 3). Settable for tests.
@@ -874,8 +909,27 @@ final class AppModel {
     /// Immediate re-dial on foreground (backoff skip).
     func appBecameActive() {
         voiceConversation?.controller.appBecameActive()
+        voicePromptNotifier.appBecameActive()
         guard let connection else { return }
         Task { await connection.pokeReconnect() }
+    }
+
+    func appEnteredBackground() {
+        voicePromptNotifier.appEnteredBackground()
+    }
+
+    /// A voice prompt notification was tapped or one of its actions chosen.
+    /// An action only answers the approval it was posted for; anything else
+    /// brings the voice screen forward.
+    func handleVoiceNotification(promptKey: String, action: VoiceNotificationAction) {
+        guard let controller = voiceConversation?.controller else { return }
+        if action != .open, let front = controller.frontPrompt, front.kind == .approval,
+            front.key == promptKey
+        {
+            controller.respondApproval(choice: action == .approveOnce ? "once" : "deny")
+            return
+        }
+        liveWindows.first?.route = .voice
     }
 
     /// The unreachable banner's retry button.
@@ -1630,6 +1684,7 @@ final class AppModel {
     /// session on this server.
     func shouldPresentPush(_ route: PushTapRoute, appActive: Bool) -> Bool {
         guard appActive, let id = route.sessionID else { return true }
+        if let stored = voiceConversation?.controller.storedSessionID, stored == id { return false }
         if let key = route.serverKey, key != endpoint?.key { return true }
         return !isShowingSession(id)
     }

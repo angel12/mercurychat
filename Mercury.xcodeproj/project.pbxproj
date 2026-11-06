@@ -22,6 +22,7 @@
 		134F636CE764DFBE5B811451 /* ComposerAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCF33D27D469556ECE9B0BE /* ComposerAttachments.swift */; };
 		16C6B3EB63A57219CDBA6293 /* ConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DF179C9F278DF4C94236661 /* ConnectView.swift */; };
 		17721F6144E12E1977F71B6A /* HarnessGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E853203FF7CCFBA182B6D9A /* HarnessGate.swift */; };
+		18CF5D66547C7436B0757AE0 /* SystemVoiceNotificationCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D370B49F77B9D55EF31101 /* SystemVoiceNotificationCenter.swift */; };
 		1A9E4F4EF4638278B612882B /* AppModelOAuthFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */; };
 		1B06232F34E46CC916052F79 /* VoiceBargeGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA164D294547912511700A73 /* VoiceBargeGateTests.swift */; };
 		21A656ABC237B3E540CC7FB3 /* HermesTestServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */; };
@@ -104,6 +105,7 @@
 		A3498399CA3BC4D680FB5D0E /* OpenRequestReconcileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4529C08F9865AA34CDA050F3 /* OpenRequestReconcileTests.swift */; };
 		A9518D13DF29336C88CD89AD /* MercuryKit in Frameworks */ = {isa = PBXBuildFile; productRef = 270DCD916107ED2451EA4BB3 /* MercuryKit */; };
 		AACF56073A0380B4F09B30F7 /* VoiceCallHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCF68FA4461E3CBA4AE5CE7 /* VoiceCallHostTests.swift */; };
+		AC1B32CA87CE9A8312585F4A /* VoiceNotificationHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E115CFF437F9B6D5DD7AF06E /* VoiceNotificationHostTests.swift */; };
 		AF9D93B14BD5D0101A1AF4D8 /* ReplaySupersessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */; };
 		B00173E8CE2B188A405CD230 /* R05ReplayGapSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 620D4CFFB407E930DB22D8C7 /* R05ReplayGapSafetyTests.swift */; };
 		B104B662ADF128D4DE3E9C8F /* VoicePromptNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A259C00B027155E3A06087 /* VoicePromptNotifier.swift */; };
@@ -214,6 +216,7 @@
 		7E33FC2743C37A55EBBA5EB8 /* NewBotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewBotTests.swift; sourceTree = "<group>"; };
 		7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesTestServer.swift; sourceTree = "<group>"; };
 		80AEAC07FD3089D1CEF8B377 /* SessionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSettingsView.swift; sourceTree = "<group>"; };
+		80D370B49F77B9D55EF31101 /* SystemVoiceNotificationCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemVoiceNotificationCenter.swift; sourceTree = "<group>"; };
 		8163830FD653F66D7200F1E1 /* VoicePromptNotifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePromptNotifierTests.swift; sourceTree = "<group>"; };
 		817781FB31BDEEB4A9745FDF /* STTLeaseControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STTLeaseControllerTests.swift; sourceTree = "<group>"; };
 		8352694F586E1509DB11316B /* VoicePrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrompt.swift; sourceTree = "<group>"; };
@@ -266,6 +269,7 @@
 		DD29583BA27D8A948102F216 /* AppModelTokenEndpointBindingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTokenEndpointBindingTests.swift; sourceTree = "<group>"; };
 		DDE916C48DBE988AF96DB1A1 /* TestSignals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSignals.swift; sourceTree = "<group>"; };
 		E0DB881FD906FEAC913F2707 /* ConversationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationController.swift; sourceTree = "<group>"; };
+		E115CFF437F9B6D5DD7AF06E /* VoiceNotificationHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceNotificationHostTests.swift; sourceTree = "<group>"; };
 		E330B9553DB0DD3E42441774 /* AppModelCredentialPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelCredentialPersistenceTests.swift; sourceTree = "<group>"; };
 		E38A6BAE2FEBF621E2A090C2 /* PushSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushSettings.swift; sourceTree = "<group>"; };
 		E4AB98E6DF8AC1827CF1113B /* DevChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevChatView.swift; sourceTree = "<group>"; };
@@ -378,6 +382,7 @@
 				9610A249DD4D6F21F1B7B584 /* KeepScreenAwake.swift */,
 				6FBF32440915ABF1F7AD0243 /* SessionServicing.swift */,
 				61F16C908F2F10CFF0E4A71F /* SystemLinks.swift */,
+				80D370B49F77B9D55EF31101 /* SystemVoiceNotificationCenter.swift */,
 				2FC9EACFB369FBB4048D85BD /* TurnAttribution.swift */,
 				CFB3659150DA53385E93BDBC /* VoiceCallCenter.swift */,
 				A57DC9CDD8C18EF8487C58B0 /* VoiceConversationBar.swift */,
@@ -485,6 +490,7 @@
 				6C4EE2C81BEFB76C4C4ED40D /* VoiceCallTestSupport.swift */,
 				9C7C415AB587F37CED6EFC6E /* VoiceHostTests.swift */,
 				34BFD9952AD539145128A23E /* VoiceNavigationTests.swift */,
+				E115CFF437F9B6D5DD7AF06E /* VoiceNotificationHostTests.swift */,
 				98F4B6F79206A2CFDD1D05E3 /* VoicePromptIdentityTests.swift */,
 				8163830FD653F66D7200F1E1 /* VoicePromptNotifierTests.swift */,
 			);
@@ -642,6 +648,7 @@
 				0031121B30D2FAE2CA4A217C /* SidebarView.swift in Sources */,
 				373A9A3E43875196F86C2ACB /* StatusViews.swift in Sources */,
 				3C26F78B6CF304157DF67109 /* SystemLinks.swift in Sources */,
+				18CF5D66547C7436B0757AE0 /* SystemVoiceNotificationCenter.swift in Sources */,
 				DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */,
 				F2B2AF33E20407123C066DD0 /* TranscriptScrollState.swift in Sources */,
 				B2985669AFEF98D8F7128F40 /* TurnAttribution.swift in Sources */,
@@ -746,6 +753,7 @@
 				B4D02D33B0F6458B3A5F960C /* VoiceConversationHost.swift in Sources */,
 				FED9E99A76F0D10EAE933B23 /* VoiceHostTests.swift in Sources */,
 				36A204D164E10AEB49A61379 /* VoiceNavigationTests.swift in Sources */,
+				AC1B32CA87CE9A8312585F4A /* VoiceNotificationHostTests.swift in Sources */,
 				B69F4D7320FE650274C42561 /* VoicePrompt.swift in Sources */,
 				64A7AF5122EBA6329596B3FA /* VoicePromptIdentityTests.swift in Sources */,
 				B104B662ADF128D4DE3E9C8F /* VoicePromptNotifier.swift in Sources */,

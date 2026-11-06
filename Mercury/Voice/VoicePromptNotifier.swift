@@ -31,14 +31,14 @@ enum VoiceNotificationAction: Sendable, Equatable { case open, approveOnce, deny
 /// A posted approval also sweeps away Mercury Push's copy of it.
 @MainActor
 final class VoicePromptNotifier {
-    static let categoryID = "voice-approval"
-    static let approveActionID = "voice-approve-once"
-    static let denyActionID = "voice-deny"
-    static let promptKeyInfo = "voicePrompt"
+    nonisolated static let categoryID = "voice-approval"
+    nonisolated static let approveActionID = "voice-approve-once"
+    nonisolated static let denyActionID = "voice-deny"
+    nonisolated static let promptKeyInfo = "voicePrompt"
 
-    static func identifier(_ key: String) -> String { "voice-prompt.\(key)" }
+    nonisolated static func identifier(_ key: String) -> String { "voice-prompt.\(key)" }
 
-    static func action(forIdentifier id: String) -> VoiceNotificationAction {
+    nonisolated static func action(forIdentifier id: String) -> VoiceNotificationAction {
         switch id {
         case approveActionID: .approveOnce
         case denyActionID: .deny
