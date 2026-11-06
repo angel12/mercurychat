@@ -130,6 +130,7 @@ private struct ChatContentView: View {
         VStack(spacing: 0) {
             transcript
             promptCards
+            QueuePanel(controller: controller)
             ComposerView(
                 controller: controller, text: $composerText, attachments: attachments)
         }
@@ -344,11 +345,24 @@ private struct ChatContentView: View {
                 .frame(maxWidth: .infinity)
             }
             ForEach(controller.store.items) { item in
-                TranscriptItemView(
-                    item: item,
-                    onRetryUser: { id in Task { await controller.retrySend(messageID: id) } }
-                )
-                .id(item.id)
+                if isWaitingInQueue(item) {
+                    // Shown in the queue panel until its turn starts. The row
+                    // stays in the list at zero height: removing and
+                    // re-inserting it mid-list while the transcript pins to
+                    // the bottom trips UICollectionView's scroll-target
+                    // assertion.
+                    Color.clear
+                        .frame(height: 0)
+                        .listRowInsets(EdgeInsets())
+                        .accessibilityHidden(true)
+                        .id(item.id)
+                } else {
+                    TranscriptItemView(
+                        item: item,
+                        onRetryUser: { id in Task { await controller.retrySend(messageID: id) } }
+                    )
+                    .id(item.id)
+                }
             }
             if let generating = controller.store.generatingToolName {
                 HStack(spacing: 6) {
@@ -507,6 +521,13 @@ private struct ChatContentView: View {
         default:
             return 0
         }
+    }
+
+    /// This device's prompt still waiting in the shared queue: the queue
+    /// panel shows it until its turn starts.
+    private func isWaitingInQueue(_ item: TranscriptItem) -> Bool {
+        guard case .user(let message) = item, !controller.store.queue.isEmpty else { return false }
+        return controller.store.waitingRow(forEcho: message.id) != nil
     }
 
     @ViewBuilder

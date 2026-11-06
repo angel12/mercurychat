@@ -105,6 +105,13 @@ final class ChatController: Identifiable {
     /// a skill command's bubble shows `/work …` while the prompt is the
     /// expanded skill body.
     private var promptTextForEcho: [String: String] = [:]
+    /// The admission key each echo was first sent with. A retry of the same
+    /// echo reuses it, so a session authority admits it once even when the
+    /// first reply was lost.
+    private var submissionIDs: [String: String] = [:]
+    /// The socket speaks the session authority's wire (a v0.23 gateway
+    /// listener such as the Webapp): the chat has a shared, editable queue.
+    private(set) var hasSharedQueue = false
     private static let logger = Logger(subsystem: "Mercury", category: "ChatController")
     /// Older-history paging state (order=latest offsets count back from the
     /// newest row).
@@ -923,6 +930,8 @@ final class ChatController: Identifiable {
             return
         }
         let attachments = pendingUploads[echoID] ?? []
+        let submissionID = submissionIDs[echoID] ?? UUID().uuidString.lowercased()
+        submissionIDs[echoID] = submissionID
         do {
             // Submitting while busy doesn't error: the server queues,
             // redirects, or steers per its busy-input policy and says which
@@ -990,10 +999,15 @@ final class ChatController: Identifiable {
                         try? await connection.detachImage(sessionID: runtimeID, path: path)
                     }.value
                 },
-                submit: { @Sendable [connection] text in
-                    try await connection.submit(sessionID: runtimeID, text: text)
+                submit: { @Sendable [connection, submissionID] text in
+                    try await connection.submit(
+                        sessionID: runtimeID, text: text, submissionID: submissionID)
                 })
             let status = receipt.status
+            hasSharedQueue = await connection.isSessionAuthority
+            if hasSharedQueue, let admission = receipt.admissionID {
+                store.bindEcho(echoID, admissionID: admission)
+            }
             pendingUploads.removeValue(forKey: echoID)
             promptTextForEcho.removeValue(forKey: echoID)
             // The DB row exists after the first prompt; a created session
@@ -1295,7 +1309,9 @@ final class ChatController: Identifiable {
 
     @discardableResult
     func respondApproval(_ request: ApprovalRequest, choice: String) async -> Bool {
-        guard let id = request.serverRequestID else { return false }
+        guard let id = request.serverRequestID else {
+            return await respondAuthorityApproval(request, choice: choice)
+        }
         do {
             // Delivered or expired, the card is done; an expired approval
             // gets the same transcript notice as any late answer.
@@ -1333,7 +1349,10 @@ final class ChatController: Identifiable {
     }
 
     func respondClarify(requestID: String, answer: String) async -> PromptDeliveryOutcome {
-        await deliver(
+        if let prompt = store.pendingClarify, prompt.requestID == requestID, prompt.serverRequestID == nil {
+            return await respondAuthorityClarify(prompt, answer: answer)
+        }
+        return await deliver(
             requestID, ServerRequestResult.clarify(answer: answer), what: "answer",
             clear: { self.store.clearClarify(requestID: requestID) })
     }
@@ -1397,6 +1416,83 @@ final class ChatController: Identifiable {
 
     /// `request.answer` for clarify, sudo and secret: their `requestID` is
     /// the server request's id.
+    /// A session authority raised this approval as an event: answer it by
+    /// `prompt_id` and the generation it was raised in.
+    private func respondAuthorityApproval(_ request: ApprovalRequest, choice: String) async -> Bool {
+        guard let promptID = request.requestID else { return false }
+        do {
+            try await connection.respondApproval(
+                sessionID: request.sessionID, choice: choice, requestID: promptID,
+                executionGeneration: request.executionGeneration)
+            store.clearApproval(matching: request)
+            return true
+        } catch {
+            errorMessage = Self.describe(error)
+            return false
+        }
+    }
+
+    /// A session authority raised this clarify as an event: answer it by
+    /// `prompt_id` and the generation it was raised in.
+    private func respondAuthorityClarify(_ prompt: ClarifyRequest, answer: String) async
+        -> PromptDeliveryOutcome
+    {
+        guard let sessionID = prompt.sessionID ?? runtimeID else { return .failed }
+        do {
+            let status = try await connection.respondClarifyPrompt(
+                sessionID: sessionID, promptID: prompt.requestID, answer: answer,
+                executionGeneration: prompt.executionGeneration)
+            return settlePrompt(
+                status, requestID: prompt.requestID, what: "answer",
+                clear: { self.store.clearClarify(requestID: prompt.requestID) })
+        } catch {
+            errorMessage = Self.describe(error)
+            return .failed
+        }
+    }
+
+    // MARK: Shared queue (session authority)
+
+    /// Run a queued prompt now, as a steer into the running turn.
+    func steerQueued(_ row: QueuedPrompt) async {
+        guard let runtimeID else { return }
+        do {
+            try await connection.steerQueued(sessionID: runtimeID, admissionID: row.admissionID)
+        } catch {
+            errorMessage = Self.describe(error)
+        }
+    }
+
+    /// Take a prompt out of the queue. Its echo, when this device sent it,
+    /// goes when the owner confirms (`message.complete` outcome cancelled).
+    func removeQueued(_ row: QueuedPrompt) async {
+        guard let runtimeID else { return }
+        do {
+            try await connection.cancelQueued(sessionID: runtimeID, admissionID: row.admissionID)
+        } catch {
+            errorMessage = Self.describe(error)
+        }
+    }
+
+    /// Replace a queued prompt's text. Nil on success, else why it wasn't
+    /// replaced (the turn already took it, say), so the editor keeps the text.
+    func editQueued(_ row: QueuedPrompt, text: String) async -> String? {
+        guard let runtimeID else { return "The session isn't open yet." }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "A queued prompt can't be empty." }
+        do {
+            let receipt = try await connection.replaceQueued(
+                sessionID: runtimeID, admissionID: row.admissionID, text: trimmed,
+                submissionID: UUID().uuidString.lowercased())
+            if let echoID = store.echoID(forAdmission: row.admissionID) {
+                store.replaceEcho(echoID, text: trimmed, admissionID: receipt.admissionID)
+            }
+            return nil
+        } catch {
+            return Self.describe(error)
+        }
+    }
+
     private func deliver(
         _ id: String, _ result: JSONValue, what: String, clear: () -> Void
     ) async -> PromptDeliveryOutcome {

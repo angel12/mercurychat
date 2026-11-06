@@ -470,8 +470,12 @@ final class AppModel {
         // Contract ≥ 7: advertise server requests on every socket and answer
         // approval, clarify, sudo and secret. Requests Chat can't answer
         // (vault.*, terminal.read, tour, …) stay open for another client.
+        // A v0.23 gateway listener (the Webapp) only speaks the session
+        // authority's canonical wire; MercuryKit switches to it per socket
+        // when `gateway.ready` says `session_authority: true`.
         let connection = HermesConnection(
-            endpoint: endpoint, authenticator: authenticator, serverRequestPolicy: .chat)
+            endpoint: endpoint, authenticator: authenticator, serverRequestPolicy: .chat,
+            adoptsSessionAuthority: true)
         self.connection = connection
         startUpdatePump(connection, credentialsToSave: credentials)
         startPathMonitor()
