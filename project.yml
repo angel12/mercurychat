@@ -38,6 +38,8 @@ targets:
     dependencies:
       - package: MercuryKit
         product: MercuryKit
+      - package: MercuryKit
+        product: MercuryVoiceEngine
       - package: MercuryCore
         product: ChatCore
     settings:
@@ -56,6 +58,8 @@ targets:
     dependencies:
       - package: MercuryKit
         product: MercuryKit
+      - package: MercuryKit
+        product: MercuryVoiceEngine
       - package: MercuryCore
         product: ChatCore
     settings:

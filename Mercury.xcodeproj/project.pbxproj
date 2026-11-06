@@ -40,6 +40,8 @@
 		584BF8743978889C3AD32FC5 /* ImageAttachmentPreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2385853D812F0AEB3C05FE /* ImageAttachmentPreparer.swift */; };
 		58BD3CFACCFE2DCE7971B59F /* PushRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1C5BE77A81AB99F57C9CE6 /* PushRoutingTests.swift */; };
 		5B65C1530850A83B3FDF13D6 /* OlderPageGenerationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF196FBEA9ECF7A9ECFDD2C6 /* OlderPageGenerationTests.swift */; };
+		5DE804BE1E680AEE1A28F301 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 100C35A23B0A18D00444F5E1 /* ChatCore */; };
+		5E3BC16D2DE54FF712742E04 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 39C57500F981C503D4C31DD8 /* ChatCore */; };
 		64EBBBD524F2CFA0F522704B /* AbandonedCreateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDB93486105B7024469A675 /* AbandonedCreateTests.swift */; };
 		66BEC0EA880906671E1A1D8A /* BotRefreshCoalescingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B91B9951C249787DEC11894E /* BotRefreshCoalescingTests.swift */; };
 		66BF4F028E62E698A078D2AA /* BotAdvancedEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7091478ECBB2080F8948B091 /* BotAdvancedEditorTests.swift */; };
@@ -59,7 +61,7 @@
 		8ED0297795230890F3E9979D /* SessionEditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98AF4A66F4D858DC50F05CEA /* SessionEditTests.swift */; };
 		9040FED1E803A3961F7767EE /* ImageAttachmentPreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2385853D812F0AEB3C05FE /* ImageAttachmentPreparer.swift */; };
 		9179BACF1320B4FDDCC503D1 /* MarkdownBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E00A47B190797DCB7210F77 /* MarkdownBlocks.swift */; };
-		93CC0EB07156B09EF5B747D5 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 100C35A23B0A18D00444F5E1 /* ChatCore */; };
+		93CC0EB07156B09EF5B747D5 /* MercuryVoiceEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 1763039389CEBE5F66DA1147 /* MercuryVoiceEngine */; };
 		9870DAC2473936640DAA3211 /* BotViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDB791832F7A5EDCF9BCA81C /* BotViews.swift */; };
 		9C7228F35C07FD95BC4F16F8 /* PushCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26F0A1567A15C6816DB59D53 /* PushCoordinator.swift */; };
 		9CB010695A73DB41BE1CE5E6 /* AppModelPasswordSignInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95372298CE4EB18C2FDACD29 /* AppModelPasswordSignInTests.swift */; };
@@ -84,7 +86,7 @@
 		DD6B0D8AE58DCC9BAB210488 /* TranscriptItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261E6F3253210857B9FD4CDF /* TranscriptItemView.swift */; };
 		DDD64F0FF5EAE6CB69646DEE /* ImageAttachmentPreparerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0EF1FA0B2C23FD41721AD9 /* ImageAttachmentPreparerTests.swift */; };
 		E223564D4FAAF1F86C6FBB9B /* FileAttachmentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C7D11718D49275BD388B653 /* FileAttachmentWire.swift */; };
-		E63E885D1E7DE15AC7776528 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = 39C57500F981C503D4C31DD8 /* ChatCore */; };
+		E63E885D1E7DE15AC7776528 /* MercuryVoiceEngine in Frameworks */ = {isa = PBXBuildFile; productRef = E82B225B1D0472E41B723446 /* MercuryVoiceEngine */; };
 		EE76E4F46A5DF58DFD13C57F /* PushCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26F0A1567A15C6816DB59D53 /* PushCoordinator.swift */; };
 		F270ABB7C9C2E17E468EEFDD /* ResumeSnapshotOrderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B194A81AC2450A2C12D7C7B /* ResumeSnapshotOrderingTests.swift */; };
 		F2B2AF33E20407123C066DD0 /* TranscriptScrollState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC742A6027C58E24CAD9087D /* TranscriptScrollState.swift */; };
@@ -180,7 +182,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A9518D13DF29336C88CD89AD /* MercuryKit in Frameworks */,
-				93CC0EB07156B09EF5B747D5 /* ChatCore in Frameworks */,
+				93CC0EB07156B09EF5B747D5 /* MercuryVoiceEngine in Frameworks */,
+				5DE804BE1E680AEE1A28F301 /* ChatCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -189,7 +192,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				9F4B8D354F281AC44DEF9CB3 /* MercuryKit in Frameworks */,
-				E63E885D1E7DE15AC7776528 /* ChatCore in Frameworks */,
+				E63E885D1E7DE15AC7776528 /* MercuryVoiceEngine in Frameworks */,
+				5E3BC16D2DE54FF712742E04 /* ChatCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -343,6 +347,7 @@
 			name = MercuryTests;
 			packageProductDependencies = (
 				6A2149E41114F3E415ACCC47 /* MercuryKit */,
+				E82B225B1D0472E41B723446 /* MercuryVoiceEngine */,
 				39C57500F981C503D4C31DD8 /* ChatCore */,
 			);
 			productName = MercuryTests;
@@ -364,6 +369,7 @@
 			name = Mercury;
 			packageProductDependencies = (
 				270DCD916107ED2451EA4BB3 /* MercuryKit */,
+				1763039389CEBE5F66DA1147 /* MercuryVoiceEngine */,
 				100C35A23B0A18D00444F5E1 /* ChatCore */,
 			);
 			productName = Mercury;
@@ -802,6 +808,11 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = ChatCore;
 		};
+		1763039389CEBE5F66DA1147 /* MercuryVoiceEngine */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */;
+			productName = MercuryVoiceEngine;
+		};
 		270DCD916107ED2451EA4BB3 /* MercuryKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */;
@@ -815,6 +826,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */;
 			productName = MercuryKit;
+		};
+		E82B225B1D0472E41B723446 /* MercuryVoiceEngine */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B750FD0465CEBD550DA2B617 /* XCRemoteSwiftPackageReference "mercurykit" */;
+			productName = MercuryVoiceEngine;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
