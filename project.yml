@@ -39,6 +39,7 @@ targets:
       - path: Mercury/Voice/TurnAttribution.swift
       - path: Mercury/Voice/CredentialPrompt.swift
       - path: Mercury/Voice/VoiceConversationHost.swift
+      - path: Mercury/Voice/VoicePrompt.swift
       - path: Mercury/Voice/ClarifyBatch.swift
       - path: Mercury/Voice/AssistantMarkdown.swift
       - path: MercuryTests

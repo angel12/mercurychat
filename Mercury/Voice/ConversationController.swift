@@ -62,6 +62,7 @@ final class ConversationController {
             guard !stampingApprovalInPlace else { return }
             approvalAnnouncement?.cancel()
         }
+        didSet { reportFrontPrompt() }
     }
     /// True only while `present(approval:)` stamps an srq id onto the sheet
     /// already on screen (issue #125). That write is the *same* prompt, so
@@ -73,6 +74,7 @@ final class ConversationController {
             guard !mergingClarifyLocksInPlace else { return }
             clarifyAnnouncement?.cancel()
         }
+        didSet { reportFrontPrompt() }
     }
     /// True only while `present(clarify:)` merges newly locked batch answers
     /// into the sheet already on screen — the same prompt, so its notice
@@ -83,6 +85,7 @@ final class ConversationController {
     /// notice and announces the next one.
     private(set) var credentialPrompts: [CredentialPrompt] = [] {
         didSet {
+            reportFrontPrompt()
             guard oldValue.first?.id != credentialPrompts.first?.id else { return }
             if let next = credentialPrompts.first {
                 announce(.credential(id: next.id, text: next.spokenNotice))
@@ -657,6 +660,7 @@ final class ConversationController {
         }
         sessionBox.runtimeID = handle.runtimeID
         sessionBox.storedID = handle.storedID
+        if case .create = mode { noteSessionActivity() } else { noteStoredIDChanged() }
         // Acquire the TTS lease as the conversation starts. Fire-and-forget:
         // warm-up is a nicety the backend reports failures for in its own
         // body (never an HTTP error), and it must never delay `begin()`
@@ -853,6 +857,7 @@ final class ConversationController {
     }
 
     func teardown() async {
+        onFrontPromptChanged = nil
         supersede()
         stateTask?.cancel()
         muteTask?.cancel()
@@ -1914,6 +1919,7 @@ final class ConversationController {
             }
             sessionBox.runtimeID = handle.runtimeID
             sessionBox.storedID = handle.storedID
+            noteStoredIDChanged()
             let authority = await sessionService.isSessionAuthority
             turnAttribution.noteWire(authority: authority)
             // The authority's snapshot lists the shared queue: re-derive
@@ -2085,12 +2091,60 @@ final class ConversationController {
     private func noteSubmitReceipt(_ receipt: PromptSubmission?) {
         guard !isTornDown else { return }
         turnAttribution.noteReceipt(receipt)
+        if receipt != nil { noteSessionActivity() }
     }
 
     // MARK: User controls
 
     func toggleMute() {
         Task { await engine?.toggleMute() }
+    }
+
+    // MARK: Prompt identity and push activity (sub-project 3)
+
+    /// The prompt the sheets present first: approval, then clarify, then the
+    /// oldest credential.
+    var frontPrompt: VoicePrompt? {
+        if let approval {
+            return VoicePrompt(
+                key: "approval-\(approvalEpoch)", kind: .approval,
+                pushRequestID: approval.requestID)
+        }
+        if let clarify {
+            return VoicePrompt(
+                key: "clarify-\(clarify.requestID)", kind: .clarify, pushRequestID: nil)
+        }
+        if let credential = credentialPrompts.first {
+            let kind: VoicePrompt.Kind = if case .sudo = credential { .sudo } else { .secret }
+            return VoicePrompt(key: "credential-\(credential.id)", kind: kind, pushRequestID: nil)
+        }
+        return nil
+    }
+
+    @ObservationIgnored var onFrontPromptChanged: ((VoicePrompt?) -> Void)?
+    @ObservationIgnored private var lastFrontPrompt: VoicePrompt?
+
+    private func reportFrontPrompt() {
+        let now = frontPrompt
+        guard now != lastFrontPrompt else { return }
+        lastFrontPrompt = now
+        onFrontPromptChanged?(now)
+    }
+
+    /// The stored session this conversation runs on, once known.
+    var storedSessionID: String? { sessionBox.storedID }
+
+    /// Set by the host: this device created the session or sent in it, so it
+    /// claims the session's push notifications (as Chat does).
+    @ObservationIgnored var onSessionActivity: ((_ storedID: String, _ profile: String?) -> Void)?
+    @ObservationIgnored private var activity = SessionActivityTracker()
+
+    private func noteSessionActivity() {
+        if let id = activity.activity(storedID: sessionBox.storedID) { onSessionActivity?(id, profile) }
+    }
+
+    private func noteStoredIDChanged() {
+        if let id = activity.storedIDChanged(sessionBox.storedID) { onSessionActivity?(id, profile) }
     }
 
     // MARK: System call (sub-project 3)
