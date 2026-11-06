@@ -145,6 +145,7 @@
 		F71ACDE231B72D6DC871D698 /* PushCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92068ED6EF5F4C63EB44F3B7 /* PushCoordinatorTests.swift */; };
 		FA95AE9AA589D021659E84B2 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF52417D9BAD3C00374A1420 /* ChatView.swift */; };
 		FC75FD144E1934CFF4688F19 /* ComposerAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCF33D27D469556ECE9B0BE /* ComposerAttachments.swift */; };
+		FD2C73E2D50FD5124A99A686 /* CallKitVoiceCallSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8100A5899DEBC1AC231EFC4 /* CallKitVoiceCallSystem.swift */; };
 		FDF0525D65A25C78E8739ECD /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3C04335D3D7A37023E3437 /* ConversationView.swift */; };
 		FE3C1CFB757F32DC16E31280 /* AppModelExpiredPumpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04889686DBD2B442B100A913 /* AppModelExpiredPumpTests.swift */; };
 		FED9E99A76F0D10EAE933B23 /* VoiceHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C7C415AB587F37CED6EFC6E /* VoiceHostTests.swift */; };
@@ -252,6 +253,7 @@
 		D5220C37E1E54AD412B7EC6C /* AppModelChatLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelChatLifecycleTests.swift; sourceTree = "<group>"; };
 		D5D7F9B4D3C0612A0B005EC3 /* ClarifyBatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClarifyBatch.swift; sourceTree = "<group>"; };
 		D7B494E47F59C82F85F4465D /* R27PromptAnnouncementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R27PromptAnnouncementTests.swift; sourceTree = "<group>"; };
+		D8100A5899DEBC1AC231EFC4 /* CallKitVoiceCallSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitVoiceCallSystem.swift; sourceTree = "<group>"; };
 		D860EEFD1D2B9C9012AC0FC1 /* MultiWindowChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiWindowChatTests.swift; sourceTree = "<group>"; };
 		DA3C04335D3D7A37023E3437 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
 		DC7D096E2CDAEFEBDA70D3F9 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -360,6 +362,7 @@
 			children = (
 				31455E5F42AA2232863D78C9 /* AssistantMarkdown.swift */,
 				0C66E7B378A6C0BF2F448EDA /* AudioDevicePicker.swift */,
+				D8100A5899DEBC1AC231EFC4 /* CallKitVoiceCallSystem.swift */,
 				D5D7F9B4D3C0612A0B005EC3 /* ClarifyBatch.swift */,
 				E0DB881FD906FEAC913F2707 /* ConversationController.swift */,
 				DA3C04335D3D7A37023E3437 /* ConversationView.swift */,
@@ -599,6 +602,7 @@
 				539AA08FE874D44AE007BD46 /* BotAdvancedView.swift in Sources */,
 				6BD6AA9B2CB31BC95C479BB2 /* BotEditViews.swift in Sources */,
 				9870DAC2473936640DAA3211 /* BotViews.swift in Sources */,
+				FD2C73E2D50FD5124A99A686 /* CallKitVoiceCallSystem.swift in Sources */,
 				8B5F8EF23C7156F46304EC10 /* ChatController.swift in Sources */,
 				FA95AE9AA589D021659E84B2 /* ChatView.swift in Sources */,
 				D06883DE81E238AEAC4D4E47 /* ClarifyBatch.swift in Sources */,

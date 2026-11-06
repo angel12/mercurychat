@@ -194,3 +194,14 @@ final class VoiceCallCenter: VoiceCallSystemEvents {
         for waiter in pending { waiter.resume(returning: result) }
     }
 }
+
+extension VoiceCallCenter {
+    /// The platform's call service: CallKit on iOS and visionOS, none on macOS.
+    static func makeSystem() -> (any VoiceCallSystem)? {
+        #if os(iOS) || os(visionOS)
+            CallKitVoiceCallSystem()
+        #else
+            nil
+        #endif
+    }
+}
