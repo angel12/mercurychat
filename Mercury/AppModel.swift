@@ -186,6 +186,19 @@ final class AppModel {
     /// either cleared the slot for both.
     private(set) var openChats: [ChatController] = []
 
+    /// The Voice tab's conversation (spec §1): at most one, app-wide. Every
+    /// window binds to it; navigating away doesn't end it.
+    private(set) var voiceConversation: VoiceConversationHost?
+    /// Bumped by every start, end and disconnect, so a begin still inside
+    /// its session open can tell it was superseded (Voice's R25 guard).
+    private var voiceGeneration = 0
+    /// The latest outgoing voice teardown, kept so tests can join it.
+    private(set) var pendingVoiceTeardown: Task<Void, Never>?
+    /// Builds each voice conversation's controller; a test seam.
+    var makeVoiceController: (HermesConnection, String?) -> ConversationController = {
+        ConversationController(connection: $0, profile: $1)
+    }
+
     /// Create (and register) the controller for a route. The view owns the
     /// begin() call; registration here is what routes gateway events.
     /// nil when the connection is already gone — the caller is a `.task`
@@ -200,6 +213,13 @@ final class AppModel {
         // so a chat may only close what no other open chat holds (#112).
         controller.isHeldElsewhere = { [weak self, weak controller] claims in
             guard let self else { return false }
+            // The voice conversation counts too: a session may be open as a
+            // voice conversation and a text chat at once (spec §2).
+            if let voice = self.voiceConversation?.controller,
+                !voice.sessionClaims.isDisjoint(with: claims)
+            {
+                return true
+            }
             return self.openChats.contains {
                 $0 !== controller && !$0.sessionClaims.isDisjoint(with: claims)
             }
@@ -210,6 +230,9 @@ final class AppModel {
             guard let self else { return }
             for chat in self.openChats where chat !== controller && chat.runtimeID == runtimeID {
                 chat.withdrawSettledRequest(requestID)
+            }
+            if let voice = self.voiceConversation?.controller, voice.runtimeID == runtimeID {
+                voice.withdrawSettledRequest(requestID)
             }
         }
         controller.onSessionActivity = { [weak self] storedID, profile in
@@ -239,6 +262,81 @@ final class AppModel {
         Task {
             await controller.teardown()
             await refreshProjects()
+        }
+    }
+
+    // MARK: Voice conversation (spec §1)
+
+    /// Start (or show) the app's voice conversation. A conversation already
+    /// running for `target` is kept; one for another target is ended first.
+    /// Ownership changes hands before the first await — the outgoing
+    /// controller is superseded synchronously, so a `begin()` still inside
+    /// its session open bails instead of arming the mic — and a begin that
+    /// finishes after the generation moved on tears itself down (Voice's
+    /// `launchConversation`, R25).
+    func startVoice(_ target: VoiceConversationHost.Target) async {
+        if let current = voiceConversation, current.target == target { return }
+        guard let connection else { return }
+        endVoice(refresh: false)
+        voiceGeneration += 1
+        let generation = voiceGeneration
+        let controller = makeVoiceController(connection, target.profile ?? selectedProfile)
+        wireVoiceCoordination(controller)
+        let host = VoiceConversationHost(
+            target: target, controller: controller, generation: generation)
+        voiceConversation = host
+        await controller.begin(mode: target.mode)
+        guard generation == voiceGeneration, voiceConversation === host else {
+            // Superseded or ended while the session was opening: whoever took
+            // over already released this controller; release it here rather
+            // than leave its engine and backend session running. Idempotent.
+            await controller.teardown()
+            return
+        }
+    }
+
+    /// End the voice conversation (End button, stop word, setup error's
+    /// Back) and refresh the sidebar's recents.
+    func endVoice() { endVoice(refresh: true) }
+
+    /// The outgoing teardown runs in its own task: it ends with a
+    /// `session.close` RPC, and a wedged gateway must not hold the caller.
+    private func endVoice(refresh: Bool) {
+        guard let outgoing = releaseVoice() else { return }
+        pendingVoiceTeardown = Task {
+            await outgoing.teardown()
+            if refresh { await refreshProjects() }
+        }
+    }
+
+    /// Unpublish and supersede the voice controller synchronously, bumping
+    /// the generation; the caller tears it down.
+    private func releaseVoice() -> ConversationController? {
+        voiceGeneration += 1
+        guard let host = voiceConversation else { return nil }
+        voiceConversation = nil
+        host.controller.supersede()
+        return host.controller
+    }
+
+    /// Join Chat's multi-chat coordination (#112). Weak captures only: the
+    /// controller is owned through `voiceConversation`.
+    private func wireVoiceCoordination(_ controller: ConversationController) {
+        controller.isHeldElsewhere = { [weak self] claims in
+            guard let self else { return false }
+            return self.openChats.contains { !$0.sessionClaims.isDisjoint(with: claims) }
+        }
+        controller.serverRequestSettled = { [weak self] requestID, runtimeID in
+            guard let self else { return }
+            for chat in self.openChats where chat.runtimeID == runtimeID {
+                chat.withdrawSettledRequest(requestID)
+            }
+        }
+        controller.onStopWord = { [weak self, weak controller] in
+            guard let self, let controller,
+                self.voiceConversation?.controller === controller
+            else { return }
+            self.endVoice()
         }
     }
 
@@ -642,8 +740,16 @@ final class AppModel {
         updatePump?.cancel()
         updatePump = nil
         let connection = connection
+        let voice = releaseVoice()
         self.connection = nil
-        if let connection {
+        if let voice {
+            // The voice teardown closes its session over the gateway, so it
+            // must finish before the connection stops (Voice's disconnect).
+            pendingVoiceTeardown = Task {
+                await voice.teardown()
+                await connection?.stop()
+            }
+        } else if let connection {
             Task { await connection.stop() }
         }
         phase = .stopped
@@ -684,6 +790,7 @@ final class AppModel {
 
     /// Immediate re-dial on foreground (backoff skip).
     func appBecameActive() {
+        voiceConversation?.controller.appBecameActive()
         guard let connection else { return }
         Task { await connection.pokeReconnect() }
     }
@@ -802,7 +909,6 @@ final class AppModel {
     private func startUpdatePump(
         _ connection: HermesConnection, credentialsToSave: ServerCredentials?
     ) {
-        var pendingSave = credentialsToSave
         // The pump belongs to this connect. Its branches suspend (keychain
         // read, browse load, provider lookup), and a connect to another
         // server can supersede it meanwhile — cancelling the pump doesn't
@@ -810,74 +916,116 @@ final class AppModel {
         // re-checks ownership after every await before publishing (#90).
         let generation = connectGeneration
         updatePump = Task { [weak self] in
+            var pendingSave = credentialsToSave
             for await update in await connection.updates() {
                 guard let self, !Task.isCancelled else { return }
-                switch update {
-                case .phase(let phase):
-                    self.phase = phase
-                    if case .ready(let isReconnect) = phase {
-                        if let credentials = pendingSave, let endpoint = self.endpoint {
-                            // Authed probe + live socket: now the connection
-                            // has earned a spot in the saved list. Persist the
-                            // authenticator's LIVE credentials, not the pair
-                            // connect() started with: the validation probe may
-                            // have rotated tokens (401 → refresh), and writing
-                            // the pre-rotation refresh token back strands the
-                            // next launch on a token the server already burned
-                            // — Nous reuse-detection then revokes the whole
-                            // session, forcing a browser sign-in (#37).
-                            let live = await connection.authenticator.credentials
-                            guard generation == self.connectGeneration else { return }
-                            self.persistValidatedServer(
-                                endpoint: endpoint, credentials: live ?? credentials)
-                            pendingSave = nil
-                        }
-                        if !isReconnect {
-                            await self.loadBrowseData()
-                            guard generation == self.connectGeneration else { return }
-                        }
-                        // Every open chat re-binds (#112) — concurrently, so
-                        // one window's resume + replay doesn't queue the
-                        // rest behind it. The pump still waits for all.
-                        let chats = self.openChats
-                        await withTaskGroup(of: Void.self) { group in
-                            for chat in chats {
-                                group.addTask {
-                                    await chat.connectionBecameReady(isReconnect: isReconnect)
-                                }
-                            }
-                        }
-                    }
-                    if case .authExpired = phase {
-                        // Credentials are dead. Token mode: the ephemeral
-                        // token died with a backend restart — ask for a fresh
-                        // dashboard URL. Gated mode: re-run sign-in. Present
-                        // BEFORE disconnect — disconnect cancels this pump.
-                        if self.serverStatus?.authRequired == true,
-                            let endpoint = self.endpoint
-                        {
-                            await self.presentGatedLogin(
-                                endpoint: endpoint,
-                                note: HermesError.sessionExpired.errorDescription,
-                                generation: generation)
-                            // Superseded while the lookup was out: the
-                            // teardown belongs to a connection already gone,
-                            // and running it would kill its replacement.
-                            guard generation == self.connectGeneration else { return }
-                        } else {
-                            self.connectError = HermesError.unauthorized.errorDescription
-                        }
-                        self.disconnect()
-                        return
-                    }
-                case .event(let event):
-                    // Fan out (#112): each chat keeps only its runtime's
-                    // events, and two windows on one session both get them.
-                    for chat in self.openChats { chat.handle(event: event) }
-                    self.handleGlobalEvent(event)
-                }
+                let keepGoing = await self.handleUpdate(
+                    update, from: connection, generation: generation, pendingSave: &pendingSave)
+                guard keepGoing else { return }
             }
         }
+    }
+
+    /// Test seam (plan Ruling 2): run one update through the pump's handling
+    /// as this connect's pump would, without a socket to produce it.
+    func handleUpdateForTesting(_ update: HermesConnection.Update) async {
+        guard let connection else { return }
+        var pendingSave: ServerCredentials?
+        _ = await handleUpdate(
+            update, from: connection, generation: connectGeneration, pendingSave: &pendingSave)
+    }
+
+    /// One pump step. False when the pump must stop (its connect was
+    /// superseded, or the connection is being torn down).
+    private func handleUpdate(
+        _ update: HermesConnection.Update, from connection: HermesConnection,
+        generation: Int, pendingSave: inout ServerCredentials?
+    ) async -> Bool {
+        switch update {
+        case .phase(let phase):
+            self.phase = phase
+            // The voice conversation shows its reconnecting state off these.
+            if case .disconnected = phase { voiceConversation?.controller.connectionLost() }
+            if case .connecting = phase { voiceConversation?.controller.connectionLost() }
+            if case .ready(let isReconnect) = phase {
+                if let credentials = pendingSave, let endpoint = self.endpoint {
+                    // Authed probe + live socket: now the connection
+                    // has earned a spot in the saved list. Persist the
+                    // authenticator's LIVE credentials, not the pair
+                    // connect() started with: the validation probe may
+                    // have rotated tokens (401 → refresh), and writing
+                    // the pre-rotation refresh token back strands the
+                    // next launch on a token the server already burned
+                    // — Nous reuse-detection then revokes the whole
+                    // session, forcing a browser sign-in (#37).
+                    let live = await connection.authenticator.credentials
+                    guard generation == self.connectGeneration else { return false }
+                    self.persistValidatedServer(
+                        endpoint: endpoint, credentials: live ?? credentials)
+                    pendingSave = nil
+                }
+                if !isReconnect {
+                    await self.loadBrowseData()
+                    guard generation == self.connectGeneration else { return false }
+                }
+                // Every open chat re-binds (#112) — concurrently, so
+                // one window's resume + replay doesn't queue the
+                // rest behind it — and so does the voice conversation.
+                // The pump still waits for all.
+                let chats = self.openChats
+                let voice = self.voiceConversation?.controller
+                await withTaskGroup(of: Void.self) { group in
+                    for chat in chats {
+                        group.addTask {
+                            await chat.connectionBecameReady(isReconnect: isReconnect)
+                        }
+                    }
+                    if let voice {
+                        group.addTask {
+                            await voice.connectionBecameReady(isReconnect: isReconnect)
+                        }
+                    }
+                }
+            }
+            if case .unreachable = phase {
+                // The connection gave up: nothing can reach the voice
+                // session any more (spec §1). No recents refresh — there
+                // is no server to ask.
+                endVoice(refresh: false)
+            }
+            if case .refused = phase {
+                endVoice(refresh: false)
+            }
+            if case .authExpired = phase {
+                // Credentials are dead. Token mode: the ephemeral
+                // token died with a backend restart — ask for a fresh
+                // dashboard URL. Gated mode: re-run sign-in. Present
+                // BEFORE disconnect — disconnect cancels this pump.
+                if self.serverStatus?.authRequired == true,
+                    let endpoint = self.endpoint
+                {
+                    await self.presentGatedLogin(
+                        endpoint: endpoint,
+                        note: HermesError.sessionExpired.errorDescription,
+                        generation: generation)
+                    // Superseded while the lookup was out: the
+                    // teardown belongs to a connection already gone,
+                    // and running it would kill its replacement.
+                    guard generation == self.connectGeneration else { return false }
+                } else {
+                    self.connectError = HermesError.unauthorized.errorDescription
+                }
+                self.disconnect()
+                return false
+            }
+        case .event(let event):
+            // Fan out (#112): each chat keeps only its runtime's
+            // events, and two windows on one session both get them.
+            for chat in self.openChats { chat.handle(event: event) }
+            voiceConversation?.controller.handle(event: event)
+            self.handleGlobalEvent(event)
+        }
+        return true
     }
 
     private func persistValidatedServer(

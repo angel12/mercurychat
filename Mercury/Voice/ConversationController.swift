@@ -95,6 +95,38 @@ final class ConversationController {
     private var hasPrompt: Bool { approval != nil || clarify != nil || !unanswerable.isEmpty }
     /// Ends the conversation view when the user speaks a stop word.
     var didEndByStopWord = false
+    /// Set by the host (`AppModel`): the user spoke a stop word. The
+    /// conversation screen may not be showing (Voice tab, spec §1), so the
+    /// host ends the conversation from here rather than from the view.
+    @ObservationIgnored var onStopWord: (() -> Void)?
+
+    // MARK: Shared-session coordination (Chat #112, spec §2)
+
+    /// The runtime session this conversation holds — what `session.close`
+    /// and server-request settlement are keyed by.
+    var runtimeID: String? { sessionBox.runtimeID }
+    /// The stored session a resume was asked for — set before the RPC goes
+    /// out, so a conversation still opening a session already claims it.
+    @ObservationIgnored private var requestedStoredID: String?
+
+    /// What this conversation holds or is opening, in Chat's terms, so
+    /// chats and voice never close a runtime the other holds.
+    var sessionClaims: Set<ChatController.SessionClaim> {
+        var claims: Set<ChatController.SessionClaim> = []
+        if let runtimeID = sessionBox.runtimeID { claims.insert(.runtime(runtimeID)) }
+        if let storedID = sessionBox.storedID { claims.insert(.stored(storedID)) }
+        if let requestedStoredID { claims.insert(.stored(requestedStoredID)) }
+        return claims
+    }
+
+    /// Set by the host: whether an open chat holds or is opening any of
+    /// these claims. `session.close` has no viewer check server-side, so
+    /// closing a shared runtime would kill that chat's live session.
+    @ObservationIgnored var isHeldElsewhere: ((Set<ChatController.SessionClaim>) -> Bool)?
+    /// Set by the host: this conversation settled server request
+    /// `requestID` on runtime `runtimeID`. Answering emits nothing on the
+    /// wire, so the chats on that runtime are told here.
+    @ObservationIgnored var serverRequestSettled: ((_ requestID: String, _ runtimeID: String) -> Void)?
 
     // Dev screen transcript (text path).
     struct DevMessage: Identifiable {
@@ -494,6 +526,7 @@ final class ConversationController {
             handle = try await sessionService.createSession(
                 cwd: cwd, profile: profile, title: title)
         case .resume(let storedID):
+            requestedStoredID = storedID
             handle = try await sessionService.resumeSession(storedID: storedID, profile: profile)
         }
         sessionBox.runtimeID = handle.runtimeID
@@ -609,7 +642,14 @@ final class ConversationController {
             microphone: audio.microphone,
             callbacks: ConversationCallbacks(
                 onStopWord: { [weak self] in
-                    Task { @MainActor in self?.didEndByStopWord = true }
+                    Task { @MainActor in
+                        guard let self else { return }
+                        self.didEndByStopWord = true
+                        // A superseded controller's late stop word must not
+                        // end whatever conversation replaced it.
+                        guard !self.isTornDown else { return }
+                        self.onStopWord?()
+                    }
                 },
                 onFatalError: { [weak self] message in
                     Task { @MainActor in self?.setupError = message }
@@ -700,13 +740,29 @@ final class ConversationController {
     /// can both call this without double-closing.
     private func closeSessionIfOpen() async {
         guard let sid = sessionBox.runtimeID else { return }
+        // Read before the runtime is consumed: it is one of the claims.
+        let claims = sessionClaims
         sessionBox.runtimeID = nil
         // Paired with the acquire in `openSession`: this guard only passes
         // once per session, so the release below fires exactly once per
         // acquire.
         releaseTTSLease()
         releaseSTTLease()
+        // A text chat on the same session keeps its runtime: release only
+        // this conversation's leases (spec §2).
+        guard isHeldElsewhere?(claims) != true else { return }
         await sessionService.closeSession(sessionID: sid)
+    }
+
+    /// A chat on this runtime answered server request `requestID`: drop the
+    /// matching prompt here too, through the normal event path so a pending
+    /// resume snapshot can't resurrect it afterwards — the same contract as
+    /// `ChatController.withdrawSettledRequest`.
+    func withdrawSettledRequest(_ requestID: String) {
+        handle(
+            event: GatewayEvent(
+                type: GatewayEvent.Kind.requestCancel, sessionID: sessionBox.runtimeID,
+                payload: ["id": .string(requestID), "reason": "answered"]))
     }
 
     /// Spawns the release (`active: false`) as its own fire-and-forget task
@@ -1885,7 +1941,7 @@ final class ConversationController {
     func respondApproval(choice: String) {
         guard let request = approval, !promptResponseInFlight else { return }
         let epoch = approvalEpoch
-        sendPromptResponse {
+        sendPromptResponse(settling: request.serverRequestID) {
             // A server-request approval (contract ≥ 7, issue #125) is only
             // resolved by `request.answer`. `.expired` counts as confirmed:
             // the backend has already moved on, so the sheet closes.
@@ -1908,7 +1964,7 @@ final class ConversationController {
         guard let request = clarify, !promptResponseInFlight else { return }
         let requestID = request.requestID
         let serverRequestID = request.serverRequestID
-        sendPromptResponse {
+        sendPromptResponse(settling: serverRequestID) {
             // Same routing and `.expired` rule as `respondApproval`.
             if let serverRequestID {
                 _ = try await $0.answerServerRequest(
@@ -1949,7 +2005,7 @@ final class ConversationController {
             answers.isEmpty
             ? .object([:])
             : .object(["answers": .object(submitted.mapValues(JSONValue.string))])
-        sendPromptResponse {
+        sendPromptResponse(settling: serverRequestID) {
             _ = try await $0.answerServerRequest(id: serverRequestID, result: result)
         } onConfirmed: { [weak self] in
             guard let self, self.clarify?.requestID == requestID else { return }
@@ -1966,7 +2022,7 @@ final class ConversationController {
     func declineUnanswerable() {
         guard let request = currentUnanswerable, !promptResponseInFlight else { return }
         let id = request.id
-        sendPromptResponse {
+        sendPromptResponse(settling: id) {
             _ = try await $0.answerServerRequest(id: id, result: request.declineResult)
         } onConfirmed: { [weak self] in
             self?.unanswerable.removeAll { $0.id == id }
@@ -1996,18 +2052,28 @@ final class ConversationController {
         await promptResponseTask?.value
     }
 
+    /// `settling` is the server request this response answers, if it is
+    /// one: once the answer is confirmed (delivered or expired — over either
+    /// way) the host is told, so chats on the same runtime drop their copy.
     private func sendPromptResponse(
+        settling serverRequestID: String? = nil,
         _ send: @escaping (any SessionServicing) async throws -> Void,
         onConfirmed: @escaping @MainActor () -> Void,
         applyError: @escaping @MainActor () -> Bool
     ) {
         promptResponseInFlight = true
         promptSendError = nil
+        // The runtime the request arrived on; a reconnect may re-anchor the
+        // box before the answer returns.
+        let runtimeID = sessionBox.runtimeID
         promptResponseTask = Task {
             defer { promptResponseInFlight = false }
             do {
                 try await send(sessionService)
                 onConfirmed()
+                if let serverRequestID, let runtimeID {
+                    serverRequestSettled?(serverRequestID, runtimeID)
+                }
                 if applyError() { promptSendError = nil }
                 resumeIfUnprompted()
             } catch {
