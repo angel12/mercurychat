@@ -52,7 +52,7 @@ struct AttachmentUploadTests {
                     return staged("/staged/\(att.filename)")
                 },
                 detach: { path in await log.record("detach:\(path)") },
-                submit: { _ in
+                submit: { _ -> String? in
                     await log.record("submit")
                     return nil
                 })
@@ -109,7 +109,7 @@ struct AttachmentUploadTests {
             attachments: [pending("a.csv", kind: .file)],
             attach: { _ in StagedAttachment(detachPaths: [], refText: "@file:a.csv") },
             detach: { _ in Issue.record("detach must not be called") },
-            submit: { text in
+            submit: { text -> String? in
                 await log.record("submit:\(text)")
                 return nil
             })
