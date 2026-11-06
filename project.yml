@@ -36,6 +36,7 @@ targets:
       - path: Mercury/Push/SessionActivityTracker.swift
       - path: Mercury/Voice/ConversationController.swift
       - path: Mercury/Voice/SessionServicing.swift
+      - path: Mercury/Voice/TurnAttribution.swift
       - path: Mercury/Voice/UnanswerableRequest.swift
       - path: Mercury/Voice/VoiceConversationHost.swift
       - path: MercuryTests
