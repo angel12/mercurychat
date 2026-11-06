@@ -77,9 +77,15 @@ struct ChatView: View {
                             ClarifySheet(controller: controller, request: request)
                         }
                     case .sudo(let request):
-                        SudoSheet(controller: controller, request: request)
+                        SudoSheet(
+                            request: request,
+                            submit: { await sendSudo(request, $0, controller: controller) },
+                            decline: { await sendSudo(request, "", controller: controller) })
                     case .secret(let request):
-                        SecretSheet(controller: controller, request: request)
+                        SecretSheet(
+                            request: request,
+                            submit: { await sendSecret(request, $0, controller: controller) },
+                            decline: { await sendSecret(request, "", controller: controller) })
                     }
                 }
                 // A swipe-dismiss would hide the prompt while the agent
@@ -88,6 +94,30 @@ struct ChatView: View {
                 // the only way out.
                 .interactiveDismissDisabled()
             }
+        }
+    }
+
+    private func sendSudo(
+        _ request: SudoRequest, _ password: String, controller: ChatController
+    ) async -> CredentialSubmitOutcome {
+        switch await controller.respondSudo(requestID: request.requestID, password: password) {
+        case .delivered, .expired:
+            return controller.store.pendingSudo == nil ? .done : .stay
+        case .failed:
+            return .failed(
+                controller.errorMessage ?? "The password didn't reach the server — try again.")
+        }
+    }
+
+    private func sendSecret(
+        _ request: SecretRequest, _ value: String, controller: ChatController
+    ) async -> CredentialSubmitOutcome {
+        switch await controller.respondSecret(requestID: request.requestID, value: value) {
+        case .delivered, .expired:
+            return controller.store.pendingSecret == nil ? .done : .stay
+        case .failed:
+            return .failed(
+                controller.errorMessage ?? "The credential didn't reach the server — try again.")
         }
     }
 
@@ -1601,144 +1631,9 @@ private struct BatchClarifySheet: View {
     }
 }
 
-private struct SudoSheet: View {
-    let controller: ChatController
-    let request: SudoRequest
-    @Environment(\.dismiss) private var dismiss
-    @State private var password = ""
-    @State private var submitError: String?
-    @State private var isSubmitting = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text("The agent needs your administrator password to continue.")
-                } footer: {
-                    Text("Sent directly to the agent's sudo prompt; never stored.")
-                }
-                SubmitErrorSection(error: submitError)
-                SecureField("Password", text: $password)
-            }
-            .disabled(isSubmitting)
-            .navigationTitle("Sudo Password")
-            // The password must not outlive the sheet, whatever dismissed it
-            // (delivery, expiry event, turn end, swipe on a future OS).
-            .onDisappear { password = "" }
-            #if !os(macOS)
-                .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Decline") { respond("") }
-                        .disabled(isSubmitting)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Continue") { respond(password) }
-                        .disabled(isSubmitting || password.isEmpty)
-                }
-            }
-        }
-        #if os(macOS)
-            .frame(minWidth: 400, minHeight: 220)
-        #endif
-    }
-
-    private func respond(_ value: String) {
-        guard !isSubmitting else { return }
-        isSubmitting = true
-        submitError = nil
-        Task {
-            let outcome = await controller.respondSudo(
-                requestID: request.requestID, password: value)
-            isSubmitting = false
-            switch outcome {
-            case .delivered, .expired:
-                // The value has served its purpose the moment the RPC
-                // settles — clear it BEFORE the dismiss animation, not
-                // whenever SwiftUI releases the sheet's state (#19).
-                password = ""
-                if controller.store.pendingSudo == nil { dismiss() }
-            case .failed:
-                // Kept for the retry the sheet is offering.
-                submitError = controller.errorMessage
-                    ?? "The password didn't reach the server — try again."
-            }
-        }
-    }
-}
-
-private struct SecretSheet: View {
-    let controller: ChatController
-    let request: SecretRequest
-    @Environment(\.dismiss) private var dismiss
-    @State private var value = ""
-    @State private var submitError: String?
-    @State private var isSubmitting = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text(request.prompt.isEmpty ? "A skill needs a credential." : request.prompt)
-                } footer: {
-                    if let envVar = request.envVar {
-                        Text("Stored on the server as \(envVar); never kept on this device.")
-                    }
-                }
-                SubmitErrorSection(error: submitError)
-                SecureField("Value", text: $value)
-            }
-            .disabled(isSubmitting)
-            .navigationTitle("Credential")
-            // The credential must not outlive the sheet, whatever dismissed
-            // it (delivery, expiry event, turn end).
-            .onDisappear { value = "" }
-            #if !os(macOS)
-                .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Skip") { respond("") }
-                        .disabled(isSubmitting)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { respond(value) }
-                        .disabled(isSubmitting || value.isEmpty)
-                }
-            }
-        }
-        #if os(macOS)
-            .frame(minWidth: 400, minHeight: 220)
-        #endif
-    }
-
-    private func respond(_ answer: String) {
-        guard !isSubmitting else { return }
-        isSubmitting = true
-        submitError = nil
-        Task {
-            let outcome = await controller.respondSecret(
-                requestID: request.requestID, value: answer)
-            isSubmitting = false
-            switch outcome {
-            case .delivered, .expired:
-                // Clear BEFORE the dismiss animation, not whenever SwiftUI
-                // releases the sheet's state (#19).
-                value = ""
-                if controller.store.pendingSecret == nil { dismiss() }
-            case .failed:
-                // Kept for the retry the sheet is offering.
-                submitError = controller.errorMessage
-                    ?? "The credential didn't reach the server — try again."
-            }
-        }
-    }
-}
-
 /// Inline failure row for the blocking-prompt sheets: the sheet stays up so
 /// the answer can be retried.
-private struct SubmitErrorSection: View {
+struct SubmitErrorSection: View {
     let error: String?
 
     var body: some View {
