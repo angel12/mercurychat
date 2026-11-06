@@ -1571,4 +1571,35 @@ struct TranscriptToolDetailTests {
         #expect(row.resultText == "a b")
         #expect(row.argsText == #"{"cmd": "ls"}"#)
     }
+
+    @Test func sessionInfoCarriesTheSessionSettings() {
+        let store = TranscriptStore()
+        store.apply(event("session.info", #"{"lazy": true, "model": "ignored"}"#))
+        #expect(store.model == nil)
+        store.apply(
+            event(
+                "session.info",
+                #"{"model": "gpt-x", "provider": "openai", "reasoning_effort": "high", "yolo": true, "approval_mode": "smart"}"#))
+        #expect(store.model == "gpt-x")
+        #expect(store.provider == "openai")
+        #expect(store.reasoningEffort == "high")
+        #expect(store.yolo == true)
+        #expect(store.approvalMode == "smart")
+        // A later partial snapshot keeps what it doesn't mention, and turns YOLO off explicitly.
+        store.apply(event("session.info", #"{"yolo": false, "reasoning_effort": ""}"#))
+        #expect(store.yolo == false)
+        #expect(store.reasoningEffort == "high")
+    }
+
+    @Test func sideAnswerLandsAsANoteWithoutTouchingTheTurn() {
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("btw.complete", #"{"task_id": "t1", "question": "why?", "text": "Because."}"#))
+        guard case .notice(let notice)? = store.items.last else {
+            Issue.record("expected a notice")
+            return
+        }
+        #expect(notice.text == "/btw why?\n\nBecause.")
+        #expect(store.running)
+    }
 }

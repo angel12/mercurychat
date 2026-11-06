@@ -12,7 +12,7 @@ struct TestRPCRequest: Sendable {
 /// A scripted answer to one WS JSON-RPC request.
 indirect enum TestRPCReply: Sendable {
     case result(JSONValue)
-    case error(code: Int, message: String)
+    case error(code: Int, message: String, data: JSONValue? = nil)
     /// Send the reply only once the gate opens. The hold happens off the
     /// socket's queue, so later requests on the same WebSocket are still
     /// answered while this one waits.
@@ -71,6 +71,9 @@ final class HermesTestServer: @unchecked Sendable {
     /// Scripted JSON-RPC errors: return `(code, message)` to answer a request
     /// with an error instead of a result.
     private let rpcErrorHandler: (@Sendable (String, JSONValue) -> (Int, String)?)?
+    /// Scripted whole replies, checked first: return any `TestRPCReply`
+    /// (an error with `data`, say) to answer the request with it.
+    private let rpcReplyHandler: (@Sendable (String, JSONValue) -> TestRPCReply?)?
     /// Scripted holds: return a gate to delay that request's reply.
     private let rpcHoldHandler: (@Sendable (String, JSONValue) -> TestReplyGate?)?
     private var connections: [Connection] = []
@@ -95,6 +98,7 @@ final class HermesTestServer: @unchecked Sendable {
         rpc: (@Sendable (String, JSONValue) -> JSONValue?)? = nil,
         rpcError: (@Sendable (String, JSONValue) -> (Int, String)?)? = nil,
         rpcHold: (@Sendable (String, JSONValue) -> TestReplyGate?)? = nil,
+        rpcReply: (@Sendable (String, JSONValue) -> TestRPCReply?)? = nil,
         replayEpoch: String? = nil,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) async throws -> HermesTestServer {
@@ -103,7 +107,7 @@ final class HermesTestServer: @unchecked Sendable {
         let listener = try NWListener(using: parameters)
         let server = HermesTestServer(
             listener: listener, rpcHandler: rpc, rpcErrorHandler: rpcError,
-            rpcHoldHandler: rpcHold, handler: handler)
+            rpcReplyHandler: rpcReply, rpcHoldHandler: rpcHold, handler: handler)
         server.replayEpoch = replayEpoch
         try await server.waitUntilReady()
         return server
@@ -113,12 +117,14 @@ final class HermesTestServer: @unchecked Sendable {
         listener: NWListener,
         rpcHandler: (@Sendable (String, JSONValue) -> JSONValue?)?,
         rpcErrorHandler: (@Sendable (String, JSONValue) -> (Int, String)?)?,
+        rpcReplyHandler: (@Sendable (String, JSONValue) -> TestRPCReply?)?,
         rpcHoldHandler: (@Sendable (String, JSONValue) -> TestReplyGate?)?,
         handler: @escaping @Sendable (TestHTTPRequest) -> TestHTTPResponse
     ) {
         self.listener = listener
         self.rpcHandler = rpcHandler
         self.rpcErrorHandler = rpcErrorHandler
+        self.rpcReplyHandler = rpcReplyHandler
         self.rpcHoldHandler = rpcHoldHandler
         self.handler = handler
         // Installed BEFORE start(): a started NWListener without a
@@ -134,7 +140,9 @@ final class HermesTestServer: @unchecked Sendable {
                     self.capturedRPCs.append(TestRPCRequest(method: method, params: params))
                 }
                 let reply: TestRPCReply
-                if let (code, message) = self.rpcErrorHandler?(method, params) {
+                if let scripted = self.rpcReplyHandler?(method, params) {
+                    reply = scripted
+                } else if let (code, message) = self.rpcErrorHandler?(method, params) {
                     reply = .error(code: code, message: message)
                 } else {
                     reply = .result(self.rpcHandler?(method, params) ?? .object([:]))
@@ -413,8 +421,10 @@ final class HermesTestServer: @unchecked Sendable {
             switch reply {
             case .result(let result):
                 response["result"] = result
-            case .error(let code, let message):
-                response["error"] = ["code": .number(Double(code)), "message": .string(message)]
+            case .error(let code, let message, let data):
+                var error: [String: JSONValue] = ["code": .number(Double(code)), "message": .string(message)]
+                if let data { error["data"] = data }
+                response["error"] = .object(error)
             case .held:
                 return  // Holds don't nest.
             }

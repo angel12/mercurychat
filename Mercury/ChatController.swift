@@ -93,6 +93,18 @@ final class ChatController: Identifiable {
     /// never fork. The composer path reroutes `/new` and `/reset` to
     /// `/compact` (BotChatPolicy); regular sessions keep full `/new` freedom.
     var isCanonicalBotChat = false
+    /// `/new` or `/reset` in a regular chat: the view opens a new session
+    /// (the server's slash worker can't fork this socket's session).
+    var onNewChatRequested: (() -> Void)?
+    /// Bare `/model` or `/reasoning`: the view presents the session settings.
+    var settingsRequested = false
+    /// A slash command asked to put text in the composer (`/undo`). The view
+    /// moves it into the field and clears this.
+    var composerPrefill: String?
+    /// The prompt to (re)send for an echo whose bubble shows something else:
+    /// a skill command's bubble shows `/work …` while the prompt is the
+    /// expanded skill body.
+    private var promptTextForEcho: [String: String] = [:]
     private static let logger = Logger(subsystem: "Mercury", category: "ChatController")
     /// Older-history paging state (order=latest offsets count back from the
     /// newest row).
@@ -859,6 +871,10 @@ final class ChatController: Identifiable {
             return
         }
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        if attachments.isEmpty, let command = SlashCommand(trimmed) {
+            await runSlash(command)
+            return
+        }
         let echoed = attachments.map(Self.echoAttachment(for:))
         let echoID = store.appendUserMessage(trimmed, attachments: echoed, state: .sending)
         if !attachments.isEmpty { pendingUploads[echoID] = attachments }
@@ -888,7 +904,7 @@ final class ChatController: Identifiable {
             message.sendState == .failed
         else { return }
         store.setUserMessageState(id: messageID, .sending)
-        await dispatch(text: message.text, echoID: messageID)
+        await dispatch(text: promptTextForEcho[messageID] ?? message.text, echoID: messageID)
     }
 
     private func dispatch(text: String, echoID: String) async {
@@ -919,7 +935,7 @@ final class ChatController: Identifiable {
             // simply leaves them unreferenced. Retrying a file send re-stages
             // it and the earlier orphan stays on the gateway disk as
             // `name-2.ext`; that residual is accepted.
-            let status = try await AttachmentUpload.dispatch(
+            let receipt = try await AttachmentUpload.dispatch(
                 text: text,
                 attachments: attachments,
                 // @Sendable: the sequencer is nonisolated, so these closures
@@ -975,13 +991,23 @@ final class ChatController: Identifiable {
                     }.value
                 },
                 submit: { @Sendable [connection] text in
-                    try await connection.submitPrompt(sessionID: runtimeID, text: text)
+                    try await connection.submit(sessionID: runtimeID, text: text)
                 })
+            let status = receipt.status
             pendingUploads.removeValue(forKey: echoID)
+            promptTextForEcho.removeValue(forKey: echoID)
             // The DB row exists after the first prompt; a created session
             // learns its stored id via session.info events.
             store.setUserMessageState(id: echoID, status == "queued" ? .queued : .sent)
             noteSessionActivity()
+            if receipt.forwarded {
+                // One gateway owns each chat (hermes v0.22+). It is running a
+                // turn here for another app, a bot or cron, so the prompt
+                // joined that owner's queue instead of running now.
+                store.appendNotice(
+                    "Another app or bot is running a turn in this chat. Your message is queued behind it and runs once that turn ends."
+                )
+            }
             switch status {
             case "redirected":
                 store.appendNotice("Redirecting the current turn to your message…")
@@ -991,12 +1017,181 @@ final class ChatController: Identifiable {
             default:
                 break  // streaming/queued are visible on the bubble itself.
             }
+        } catch let error as HermesError
+            where error.rpcReason == HermesError.RefusalReason.sessionOwnerUnconfirmed
+        {
+            // The owning gateway may have queued it already: no retry, or a
+            // second copy would run. The server's message says to check.
+            store.setUserMessageState(id: echoID, .unconfirmed)
+            pendingUploads.removeValue(forKey: echoID)
+            promptTextForEcho.removeValue(forKey: echoID)
+            errorMessage = Self.describe(error)
         } catch {
             // The exact echo is marked, not removed: the user's text is
             // preserved for a one-tap retry (#17).
             store.setUserMessageState(id: echoID, .failed)
             errorMessage = Self.describe(error)
         }
+    }
+
+    // MARK: Slash commands
+
+    /// Run a composer slash command the way Desktop does (hermes v0.23):
+    /// `slash.exec`, falling back to `command.dispatch`, and act on the
+    /// directive it returns. A few commands are the client's job.
+    private func runSlash(_ command: SlashCommand, aliasDepth: Int = 0) async {
+        switch command.name {
+        case "new", "reset":
+            // Over this socket the slash worker can't start a session (it
+            // times out with 5030); Desktop opens a new chat itself too.
+            onNewChatRequested?()
+            return
+        case "model" where command.arg.isEmpty, "reasoning" where command.arg.isEmpty:
+            settingsRequested = true
+            return
+        case "btw":
+            await askSideQuestion(command.arg)
+            return
+        default:
+            break
+        }
+        guard let runtimeID else {
+            errorMessage = "The session isn't open yet — try again in a moment."
+            return
+        }
+        do {
+            let outcome = try await connection.runSlash(sessionID: runtimeID, command: command)
+            await apply(outcome, of: command, aliasDepth: aliasDepth)
+        } catch {
+            store.appendNotice("/\(command.name) failed: \(Self.describe(error))", level: .error)
+        }
+    }
+
+    private func apply(_ outcome: SlashOutcome, of command: SlashCommand, aliasDepth: Int) async {
+        switch outcome {
+        case .output(let text):
+            let body = text.trimmingCharacters(in: .newlines)
+            store.appendNotice(
+                "/\(command.commandText)\n\(body.isEmpty ? "(no output)" : body)", level: .output)
+        case .alias(let target):
+            // An alias chain that loops back on itself would never end.
+            guard aliasDepth < 3,
+                let next = SlashCommand("/\(target)" + (command.arg.isEmpty ? "" : " \(command.arg)"))
+            else {
+                store.appendNotice("/\(command.name): alias loop", level: .error)
+                return
+            }
+            await runSlash(next, aliasDepth: aliasDepth + 1)
+        case .prefill(let message, let notice):
+            if let notice, !notice.isEmpty { store.appendNotice(notice) }
+            composerPrefill = message
+        case .send(let message, let display, let notice):
+            if let notice, !notice.isEmpty { store.appendNotice(notice) }
+            guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                store.appendNotice("/\(command.name): nothing to send", level: .error)
+                return
+            }
+            // A skill's message is the expanded skill body, written for the
+            // model: the bubble shows the invocation instead.
+            let shown = display ?? message
+            let echoID = store.appendUserMessage(shown, attachments: [], state: .sending)
+            if shown != message { promptTextForEcho[echoID] = message }
+            await dispatch(text: message, echoID: echoID)
+        }
+    }
+
+    /// `/btw` — answered on the side from a snapshot of the conversation;
+    /// the running turn keeps going. The answer lands as a note.
+    private func askSideQuestion(_ question: String) async {
+        guard !question.isEmpty else {
+            store.appendNotice("Usage: /btw <question> — asks on the side without stopping the agent.")
+            return
+        }
+        guard let runtimeID else {
+            errorMessage = "The session isn't open yet — try again in a moment."
+            return
+        }
+        do {
+            try await connection.askSideQuestion(sessionID: runtimeID, text: question)
+            store.appendNotice("Asking on the side: \(question)")
+        } catch {
+            store.appendNotice("/btw failed: \(Self.describe(error))", level: .error)
+        }
+    }
+
+    // MARK: Session settings
+
+    enum ModelSwitchOutcome: Equatable {
+        case switched(warning: String?)
+        /// An expensive model: nothing changed until the user confirms.
+        case needsConfirmation(String)
+        case failed(String)
+    }
+
+    func loadModelOptions() async throws -> ModelOptions {
+        try await connection.loadModelOptions(sessionID: runtimeID)
+    }
+
+    /// Switch this chat's model only; the profile default stays. The new
+    /// model shows once the server's `session.info` reports it.
+    func switchModel(_ model: String, provider: String, confirmed: Bool = false) async
+        -> ModelSwitchOutcome
+    {
+        guard let runtimeID else { return .failed("The session isn't open yet.") }
+        do {
+            let result = try await connection.setSessionModel(
+                sessionID: runtimeID, model: model, provider: provider,
+                confirmExpensiveModel: confirmed)
+            if result.confirmRequired {
+                return .needsConfirmation(
+                    result.confirmMessage ?? "\(model) costs more than your current model.")
+            }
+            if let warning = result.warning, !warning.isEmpty { store.appendNotice(warning) }
+            return .switched(warning: result.warning)
+        } catch {
+            return .failed(Self.describe(error))
+        }
+    }
+
+    /// Nil on success, else the error to show.
+    func setReasoning(_ level: String) async -> String? {
+        guard let runtimeID else { return "The session isn't open yet." }
+        do {
+            _ = try await connection.setSessionReasoning(sessionID: runtimeID, level: level)
+            return nil
+        } catch {
+            return Self.describe(error)
+        }
+    }
+
+    func setYolo(_ enabled: Bool) async -> String? {
+        guard let runtimeID else { return "The session isn't open yet." }
+        do {
+            _ = try await connection.setSessionYolo(sessionID: runtimeID, enabled: enabled)
+            return nil
+        } catch {
+            return Self.describe(error)
+        }
+    }
+
+    /// The approval mode of the profile this chat runs in.
+    func loadApprovalMode() async -> ApprovalMode? {
+        try? await connection.approvalMode(profile: effectiveProfile ?? profile)
+    }
+
+    func setApprovalMode(_ mode: ApprovalMode) async -> String? {
+        do {
+            _ = try await connection.setApprovalMode(mode, profile: effectiveProfile ?? profile)
+            return nil
+        } catch {
+            return Self.describe(error)
+        }
+    }
+
+    /// Ranked completions for the composer's `/` token; empty on any error,
+    /// so a slow or old backend just shows no list.
+    func slashCompletions(for text: String) async -> SlashCompletions? {
+        try? await connection.slashCompletions(text: text, sessionID: runtimeID)
     }
 
     /// A Bot Chat never forks: compress the working context in place and

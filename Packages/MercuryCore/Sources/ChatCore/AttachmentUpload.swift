@@ -27,13 +27,15 @@ public struct StagedAttachment: Sendable, Equatable {
 /// the full dispatch. Staged files need no such unstaging: nothing reads
 /// them until a prompt names them, and the failed prompt never shipped.
 public enum AttachmentUpload {
-    public static func dispatch(
+    /// Returns whatever `submit` returns: the server's status, or its whole
+    /// receipt.
+    public static func dispatch<Receipt>(
         text: String,
         attachments: [PendingAttachment],
         attach: (PendingAttachment) async throws -> StagedAttachment,
         detach: (String) async -> Void,
-        submit: (String) async throws -> String?
-    ) async throws -> String? {
+        submit: (String) async throws -> Receipt
+    ) async throws -> Receipt {
         var staged: [StagedAttachment] = []
         do {
             for attachment in attachments {
