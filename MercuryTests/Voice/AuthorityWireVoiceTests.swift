@@ -679,6 +679,60 @@ struct AuthorityWireVoiceTests {
         await controller.teardown()
     }
 
+    /// MercuryKit 0.10.0 stamps frames with their admission: two queued voice
+    /// prompts are both spoken, another app's turn between them is not, and
+    /// a turn that starts before its receipt is fed once the receipt names it.
+    @Test func stampedFramesAttributeEveryTurnByAdmission() async throws {
+        let service = ScriptedSessionService()
+        service.setAuthority(true)
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        let fed = FedEvents()
+        let calls = SubmissionIDLog()
+        let thirdGate = CallGate()
+        let controller = makeWireController(service, fed: fed) { _, _, _, id in
+            switch await calls.record(id) {
+            case 0: return PromptSubmission(status: "queued", admissionID: "a1")
+            case 1: return PromptSubmission(status: "queued", admissionID: "a2")
+            default:
+                await thirdGate.arrive()
+                return PromptSubmission(status: "streaming", admissionID: "a3")
+            }
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+        func stamped(_ event: GatewayEvent, _ admission: String) -> GatewayEvent {
+            var event = event
+            event.admissionID = admission
+            return event
+        }
+
+        controller.submitTextPrompt("first")
+        await controller.textSubmissionTask?.value
+        controller.submitTextPrompt("second")
+        await controller.textSubmissionTask?.value
+
+        for (admission, text) in [("a1", "one"), ("b1", "theirs"), ("a2", "two")] {
+            controller.handle(event: stamped(start(), admission))
+            controller.handle(event: stamped(delta(text), admission))
+            controller.handle(event: stamped(complete(text), admission))
+        }
+        #expect(!controller.isWaitingForTurn)
+
+        controller.submitTextPrompt("third")
+        await thirdGate.waitUntilEntered()
+        controller.handle(event: stamped(start(), "a3"))  // before the receipt
+        controller.handle(event: stamped(delta("three"), "a3"))
+        await thirdGate.release()
+        await controller.textSubmissionTask?.value
+        controller.handle(event: stamped(complete("three"), "a3"))
+
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.texts.allSatisfy { !$0.contains("theirs") })
+        let state = await controller.diagnosticTrackerState()
+        #expect(state.pendingText == "one\n\ntwo\n\nthree")
+        #expect(!state.busy)
+        await controller.teardown()
+    }
+
     /// Legacy wire: no admission ids. Everything before the next start
     /// belongs to the turn ahead; that start is ours.
     @Test func forwardedReceiptSkipsTheRunningTurn() async throws {
