@@ -45,6 +45,31 @@ extension SharedMeterTests {
             await controller.teardown()
         }
 
+        /// Back-to-back calls with no yield between them: the second must see
+        /// the first's effect, not the lagging UI state.
+        @Test func backToBackSetMutedCallsSettleCorrectly() async throws {
+            let voices = ConversationRecorder()
+            voices.script = { _, service in
+                service.enqueueCreate(Fixtures.resumeResult(runtimeID: "rt-a", storedID: "stored-a"))
+            }
+            let controller = voices.make(connection: makeUndialedConnection(), profile: nil)
+            var reported: [Bool] = []
+            controller.onMuteChanged = { reported.append($0) }
+            await controller.begin(mode: .create(cwd: nil, title: nil))
+            controller.setMuted(true)
+            controller.setMuted(true)
+            #expect(await eventually { controller.voiceState.muted })
+            try await Task.sleep(for: .milliseconds(150))
+            #expect(controller.voiceState.muted)
+            #expect(reported == [true])
+            controller.setMuted(true)
+            controller.setMuted(false)
+            #expect(await eventually { !controller.voiceState.muted })
+            try await Task.sleep(for: .milliseconds(150))
+            #expect(!controller.voiceState.muted)
+            await controller.teardown()
+        }
+
         @Test func setupErrorIsReported() async {
             let voices = ConversationRecorder()
             // No scripted create answer: ScriptedSessionService throws, so

@@ -855,6 +855,8 @@ final class ConversationController {
     func teardown() async {
         supersede()
         stateTask?.cancel()
+        muteTask?.cancel()
+        muteTask = nil
         approvalAnnouncement?.cancel()
         clarifyAnnouncement?.cancel()
         credentialAnnouncement?.cancel()
@@ -2104,12 +2106,21 @@ final class ConversationController {
     @ObservationIgnored var onSetupError: ((String) -> Void)?
 
     /// Idempotent mute for the system call UI; `toggleMute` stays for buttons.
+    ///
+    /// Calls are chained so they act in order, and each compares against the
+    /// engine's own state: `voiceState` lags it by the async UI stream.
     func setMuted(_ muted: Bool) {
-        Task {
-            guard let engine, voiceState.muted != muted else { return }
-            await engine.toggleMute()
+        let previous = muteTask
+        muteTask = Task { [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled, let engine = self.engine else { return }
+            if await engine.uiState.muted != muted {
+                await engine.toggleMute()
+            }
         }
     }
+
+    @ObservationIgnored private var muteTask: Task<Void, Never>?
 
     /// The call's audio session was taken (another call, hold): pause like
     /// an interruption.
