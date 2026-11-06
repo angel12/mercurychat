@@ -596,6 +596,112 @@ extension SharedMeterTests {
             await finish(h)
         }
 
+        // MARK: Prompt-id prompts (authority wire)
+
+        /// An authority-wire prompt event (`prompt_id`, no server request id)
+        /// on runtime `rt-a`, delivered through the pump.
+        private func promptEvent(_ type: String, _ payload: [String: JSONValue]) -> HermesConnection.Update {
+            .event(GatewayEvent(type: type, sessionID: "rt-a", payload: .object(payload)))
+        }
+
+        /// Wraps the host's settle hook so a test sees whether it fired.
+        private func recordSettles(_ voice: ConversationController) -> SettleLog {
+            let log = SettleLog()
+            let host = voice.serverRequestSettled
+            voice.serverRequestSettled = { requestID, runtimeID in
+                log.append(requestID)
+                host?(requestID, runtimeID)
+            }
+            return log
+        }
+
+        /// Spec "Revision: authority wire": a prompt-id approval is answered
+        /// by `approval.respond` (prompt id + generation) and closed for every
+        /// viewer by the server's `approval.settled` — no app-side fan-out.
+        @Test func promptIDApprovalSettledClearsVoiceAndChat() async throws {
+            let h = try await connected(ids: [0: "a"])
+            let chat = try await resumedChat(h.model, "stored-a")
+            await h.model.startVoice(session("a"))
+            let launch = h.voices.launches[0]
+            let voice = launch.controller
+            let settles = recordSettles(voice)
+
+            await h.model.handleUpdateForTesting(
+                promptEvent(
+                    GatewayEvent.Kind.approvalRequest,
+                    [
+                        "prompt_id": .string("p1"), "execution_generation": .number(3),
+                        "command": .string("rm -rf build"),
+                    ]))
+            #expect(await eventually { chat.store.pendingApproval != nil && voice.approval != nil })
+            #expect(voice.approval?.serverRequestID == nil)
+
+            // Hold voice's answer in flight: the settle, not the reply,
+            // must close the sheet.
+            let gate = CallGate()
+            launch.service.promptResponseGate = gate
+            voice.respondApproval(choice: "once")
+            await gate.waitUntilEntered()
+            let answered = try #require(launch.service.respondedApprovals.first)
+            #expect(answered.requestID == "p1")
+            #expect(answered.executionGeneration == 3)
+            #expect(!launch.service.promptResponses.contains {
+                if case .requestAnswer = $0 { return true }
+                return false
+            })
+
+            await h.model.handleUpdateForTesting(
+                promptEvent(GatewayEvent.Kind.approvalSettled, ["prompt_id": .string("p1")]))
+            #expect(voice.approval == nil, "voice kept the settled prompt")
+            #expect(await eventually { chat.store.pendingApproval == nil }, "the chat kept the card")
+
+            await gate.release()
+            await voice.awaitPromptResponse()
+            #expect(settles.values.isEmpty, "a prompt-id answer went through the server-request fan-out")
+            await finish(h)
+        }
+
+        @Test func promptIDClarifySettledClearsVoiceAndChat() async throws {
+            let h = try await connected(ids: [0: "a"])
+            let chat = try await resumedChat(h.model, "stored-a")
+            await h.model.startVoice(session("a"))
+            let launch = h.voices.launches[0]
+            let voice = launch.controller
+            let settles = recordSettles(voice)
+
+            await h.model.handleUpdateForTesting(
+                promptEvent(
+                    GatewayEvent.Kind.clarifyRequest,
+                    [
+                        "prompt_id": .string("p1"), "execution_generation": .number(4),
+                        "question": .string("Which branch?"),
+                    ]))
+            #expect(await eventually { chat.store.pendingClarify != nil && voice.clarify != nil })
+            #expect(voice.clarify?.serverRequestID == nil)
+
+            let gate = CallGate()
+            launch.service.promptResponseGate = gate
+            voice.respondClarify(answer: "main")
+            await gate.waitUntilEntered()
+            let answered = try #require(launch.service.respondedClarifies.first)
+            #expect(answered.requestID == "p1")
+            #expect(answered.executionGeneration == 4)
+            #expect(!launch.service.promptResponses.contains {
+                if case .requestAnswer = $0 { return true }
+                return false
+            })
+
+            await h.model.handleUpdateForTesting(
+                promptEvent(GatewayEvent.Kind.clarifySettled, ["prompt_id": .string("p1")]))
+            #expect(voice.clarify == nil, "voice kept the settled prompt")
+            #expect(await eventually { chat.store.pendingClarify == nil }, "the chat kept the card")
+
+            await gate.release()
+            await voice.awaitPromptResponse()
+            #expect(settles.values.isEmpty, "a prompt-id answer went through the server-request fan-out")
+            await finish(h)
+        }
+
         // MARK: Shared level meter (R25)
 
         /// R25 `delayedCleanupCannotTakeTheLevelMeterFromTheReplacement` and
@@ -630,6 +736,14 @@ extension SharedMeterTests {
             await finish(h)
         }
     }
+}
+
+/// Server request ids the voice conversation reported settled.
+private final class SettleLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: [String] = []
+    var values: [String] { lock.withLock { ids } }
+    func append(_ id: String) { lock.withLock { ids.append(id) } }
 }
 
 /// The connection phase a scripted close saw, read from the test.

@@ -12,7 +12,7 @@ struct R28TextSubmissionTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, _, _ in
+            submitPrompt: { _, _, _, _ in
                 await gate.arrive()
                 throw HermesError.connectionClosed("secret-token")
             })
@@ -43,8 +43,9 @@ struct R28TextSubmissionTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { sid, text, interrupted in
+            submitPrompt: { sid, text, interrupted, _ in
                 try await submission.submit(sid, text, interrupted)
+                return PromptSubmission(status: "streaming")
             })
         try await controller.openSession(mode: .create(cwd: nil, title: nil))
         controller.textDraft = " retry me "
@@ -70,9 +71,10 @@ struct R28TextSubmissionTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, text, _ in
+            submitPrompt: { _, text, _, _ in
                 await calls.record(text)
                 await gate.arrive()
+                return PromptSubmission(status: "streaming")
             })
         try await controller.openSession(mode: .create(cwd: nil, title: nil))
         controller.textDraft = "first"
@@ -100,10 +102,11 @@ struct R28TextSubmissionTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, text, _ in
+            submitPrompt: { _, text, _, _ in
                 await calls.record(text)
                 await gate.arrive()
                 if fails { throw HermesError.notConnected }
+                return PromptSubmission(status: "streaming")
             })
         try await controller.openSession(mode: .create(cwd: nil, title: nil))
         controller.textDraft = "abandoned"
@@ -130,7 +133,7 @@ struct R28TextSubmissionTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, _, _ in
+            submitPrompt: { _, _, _, _ in
                 throw HermesError.rpcError(
                     code: HermesError.RPCCode.sessionSlotRefused, message: "secret-token",
                     data: ["reason": .string(HermesError.RefusalReason.sessionNotOwned)])
@@ -193,7 +196,10 @@ struct R28TextSubmissionTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, text, _ in await calls.record(text) })
+            submitPrompt: { _, text, _, _ in
+                await calls.record(text)
+                return PromptSubmission(status: "streaming")
+            })
         try await controller.openSession(mode: .create(cwd: nil, title: nil))
         controller.connectionLost()
         controller.textDraft = "offline draft"

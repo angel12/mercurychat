@@ -27,6 +27,8 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
     private var _activatedIDs: [String] = []
     private var _closedIDs: [String] = []
     private var _promptResponses: [PromptResponse] = []
+    private var _respondedApprovals: [ApprovalRequest] = []
+    private var _respondedClarifies: [ClarifyRequest] = []
     private var answerReplies: [Result<PromptResponseStatus, any Error>] = []
     private var _ttsLeaseCalls: [(lease: String, active: Bool, profile: String?)] = []
     private var _sttLeaseCalls: [(lease: String, active: Bool, profile: String?)] = []
@@ -121,6 +123,11 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
     var activatedIDs: [String] { lock.withLock { _activatedIDs } }
     var closedIDs: [String] { lock.withLock { _closedIDs } }
     var promptResponses: [PromptResponse] { lock.withLock { _promptResponses } }
+    /// The full request every `respondApproval` / `respondClarify` was
+    /// given — on a session authority it carries the `prompt_id` (as
+    /// `requestID`) and the generation the kit echoes (Task 2A).
+    var respondedApprovals: [ApprovalRequest] { lock.withLock { _respondedApprovals } }
+    var respondedClarifies: [ClarifyRequest] { lock.withLock { _respondedClarifies } }
     /// Every `ttsLease` call, in call order (issue #125, Task 9).
     var sttLeaseCalls: [(lease: String, active: Bool, profile: String?)] {
         lock.withLock { _sttLeaseCalls }
@@ -208,6 +215,7 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
         lock.withLock {
             _promptResponses.append(
                 .approvalRespond(sessionID: approval.sessionID, choice: choice))
+            _respondedApprovals.append(approval)
         }
         if let promptResponseGate { await promptResponseGate.arrive() }
     }
@@ -216,6 +224,7 @@ final class ScriptedSessionService: SessionServicing, @unchecked Sendable {
         lock.withLock {
             _promptResponses.append(
                 .clarifyRespond(requestID: clarify.requestID, answer: answer))
+            _respondedClarifies.append(clarify)
         }
         if let promptResponseGate { await promptResponseGate.arrive() }
     }

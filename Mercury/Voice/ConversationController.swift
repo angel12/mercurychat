@@ -99,6 +99,12 @@ final class ConversationController {
     /// conversation screen may not be showing (Voice tab, spec §1), so the
     /// host ends the conversation from here rather than from the view.
     @ObservationIgnored var onStopWord: (() -> Void)?
+    /// The last prompt was admitted behind another turn in this session (a
+    /// text window, a bot, the CLI): `queued` on a session authority,
+    /// `forwarded` on the legacy wire. Not a failure — it runs once that turn
+    /// ends. Cleared by this runtime's next `message.start`, a failed submit,
+    /// a lost connection and teardown (spec "Revision: authority wire").
+    private(set) var isWaitingForTurn = false
 
     // MARK: Shared-session coordination (Chat #112, spec §2)
 
@@ -216,6 +222,7 @@ final class ConversationController {
         private var _runtimeID: String?
         private var _storedID: String?
         private var _recover: (@Sendable (_ reResume: Bool) async -> Bool)?
+        private var _receipt: (@Sendable (_ receipt: PromptSubmission?) async -> Void)?
         private var _submitsInFlight = 0
 
         var runtimeID: String? {
@@ -249,6 +256,13 @@ final class ConversationController {
         var recover: (@Sendable (_ reResume: Bool) async -> Bool)? {
             get { lock.withLock { _recover } }
             set { lock.withLock { _recover = newValue } }
+        }
+
+        /// Hands each submit's outcome back to the controller: the receipt,
+        /// or nil when the submit threw. Set once in init, like `recover`.
+        var receipt: (@Sendable (_ receipt: PromptSubmission?) async -> Void)? {
+            get { lock.withLock { _receipt } }
+            set { lock.withLock { _receipt = newValue } }
         }
 
         /// prompt.submit calls (including a reattach retry) not yet returned.
@@ -321,7 +335,11 @@ final class ConversationController {
         beforeTrackerEvent: (@Sendable (GatewayEvent) async -> Void)? = nil,
         trackerResetRequested: (@MainActor @Sendable () -> Void)? = nil,
         trackerPumpWillJoin: (@MainActor @Sendable () -> Void)? = nil,
-        submitPrompt: (@Sendable (String, String, Bool) async throws -> Void)? = nil,
+        submitPrompt: (
+            @Sendable (
+                _ sessionID: String, _ text: String, _ interrupted: Bool, _ submissionID: String
+            ) async throws -> PromptSubmission
+        )? = nil,
         retryDelay: (@Sendable (Duration) async throws -> Void)? = nil,
         reattachRecoveryWillResume: (@MainActor @Sendable (Bool) -> Void)? = nil
     ) {
@@ -349,27 +367,38 @@ final class ConversationController {
             submit: { text, interrupted in
                 box.beginSubmit()
                 defer { box.endSubmit() }
-                @Sendable func send() async throws {
+                // One id per user send, shared by its reattach retry: a
+                // session authority admits a submission id once.
+                let submissionID = UUID().uuidString.lowercased()
+                @Sendable func send() async throws -> PromptSubmission {
                     guard let sid = box.runtimeID else { throw HermesError.notConnected }
                     if let submitPrompt {
-                        try await submitPrompt(sid, text, interrupted)
-                    } else {
-                        _ = try await connection.submitPrompt(
-                            sessionID: sid, text: text, interrupted: interrupted,
-                            voiceTurn: true)
+                        return try await submitPrompt(sid, text, interrupted, submissionID)
                     }
+                    return try await connection.submit(
+                        sessionID: sid, text: text, interrupted: interrupted,
+                        voiceTurn: true, submissionID: submissionID)
                 }
+                let receipt: PromptSubmission
                 do {
-                    try await send()
-                } catch let error as HermesError
-                    where error.isSessionNotLive || error.isInterruptSettling
-                {
-                    // Reattach refusals (issue #125) come before the gateway
-                    // accepts the prompt, so exactly one resubmit cannot
-                    // duplicate the turn. A second refusal surfaces as-is.
-                    guard await box.recover?(error.isSessionNotLive) == true else { throw error }
-                    try await send()
+                    do {
+                        receipt = try await send()
+                    } catch let error as HermesError
+                        where error.isSessionNotLive || error.isInterruptSettling
+                    {
+                        // Reattach refusals (issue #125) come before the gateway
+                        // accepts the prompt, so exactly one resubmit cannot
+                        // duplicate the turn. A second refusal surfaces as-is.
+                        guard await box.recover?(error.isSessionNotLive) == true else {
+                            throw error
+                        }
+                        receipt = try await send()
+                    }
+                } catch {
+                    await box.receipt?(nil)
+                    throw error
                 }
+                await box.receipt?(receipt)
             },
             interrupt: {
                 guard let sid = box.runtimeID else { return }
@@ -378,6 +407,9 @@ final class ConversationController {
 
         box.recover = { [weak self] reResume in
             await self?.recoverRefusedSubmit(reResume: reResume) ?? false
+        }
+        box.receipt = { [weak self] receipt in
+            await self?.noteSubmitReceipt(receipt)
         }
 
         let (stream, continuation) = AsyncStream.makeStream(of: TrackerInput.self)
@@ -492,6 +524,7 @@ final class ConversationController {
     /// session (issue #77).
     func supersede() {
         isTornDown = true
+        isWaitingForTurn = false
         trackerResets.retire()
         trackerEventContinuation?.finish()
         trackerEventPump?.cancel()
@@ -1040,6 +1073,12 @@ final class ConversationController {
             GatewayEvent.Kind.messageComplete,
             GatewayEvent.Kind.error:
             trackerEventContinuation?.yield(.event(event))
+            if event.type == GatewayEvent.Kind.messageStart,
+                event.sessionID == sessionBox.runtimeID
+            {
+                // The turn this conversation was queued behind has ended.
+                isWaitingForTurn = false
+            }
             if event.type == GatewayEvent.Kind.error {
                 // The tracker speaks it when it ended a turn; on screen it
                 // always shows, since most of these arrive outside a turn
@@ -1901,6 +1940,14 @@ final class ConversationController {
 
     func connectionLost() {
         connectionHealthy = false
+        isWaitingForTurn = false
+    }
+
+    /// A submit's outcome (nil: it threw). Queued behind another turn is a
+    /// wait, not a failure (spec "Revision: authority wire").
+    private func noteSubmitReceipt(_ receipt: PromptSubmission?) {
+        guard !isTornDown else { return }
+        isWaitingForTurn = receipt.map { $0.status == "queued" || $0.forwarded } ?? false
     }
 
     // MARK: User controls
@@ -2182,9 +2229,16 @@ final class ConversationController {
                         HermesError.RefusalReason.sessionNotOwned,
                         HermesError.RefusalReason.maxConcurrentSessions,
                         HermesError.RefusalReason.coordinationUnavailable,
+                        HermesError.RefusalReason.sessionOwnerBusy,
+                        HermesError.RefusalReason.sessionOwnerUnconfirmed,
                     ].contains(reason)
                 {
                     textSubmissionError = hermesError.errorDescription
+                    // The owning gateway may already have queued it: a retry
+                    // could run a second copy, so none is offered.
+                    if reason == HermesError.RefusalReason.sessionOwnerUnconfirmed {
+                        failedText = nil
+                    }
                 }
             }
             pendingText = nil

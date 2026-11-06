@@ -25,10 +25,11 @@ struct R34SubmitRecoveryTests {
         ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { sid, text, _ in
+            submitPrompt: { sid, text, _, _ in
                 let index = await submits.record(
                     sid: sid, text: text, resumesSoFar: service.resumedIDs.count)
                 if index < answers.count, let error = answers[index] { throw error }
+                return PromptSubmission(status: "streaming")
             },
             retryDelay: { await delays.record($0) },
             reattachRecoveryWillResume: willResume)

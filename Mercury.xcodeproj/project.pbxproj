@@ -63,6 +63,7 @@
 		729EF1B7FB1DB2BBCD9F8838 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113C2A16E45FC509EAB0D18F /* AppDelegate.swift */; };
 		7478224AEB8132B66026E2F9 /* ApprovalCancelledTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF29FA61E6755C592640D754 /* ApprovalCancelledTests.swift */; };
 		8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */; };
+		858B7F6F96420A80A522FBB1 /* AuthorityWireVoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 023585C6443E9BC3281A2829 /* AuthorityWireVoiceTests.swift */; };
 		865FB2BBC58F6243AA53997E /* PushSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E38A6BAE2FEBF621E2A090C2 /* PushSettings.swift */; };
 		875B3C90BB92619CB74CE0C1 /* PushTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A4D31C14EEC3FDD12DF7885 /* PushTestSupport.swift */; };
 		88077A1B0EB07C92F63C8541 /* SessionActivityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABFDFC2421CA8F76AEA0ABBE /* SessionActivityTracker.swift */; };
@@ -124,6 +125,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		023585C6443E9BC3281A2829 /* AuthorityWireVoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthorityWireVoiceTests.swift; sourceTree = "<group>"; };
 		04889686DBD2B442B100A913 /* AppModelExpiredPumpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelExpiredPumpTests.swift; sourceTree = "<group>"; };
 		08C702B7270AA17D0AD46BDD /* R28TextSubmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R28TextSubmissionTests.swift; sourceTree = "<group>"; };
 		08D5F1FEED83F4550E69A141 /* AuthorityChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthorityChatTests.swift; sourceTree = "<group>"; };
@@ -386,6 +388,7 @@
 			isa = PBXGroup;
 			children = (
 				FF29FA61E6755C592640D754 /* ApprovalCancelledTests.swift */,
+				023585C6443E9BC3281A2829 /* AuthorityWireVoiceTests.swift */,
 				E68438A617820EDC7E352D51 /* ConversationTestSupport.swift */,
 				4E853203FF7CCFBA182B6D9A /* HarnessGate.swift */,
 				636481A0A181F86339135246 /* QueuedTrackerResetTests.swift */,
@@ -574,6 +577,7 @@
 				356B7E4BCBE0D1CC7C5B0F6E /* AppModelTokenEndpointBindingTests.swift in Sources */,
 				7478224AEB8132B66026E2F9 /* ApprovalCancelledTests.swift in Sources */,
 				D7EE370834F4DF70AFAFACBE /* AuthorityChatTests.swift in Sources */,
+				858B7F6F96420A80A522FBB1 /* AuthorityWireVoiceTests.swift in Sources */,
 				66BF4F028E62E698A078D2AA /* BotAdvancedEditorTests.swift in Sources */,
 				8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */,
 				66BEC0EA880906671E1A1D8A /* BotRefreshCoalescingTests.swift in Sources */,

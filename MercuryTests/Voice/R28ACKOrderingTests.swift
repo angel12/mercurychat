@@ -13,7 +13,10 @@ struct R28ACKOrderingTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, _, _ in await gate.arrive() })
+            submitPrompt: { _, _, _, _ in
+                await gate.arrive()
+                return PromptSubmission(status: "streaming")
+            })
         try await controller.openSession(mode: .create(cwd: nil, title: nil))
         controller.textDraft = "question"
         controller.submitTextPrompt(controller.textDraft)
@@ -65,7 +68,10 @@ struct R28ACKOrderingTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, _, _ in await gate.arrive() })
+            submitPrompt: { _, _, _, _ in
+                await gate.arrive()
+                return PromptSubmission(status: "streaming")
+            })
         try await controller.openSession(mode: .create(cwd: nil, title: nil))
         let history = (1...100).map { "history \($0)" }
         for (index, text) in history.enumerated() {
@@ -105,13 +111,14 @@ struct R28ACKOrderingTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, text, _ in
+            submitPrompt: { _, text, _, _ in
                 let attempt = await calls.record(text)
                 if attempt == 1 {
                     await firstGate.arrive()
                     throw HermesError.connectionClosed("secret")
                 }
                 await retryGate.arrive()
+                return PromptSubmission(status: "streaming")
             })
         try await controller.openSession(mode: .create(cwd: nil, title: nil))
         controller.textDraft = "question"
@@ -157,7 +164,7 @@ struct R28ACKOrderingTests {
         let controller = ConversationController(
             connection: makeUndialedConnection(), profile: nil,
             sessionService: service, speech: RecordingSpeech(),
-            submitPrompt: { _, _, _ in
+            submitPrompt: { _, _, _, _ in
                 await gate.arrive()
                 throw HermesError.connectionClosed("secret")
             })
