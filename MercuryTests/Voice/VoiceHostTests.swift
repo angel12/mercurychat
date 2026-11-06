@@ -483,23 +483,71 @@ extension SharedMeterTests {
         }
 
         /// Two targets on one stored session (the title differs, so they are
-        /// distinct targets): the successor resumes the same runtime, so the
-        /// outgoing conversation must not close it out from under it.
+        /// distinct targets): that is the running conversation, so it is
+        /// shown, not restarted (final review item 2).
         @Test func switchingTargetsOnTheSameStoredSessionKeepsTheRuntime() async throws {
             let h = try await connected(ids: [0: "a", 1: "a"])
             let model = h.model
 
             await model.startVoice(.session(storedID: "stored-a", title: nil, profile: nil))
-            let outgoing = h.voices.launches[0]
+            let running = h.voices.launches[0]
             await model.startVoice(.session(storedID: "stored-a", title: "Foo", profile: nil))
             await model.pendingVoiceTeardown?.value
-            let successor = h.voices.launches[1]
 
-            #expect(outgoing.service.closedIDs.isEmpty, "the outgoing launch closed the successor's runtime")
-            #expect(outgoing.service.sttLeaseCalls.contains { !$0.active })
-            #expect(model.voiceConversation?.controller === successor.controller)
-            #expect(successor.controller.runtimeID == "rt-a")
-            #expect(successor.service.closedIDs.isEmpty)
+            #expect(h.voices.launches.count == 1, "the running conversation was restarted")
+            #expect(model.voiceConversation?.controller === running.controller)
+            #expect(running.controller.runtimeID == "rt-a")
+            #expect(running.service.closedIDs.isEmpty)
+            await finish(h)
+        }
+
+        /// A new conversation shows up in the sidebar as a session row;
+        /// clicking that row shows the same conversation (item 2).
+        @Test func clickingTheNewConversationsRowShowsIt() async throws {
+            let h = try await connected(ids: [0: "a"])
+            let model = h.model
+            let navigation = WindowNavigation()
+            model.register(navigation)
+
+            await model.startVoice(newSession("/work"))
+            let running = try #require(model.voiceConversation)
+            model.openVoice(
+                .session(storedID: "stored-a", title: "Fresh", profile: nil), in: navigation)
+            await model.voiceLaunch?.value
+
+            #expect(navigation.route == .voice)
+            #expect(h.voices.launches.count == 1, "the running conversation was restarted")
+            #expect(model.voiceConversation === running)
+            #expect(h.voices.launches[0].service.closedIDs.isEmpty)
+            await finish(h)
+        }
+
+        /// A row whose profile differs from the running conversation's is a
+        /// different conversation.
+        @Test func aRowInAnotherProfileStartsItsOwnConversation() async throws {
+            let h = try await connected(ids: [0: "a", 1: "a"])
+            await h.model.startVoice(.session(storedID: "stored-a", title: nil, profile: "work"))
+            await h.model.startVoice(.session(storedID: "stored-a", title: nil, profile: "home"))
+            #expect(h.voices.launches.count == 2)
+            #expect(h.voices.launches[1].profile == "home")
+            await finish(h)
+        }
+
+        // MARK: Deleting the session (item 6)
+
+        @Test func deletingTheVoiceConversationsSessionEndsIt() async throws {
+            let h = try await connected(ids: [0: "a"])
+            await h.model.startVoice(session("a"))
+            let other = try #require(
+                SessionSummary(json: .object(["session_id": .string("stored-b")])))
+            await h.model.deleteSession(other)
+            #expect(h.model.voiceConversation != nil, "deleting another session ended voice")
+
+            let deleted = try #require(
+                SessionSummary(json: .object(["session_id": .string("stored-a")])))
+            await h.model.deleteSession(deleted)
+            #expect(h.model.browseError == nil)
+            #expect(h.model.voiceConversation == nil)
             await finish(h)
         }
 
@@ -515,7 +563,7 @@ extension SharedMeterTests {
             // Without voice holding it, the chat's close goes out as before.
             let other = try await resumedChat(h.model, "stored-b")
             h.model.closeChat(other)
-            #expect(await eventually(within: 3) { closes(h.server, "rt-b") == 1 })
+            #expect(await eventually { closes(h.server, "rt-b") == 1 })
             await finish(h)
         }
 

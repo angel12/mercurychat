@@ -135,9 +135,6 @@ struct ConversationView: View {
                 #endif
             }
         }
-        .onChange(of: controller.didEndByStopWord) { _, ended in
-            if ended { onEnd() }
-        }
         .alert(
             "Couldn't start the conversation",
             isPresented: setupAlertPresented

@@ -207,6 +207,9 @@ final class AppModel {
     private var voiceGeneration = 0
     /// The latest outgoing voice teardown, kept so tests can join it.
     private(set) var pendingVoiceTeardown: Task<Void, Never>?
+    /// The latest `openVoice` launch, kept so it can be joined (by tests,
+    /// and by `disconnect`'s teardown chain).
+    private(set) var voiceLaunch: Task<Void, Never>?
     /// Builds each voice conversation's controller; a test seam.
     var makeVoiceController: (HermesConnection, String?) -> ConversationController = {
         ConversationController(connection: $0, profile: $1)
@@ -288,15 +291,15 @@ final class AppModel {
     /// finishes after the generation moved on tears itself down (Voice's
     /// `launchConversation`, R25).
     func startVoice(_ target: VoiceConversationHost.Target) async {
-        if let current = voiceConversation, current.target == target { return }
+        if let current = voiceConversation, current.shows(target) { return }
         guard let connection else { return }
         endVoice(refresh: false, keepingVoiceRoutes: true)
         voiceGeneration += 1
         let generation = voiceGeneration
-        let controller = makeVoiceController(connection, target.profile ?? selectedProfile)
+        let profile = target.profile ?? selectedProfile
+        let controller = makeVoiceController(connection, profile)
         wireVoiceCoordination(controller)
-        let host = VoiceConversationHost(
-            target: target, controller: controller, generation: generation)
+        let host = VoiceConversationHost(target: target, controller: controller, profile: profile)
         voiceConversation = host
         await controller.begin(mode: target.mode)
         guard generation == voiceGeneration, voiceConversation === host else {
@@ -313,7 +316,10 @@ final class AppModel {
     func openVoice(_ target: VoiceConversationHost.Target, in navigation: WindowNavigation) {
         guard isConnected else { return }
         navigation.route = .voice
-        Task { await startVoice(target) }
+        // Not chained behind the previous launch: a newer one supersedes it
+        // (startVoice's generation guard), and a wedged open must not hold
+        // the next.
+        voiceLaunch = Task { await startVoice(target) }
     }
 
     /// End the voice conversation (End button, stop word, setup error's
@@ -785,15 +791,20 @@ final class AppModel {
         let connection = connection
         let voice = releaseVoice()
         let priorTeardown = pendingVoiceTeardown
+        let launch = voiceLaunch
+        voiceLaunch = nil
         self.connection = nil
-        if voice != nil || priorTeardown != nil {
+        if voice != nil || priorTeardown != nil || launch != nil {
             // A voice teardown closes its session over the gateway, so every
             // one — this one and any still pending from an end or a switch —
             // must finish before the connection stops (Voice's disconnect).
+            // A launch still opening is joined only after the stop: its open
+            // may be waiting on this socket, and the stop is what ends it.
             pendingVoiceTeardown = Task {
                 await voice?.teardown()
                 await priorTeardown?.value
                 await connection?.stop()
+                await launch?.value
             }
         } else if let connection {
             Task { await connection.stop() }
@@ -944,6 +955,12 @@ final class AppModel {
                 {
                     window.route = nil
                 }
+            }
+            // The voice conversation on it ends too: its session is gone.
+            if let voice = voiceConversation?.controller,
+                voice.sessionClaims.contains(.stored(session.storedID))
+            {
+                endVoice(refresh: false)
             }
             await refreshProjects()
         } catch {

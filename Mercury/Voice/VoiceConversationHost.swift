@@ -27,14 +27,26 @@ final class VoiceConversationHost {
 
     let target: Target
     let controller: ConversationController
-    /// `AppModel.voiceGeneration` when this host was made. Informational:
-    /// `startVoice` compares its own captured generation (and the host's
-    /// identity) against the model's, not this field.
-    let generation: Int
+    /// The profile the conversation runs in: the target's, or the profile
+    /// selected when it started.
+    let profile: String?
 
-    init(target: Target, controller: ConversationController, generation: Int) {
+    init(target: Target, controller: ConversationController, profile: String?) {
         self.target = target
         self.controller = controller
-        self.generation = generation
+        self.profile = profile
+    }
+
+    /// Whether `target` is this conversation: the same target, or the row
+    /// of the stored session it holds (a new conversation's session shows up
+    /// in the sidebar). A row with no profile of its own matches whatever
+    /// profile this one runs in. Clicking it shows the conversation instead
+    /// of restarting it.
+    func shows(_ target: Target) -> Bool {
+        if target == self.target { return true }
+        guard case .session(let storedID, _, let rowProfile) = target,
+            rowProfile == nil || rowProfile == profile
+        else { return false }
+        return controller.sessionClaims.contains(.stored(storedID))
     }
 }

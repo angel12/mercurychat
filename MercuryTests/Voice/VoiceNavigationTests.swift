@@ -36,7 +36,8 @@ extension SharedMeterTests.VoiceHostTests {
 
             h.model.openVoice(target, in: navigation)
             #expect(navigation.route == .voice)
-            #expect(await eventually { h.model.voiceConversation?.target == target })
+            await h.model.voiceLaunch?.value
+            #expect(h.model.voiceConversation?.target == target)
 
             await host.finish(h)
         }
@@ -48,7 +49,8 @@ extension SharedMeterTests.VoiceHostTests {
             let target = host.session("a")
 
             h.model.openVoice(target, in: navigation)
-            #expect(await eventually { h.model.voiceConversation?.target == target })
+            await h.model.voiceLaunch?.value
+            #expect(h.model.voiceConversation?.target == target)
             let other = try #require(SessionSummary(json: .object(["session_id": .string("stored-x")])))
             navigation.route = .session(other)
 
@@ -65,7 +67,8 @@ extension SharedMeterTests.VoiceHostTests {
             h.model.register(elsewhere)
             let target = host.session("a")
             h.model.openVoice(target, in: showing)
-            #expect(await eventually { h.model.voiceConversation?.target == target })
+            await h.model.voiceLaunch?.value
+            #expect(h.model.voiceConversation?.target == target)
             let other = try #require(SessionSummary(json: .object(["session_id": .string("stored-x")])))
             elsewhere.route = .session(other)
 
@@ -83,10 +86,12 @@ extension SharedMeterTests.VoiceHostTests {
             let navigation = WindowNavigation()
             h.model.register(navigation)
             h.model.openVoice(host.session("a"), in: navigation)
-            #expect(await eventually { h.model.voiceConversation?.target == host.session("a") })
+            await h.model.voiceLaunch?.value
+            #expect(h.model.voiceConversation?.target == host.session("a"))
 
             h.model.openVoice(host.session("b"), in: navigation)
-            #expect(await eventually { h.model.voiceConversation?.target == host.session("b") })
+            await h.model.voiceLaunch?.value
+            #expect(h.model.voiceConversation?.target == host.session("b"))
             #expect(navigation.route == .voice)
 
             await host.finish(h)
@@ -98,7 +103,8 @@ extension SharedMeterTests.VoiceHostTests {
             h.model.register(navigation)
             let target = host.session("a")
             h.model.openVoice(target, in: navigation)
-            #expect(await eventually { h.model.voiceConversation?.target == target })
+            await h.model.voiceLaunch?.value
+            #expect(h.model.voiceConversation?.target == target)
 
             h.model.disconnect()
 
