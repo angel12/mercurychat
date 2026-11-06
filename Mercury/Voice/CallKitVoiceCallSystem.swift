@@ -3,6 +3,7 @@ import Foundation
 #if os(iOS) || os(visionOS)
     import AVFoundation
     import CallKit
+    import os
 
     /// CallKit behind `VoiceCallSystem` (spec §1). The provider's delegate
     /// runs on the main queue (`queue: nil`); the `@preconcurrency`
@@ -69,12 +70,20 @@ import Foundation
             }
         }
 
+        private static let log = Logger(subsystem: "Mercury", category: "VoiceCall")
+
         /// The kit's voice category, set before CallKit activates the
-        /// session; the kit's own `setActive(true)` is then a no-op.
+        /// session. Best effort: a failure is logged and the call goes on,
+        /// since the kit sets the category again when it starts voice.
         private func configureAudioSession() {
-            try? AVAudioSession.sharedInstance().setCategory(
-                .playAndRecord, mode: .voiceChat,
-                options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
+            do {
+                try AVAudioSession.sharedInstance().setCategory(
+                    .playAndRecord, mode: .voiceChat,
+                    options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
+            } catch {
+                Self.log.error(
+                    "voice audio category failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         // MARK: CXProviderDelegate
