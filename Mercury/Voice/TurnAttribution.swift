@@ -183,7 +183,11 @@ struct TurnAttribution {
             if let row, Self.stillWaiting(row) {
                 // An undelivered steer went back to its queue place.
                 phase = .queued(seenQueued: true)
-            } else if let row, row.steering, phase == .awaitingOurStart {
+            } else if let row, phase == .awaitingOurStart,
+                row.steering || row.status == .started
+            {
+                // Steered in, or our claim already passed (a reconnect after
+                // its buffered start, a replayed list): the turn is ours.
                 phase = .open
             }
             return []
@@ -219,7 +223,15 @@ struct TurnAttribution {
                 return .ownTurnAlreadyOver
             case .open where outcome == "cancelled":
                 break  // ours was running: the cancel interrupted it — its end
-            case .open, .finished:
+            case .open:
+                // A steered settle trails the joined turn's complete, and a
+                // fed complete would have moved us to `.finished`: that
+                // turn ended unseen, so ours is already over.
+                claimBuffer = nil
+                ownAdmissionID = nil
+                phase = .finished
+                return .ownTurnAlreadyOver
+            case .finished:
                 // A steered settle trails the turn our text ran in.
                 return .retiredRow
             }

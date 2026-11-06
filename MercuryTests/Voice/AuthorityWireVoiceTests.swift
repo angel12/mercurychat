@@ -530,6 +530,154 @@ struct AuthorityWireVoiceTests {
         await controller.teardown()
     }
 
+    /// The socket drops right after our claim's start; our turn runs during
+    /// the outage. The snapshot no longer lists us (the buffered start is
+    /// discarded), and the replayed list shows us `started`: our claim has
+    /// passed, so the replayed reply is ours.
+    @Test func reconnectMidClaimWhoseTurnFinishedDuringTheOutage() async throws {
+        let service = ScriptedSessionService()
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        service.enqueueResume(
+            Fixtures.livePayload(
+                runtimeID: "runtime", sessionKey: "stored", running: false,
+                extra: ["stored_session_id": .string("stored"), "pending": .array([])]))
+        service.enqueueBatch(
+            Fixtures.replayBatch([
+                Fixtures.eventParams(
+                    type: GatewayEvent.Kind.sessionInfo, sessionID: "runtime", seq: 3,
+                    payload: .object(["pending": .array([Self.row("a1", 1, "started")])])),
+                Fixtures.eventParams(
+                    type: GatewayEvent.Kind.messageDelta, sessionID: "runtime", seq: 4,
+                    payload: .object(["text": .string("ours")])),
+                Fixtures.messageComplete(sessionID: "runtime", seq: 5, text: "ours"),
+            ]))
+        service.enqueueActivation(Fixtures.activateResult(runtimeID: "runtime", sessionKey: "stored"))
+        let fed = FedEvents()
+        let controller = makeWireController(service, fed: fed) { _, _, _, _ in
+            PromptSubmission(status: "queued", admissionID: "a1")
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+        await submitQueued(controller)
+        controller.handle(
+            event: Fixtures.event(
+                Fixtures.eventParams(
+                    type: GatewayEvent.Kind.sessionInfo, sessionID: "runtime", seq: 1,
+                    payload: .object(["pending": .array([Self.row("a1", 1, "queued")])]))))
+        controller.handle(
+            event: Fixtures.event(
+                Fixtures.eventParams(
+                    type: GatewayEvent.Kind.messageStart, sessionID: "runtime", seq: 2)))
+
+        controller.connectionLost()
+        await controller.connectionBecameReady(isReconnect: true)
+        #expect(service.eventsSinceCalls.map(\.lastSeen) == [2])
+        #expect(!controller.isWaitingForTurn)
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.texts == ["ours", "ours"])
+        let state = await controller.diagnosticTrackerState()
+        #expect(state.pendingText == "ours")
+        #expect(!state.busy)
+        await controller.teardown()
+    }
+
+    /// The steering list opened the gate, but the turn our text joined
+    /// completed before it (its complete was never fed): the `steered`
+    /// settle says our turn is already over — idle, no notice.
+    @Test func aSteeredSettleWithNoCompleteSinceTheSteerIsAlreadyOver() async throws {
+        let fed = FedEvents()
+        let controller = try await openedController(
+            receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
+        await submitQueued(controller)
+        controller.handle(event: queue(Self.row("a1", 1, "queued")))
+        controller.handle(event: queue(Self.row("a1", 1, "started", steering: true)))
+        controller.handle(event: queue())
+        controller.handle(event: settled("a1", "steered"))
+        #expect(!controller.isWaitingForTurn)
+        #expect(controller.notice == nil)
+
+        // Later turns are not ours.
+        controller.handle(event: start())
+        controller.handle(event: delta("theirs"))
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types.isEmpty)
+        let state = await controller.diagnosticTrackerState()
+        #expect(!state.busy, "the tracker still waits for a turn that is over")
+        #expect(state.pendingText == nil)
+        await controller.teardown()
+    }
+
+    /// Steered while we never saw the steering list (its settle trails the
+    /// joined turn's complete): the turn is already over.
+    @Test func aSteeredSettleWhileStillQueuedIsAlreadyOver() async throws {
+        let fed = FedEvents()
+        let controller = try await openedController(
+            receipt: PromptSubmission(status: "queued", admissionID: "a1"), fed: fed)
+        await submitQueued(controller)
+        controller.handle(event: queue(Self.row("a1", 1, "queued")))
+        controller.handle(event: delta("theirs"))
+        controller.handle(event: complete("theirs"))
+        controller.handle(event: queue())
+        controller.handle(event: settled("a1", "steered"))
+        #expect(!controller.isWaitingForTurn)
+        #expect(controller.notice == nil)
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.types.isEmpty)
+        #expect(await !controller.diagnosticTrackerState().busy)
+        await controller.teardown()
+    }
+
+    /// After an admitted turn completes, other apps' turns are held
+    /// (`.finished`); our next submit reopens the gate even when its start
+    /// lands before its receipt.
+    @Test func consecutiveAdmittedTurnsAreBothSpoken() async throws {
+        let service = ScriptedSessionService()
+        service.enqueueCreate(Fixtures.resumeResult(runtimeID: "runtime", storedID: "stored"))
+        let fed = FedEvents()
+        let calls = SubmissionIDLog()
+        let secondGate = CallGate()
+        let controller = makeWireController(service, fed: fed) { _, _, _, id in
+            if await calls.record(id) == 0 {
+                return PromptSubmission(status: "streaming", admissionID: "a1")
+            }
+            await secondGate.arrive()
+            return PromptSubmission(status: "streaming", admissionID: "a2")
+        }
+        try await controller.openSession(mode: .create(cwd: nil, title: nil))
+
+        controller.submitTextPrompt("first")
+        await controller.textSubmissionTask?.value
+        controller.handle(event: start())
+        controller.handle(event: delta("first"))
+        controller.handle(event: complete("first"))
+
+        // Another app's claim while we are finished.
+        controller.handle(event: start())
+        controller.handle(event: queue(Self.row("b1", 1, "started")))
+        controller.handle(event: delta("theirs"))
+        controller.handle(event: complete("theirs"))
+
+        controller.submitTextPrompt("second")
+        await secondGate.waitUntilEntered()
+        controller.handle(event: start())  // before the receipt
+        await secondGate.release()
+        await controller.textSubmissionTask?.value
+        controller.handle(event: delta("second"))
+        controller.handle(event: complete("second"))
+
+        await controller.diagnosticFinishTrackerEvents()
+        #expect(await fed.texts.allSatisfy { !$0.contains("theirs") })
+        #expect(await fed.types == [
+            GatewayEvent.Kind.messageStart, GatewayEvent.Kind.messageDelta,
+            GatewayEvent.Kind.messageComplete,
+            GatewayEvent.Kind.messageStart, GatewayEvent.Kind.messageDelta,
+            GatewayEvent.Kind.messageComplete,
+        ])
+        let state = await controller.diagnosticTrackerState()
+        #expect(state.pendingText == "first\n\nsecond")
+        #expect(!state.busy)
+        await controller.teardown()
+    }
+
     /// Legacy wire: no admission ids. Everything before the next start
     /// belongs to the turn ahead; that start is ours.
     @Test func forwardedReceiptSkipsTheRunningTurn() async throws {
