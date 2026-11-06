@@ -34,6 +34,9 @@ targets:
       - path: Mercury/Push/PushSettings.swift
       - path: Mercury/Push/PushCoordinator.swift
       - path: Mercury/Push/SessionActivityTracker.swift
+      - path: Mercury/Voice/ConversationController.swift
+      - path: Mercury/Voice/SessionServicing.swift
+      - path: Mercury/Voice/UnanswerableRequest.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryKit
