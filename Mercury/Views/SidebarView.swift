@@ -31,10 +31,29 @@ struct SidebarView: View {
         NavigationStack(path: $path) {
             rootPage
                 .navigationDestination(for: Page.self) { page in
-                    switch page {
-                    case .sessions: sessionsPage
-                    case .workspaces: workspacesPage
+                    Group {
+                        switch page {
+                        case .sessions: sessionsPage
+                        case .workspaces: workspacesPage
+                        }
                     }
+                    #if os(macOS)
+                        // macOS 26: the system back button of a stack in a
+                        // split view's sidebar column sets the pushed page's
+                        // top safe-area inset to the whole column height, so
+                        // the page lays out 0pt tall and draws blank. Hide it
+                        // and push our own back button into the toolbar.
+                        .navigationBarBackButtonHidden(true)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button {
+                                    if !path.isEmpty { path.removeLast() }
+                                } label: {
+                                    Label("Back", systemImage: "chevron.backward")
+                                }
+                            }
+                        }
+                    #endif
                 }
         }
         .alert("Rename Session", isPresented: renameAlertShown) {
