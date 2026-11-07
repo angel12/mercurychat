@@ -27,10 +27,16 @@ import MercuryKit
 /// Legacy `forwarded` (no admission ids, no queue): everything until the next
 /// `message.start` belongs to the turn ahead; that start is ours.
 ///
-/// Envelope-level `admission_id` would attribute frames exactly, but
-/// MercuryKit 0.9.0's `GatewayEvent` does not keep it (parked kit follow-up).
-/// One `ownAdmissionID`: a second queued voice prompt replaces the first
-/// (parked; the earlier reply may go unspoken).
+/// Exact attribution (MercuryKit 0.10.0 `GatewayEvent.admissionID`): an
+/// authority stamps every frame of a claimed admission with its id, so once a
+/// frame carries one the order rules above give way to it. A frame whose id is
+/// one of ours (or the turn our prompt was steered into) is fed; any other id
+/// is held. Turn ends are matched by id too: cancelling a still-queued
+/// admission publishes a `message.complete` stamped with that admission's id,
+/// possibly while another turn runs. Every queued voice prompt is tracked, so
+/// a second one no longer replaces the first. Frames without an id (idle
+/// fanouts, a reconnect's first frames, the legacy wire) still go through the
+/// order rules.
 ///
 /// On an authority voice speaks only replies to its own prompts, so its idle
 /// phase there is `.finished`, not `.open`: at session open, after a tracker
@@ -84,6 +90,28 @@ struct TurnAttribution {
     /// The latest `pending` list, kept for a receipt that lands after it.
     private var lastQueue: [QueuedPrompt]?
 
+    // MARK: Exact attribution state (frames stamped with `admissionID`)
+
+    /// An authority frame carried an admission id: attribution goes by id.
+    private(set) var exact = false
+    /// Our admissions that have not finished: queued, or running.
+    private(set) var ownAdmissions: Set<String> = []
+    /// Our admissions steered into another turn, kept until their `steered`
+    /// settle retires the row.
+    private var steeredAdmissions: Set<String> = []
+    /// The admission the running turn belongs to, from its frames.
+    private(set) var runningAdmission: String?
+    /// The turn one of our prompts was steered into: its output is ours.
+    private var joinedAdmission: String?
+    /// Steered in before any frame named the running turn: the next stamped
+    /// frame says which turn we joined.
+    private var joinNextRunning = false
+    /// While a submit is in flight: frames of admissions we can't place yet,
+    /// by id. The receipt names ours (its turn can start before the receipt).
+    private var unplaced: [String: [GatewayEvent]] = [:]
+    private var submitInFlight = false
+    private static let unplacedCap = 2_000
+
     /// Shown as "Waiting for the current turn".
     var isWaiting: Bool {
         switch phase {
@@ -121,19 +149,49 @@ struct TurnAttribution {
     mutating func noteSessionOpened(authority: Bool) {
         onAuthority = authority
         claimBuffer = nil
+        clearExact()
         phase = idlePhase
+    }
+
+    private mutating func clearExact() {
+        exact = false
+        ownAdmissions = []
+        steeredAdmissions = []
+        runningAdmission = nil
+        joinedAdmission = nil
+        joinNextRunning = false
+        unplaced = [:]
+        submitInFlight = false
     }
 
     /// A reconnect landed on a socket that does (or does not) speak the
     /// authority wire. `.finished` has no meaning without admission ids.
     mutating func noteWire(authority: Bool) {
         onAuthority = authority
-        if !authority, phase == .finished { phase = .open }
+        if !authority {
+            clearExact()
+            if phase == .finished { phase = .open }
+        }
     }
 
     /// A submit's outcome; nil when it threw (nothing of ours waits).
-    mutating func noteReceipt(_ receipt: PromptSubmission?) {
+    /// Returns frames of our admission that landed before the receipt (exact
+    /// attribution only), to feed the tracker in order.
+    @discardableResult
+    mutating func noteReceipt(_ receipt: PromptSubmission?) -> [GatewayEvent] {
+        if exact { return noteExactReceipt(receipt) }
+        noteOrderReceipt(receipt)
+        return []
+    }
+
+    private mutating func noteOrderReceipt(_ receipt: PromptSubmission?) {
         claimBuffer = nil
+        submitInFlight = false
+        unplaced = [:]
+        if let admission = receipt?.admissionID, receipt?.status != "steered" {
+            // Kept for when stamped frames start arriving.
+            ownAdmissions.insert(admission)
+        }
         guard let receipt else {
             phase = idlePhase
             ownAdmissionID = nil
@@ -165,6 +223,8 @@ struct TurnAttribution {
     /// A submit is going out: a finished turn's gate must not hold its
     /// events (its receipt may land after its start).
     mutating func noteSubmitInFlight() {
+        submitInFlight = true
+        if exact { return }  // unplaced frames wait for the receipt instead
         if phase == .finished { phase = .open }
     }
 
@@ -184,6 +244,10 @@ struct TurnAttribution {
 
     private mutating func decide(_ rows: [QueuedPrompt], fromSnapshot: Bool) -> [GatewayEvent] {
         lastQueue = rows
+        if exact {
+            decideExact(rows)
+            return []
+        }
         let buffered = claimBuffer
         claimBuffer = nil
         guard let admission = ownAdmissionID else { return [] }
@@ -236,6 +300,15 @@ struct TurnAttribution {
     /// outage; anything else is another app's and is held.
     mutating func noteTrackerReset(running: Bool) -> Bool {
         claimBuffer = nil
+        if exact {
+            unplaced = [:]
+            if !running {
+                runningAdmission = nil
+                joinedAdmission = nil
+            }
+            recomputeExactPhase()
+            return running && phase == .open
+        }
         if holdsQueuedPrompt { return false }
         guard onAuthority else {
             phase = .open
@@ -250,6 +323,14 @@ struct TurnAttribution {
     }
 
     mutating func classify(_ event: GatewayEvent) -> Verdict {
+        if onAuthority, let admission = event.admissionID {
+            if !exact { enterExact() }
+            return classifyExact(event, admission: admission)
+        }
+        return classifyByOrder(event)
+    }
+
+    private mutating func classifyByOrder(_ event: GatewayEvent) -> Verdict {
         let isStart = event.type == GatewayEvent.Kind.messageStart
 
         if event.type == GatewayEvent.Kind.messageComplete,
@@ -323,5 +404,158 @@ struct TurnAttribution {
             phase = .open
             return .feed
         }
+    }
+
+    // MARK: Exact attribution
+
+    /// The first stamped frame: whatever the order rules had half-decided is
+    /// superseded by the ids from here on.
+    private mutating func enterExact() {
+        exact = true
+        claimBuffer = nil
+        if let own = ownAdmissionID { ownAdmissions.insert(own) }
+        // A submit in flight opened the gate only so its early frames get
+        // through: those now wait for the receipt to name them instead.
+        if phase == .open, ownAdmissionID == nil, ownAdmissions.isEmpty, !submitInFlight {
+            // A steer (or a turn we didn't submit through the queue) is
+            // running: the next stamped frame names the turn we joined.
+            joinNextRunning = true
+        }
+    }
+
+    private func isOurs(_ admission: String) -> Bool {
+        ownAdmissions.contains(admission) || admission == joinedAdmission
+    }
+
+    private mutating func recomputeExactPhase() {
+        if let running = runningAdmission, isOurs(running) {
+            phase = .open
+        } else if !ownAdmissions.subtracting([runningAdmission].compactMap { $0 }).isEmpty {
+            phase = .queued(seenQueued: true)
+        } else {
+            phase = idlePhase
+        }
+    }
+
+    private mutating func classifyExact(_ event: GatewayEvent, admission: String) -> Verdict {
+        let isComplete = event.type == GatewayEvent.Kind.messageComplete
+        let outcome = isComplete ? event.payload["outcome"]?.stringValue : nil
+        let settled = event.payload["admission_id"]?.stringValue ?? admission
+
+        if let outcome, Self.retiringOutcomes.contains(outcome), settled != runningAdmission {
+            return retireExact(settled, outcome: outcome)
+        }
+
+        if joinNextRunning {
+            joinNextRunning = false
+            joinedAdmission = admission
+        }
+        runningAdmission = admission
+
+        guard isOurs(admission) else {
+            if submitInFlight {
+                // Its receipt may yet name it ours.
+                var frames = unplaced[admission] ?? []
+                if frames.count < Self.unplacedCap { frames.append(event) }
+                unplaced[admission] = frames
+            }
+            if isComplete { runningAdmission = nil }
+            recomputeExactPhase()
+            return .hold
+        }
+
+        if isComplete {
+            // Our turn ended (a cancel of our running admission included).
+            ownAdmissions.remove(admission)
+            if joinedAdmission == admission { joinedAdmission = nil }
+            runningAdmission = nil
+            ownAdmissionID = ownAdmissions.contains(ownAdmissionID ?? "") ? ownAdmissionID : nil
+        }
+        recomputeExactPhase()
+        return .feed
+    }
+
+    /// A queued row's `cancelled` / `steered` settle, matched by id.
+    private mutating func retireExact(_ admission: String, outcome: String) -> Verdict {
+        let wasQueued = ownAdmissions.remove(admission) != nil
+        let wasSteered = steeredAdmissions.remove(admission) != nil
+        if ownAdmissionID == admission { ownAdmissionID = nil }
+        guard wasQueued || wasSteered else { return .retiredRow }
+        let oursRunning = runningAdmission.map(isOurs) ?? false
+        recomputeExactPhase()
+        if oursRunning || !ownAdmissions.isEmpty {
+            // Another turn of ours is running or still waits: no reset.
+            return .retiredRow
+        }
+        if outcome == "cancelled" { return .ownQueuedPromptCancelled }
+        // Steered: a joined turn we followed already ended on its own
+        // complete; a steer we never saw listed went into a turn we held.
+        return wasSteered ? .retiredRow : .ownTurnAlreadyOver
+    }
+
+    private mutating func noteExactReceipt(_ receipt: PromptSubmission?) -> [GatewayEvent] {
+        submitInFlight = false
+        let parked = unplaced
+        unplaced = [:]
+        guard let receipt else {
+            ownAdmissionID = nil
+            recomputeExactPhase()
+            return []
+        }
+        var flush: [GatewayEvent] = []
+        if receipt.status == "steered" {
+            // Our text joins the running turn: its output is ours.
+            if let admission = receipt.admissionID { steeredAdmissions.insert(admission) }
+            ownAdmissionID = nil
+            if let running = runningAdmission {
+                joinedAdmission = running
+                flush = parked[running] ?? []
+            } else {
+                joinNextRunning = true
+            }
+        } else if let admission = receipt.admissionID {
+            ownAdmissions.insert(admission)
+            ownAdmissionID = admission
+            flush = parked[admission] ?? []
+            if let row = lastQueue?.first(where: { $0.admissionID == admission }), row.steering {
+                markSteered(admission)
+            }
+        }
+        recomputeExactPhase()
+        if !flush.isEmpty, flush.last?.type == GatewayEvent.Kind.messageComplete,
+            let id = flush.last?.admissionID
+        {
+            // The whole turn landed before its receipt.
+            ownAdmissions.remove(id)
+            if joinedAdmission == id { joinedAdmission = nil }
+            recomputeExactPhase()
+        }
+        return flush
+    }
+
+    private mutating func markSteered(_ admission: String) {
+        ownAdmissions.remove(admission)
+        steeredAdmissions.insert(admission)
+        if let running = runningAdmission, !isOurs(running) {
+            joinedAdmission = running
+        } else if runningAdmission == nil {
+            joinNextRunning = true
+        }
+    }
+
+    private mutating func decideExact(_ rows: [QueuedPrompt]) {
+        for row in rows {
+            let id = row.admissionID
+            if ownAdmissions.contains(id), row.steering, id != runningAdmission {
+                // Our text is going into the running turn.
+                markSteered(id)
+            } else if steeredAdmissions.contains(id), Self.stillWaiting(row), !row.steering {
+                // An undelivered steer went back to its queue place.
+                steeredAdmissions.remove(id)
+                ownAdmissions.insert(id)
+                if steeredAdmissions.isEmpty { joinedAdmission = nil }
+            }
+        }
+        recomputeExactPhase()
     }
 }

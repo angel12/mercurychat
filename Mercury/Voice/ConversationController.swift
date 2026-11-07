@@ -2090,7 +2090,10 @@ final class ConversationController {
     /// wait, not a failure (spec "Revision: authority wire").
     private func noteSubmitReceipt(_ receipt: PromptSubmission?) {
         guard !isTornDown else { return }
-        turnAttribution.noteReceipt(receipt)
+        // Exact attribution: our turn's frames that beat the receipt here.
+        for event in turnAttribution.noteReceipt(receipt) {
+            trackerEventContinuation?.yield(.event(event))
+        }
         if receipt != nil { noteSessionActivity() }
     }
 
