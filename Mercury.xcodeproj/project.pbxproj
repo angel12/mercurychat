@@ -106,6 +106,7 @@
 		B8A50C6B643A6B6C635749C5 /* R33ServerRequestPromptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7890DB5C5944905AC8A820DE /* R33ServerRequestPromptTests.swift */; };
 		BBAEA0FE4419A907C6B67BFA /* CredentialPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D975F69F1B26055F8D9814 /* CredentialPrompt.swift */; };
 		BEA88BE18475FE4759E2506B /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696FDD7EA0879D6A21F3E07B /* AppModel.swift */; };
+		BFE893DC220A8627339AE493 /* ExactTurnAttributionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9D1CE714B044D34E0EB6B7C /* ExactTurnAttributionTests.swift */; };
 		C029DF6E28A3950A40013491 /* ChatEchoAttachmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E79A6A236A9462B5F3B2A2 /* ChatEchoAttachmentTests.swift */; };
 		C05DB865E33717B45F91691F /* ConversationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0DB881FD906FEAC913F2707 /* ConversationController.swift */; };
 		C4BAB8A1983DE3C28583DD5E /* ChatController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB97969196F04F2B48FCB03E /* ChatController.swift */; };
@@ -251,6 +252,7 @@
 		E5F4A67BA4AAA2CDE152FD20 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		E68438A617820EDC7E352D51 /* ConversationTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTestSupport.swift; sourceTree = "<group>"; };
 		E7B5FE90CA2DC47F81B0751A /* R34SubmitRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R34SubmitRecoveryTests.swift; sourceTree = "<group>"; };
+		E9D1CE714B044D34E0EB6B7C /* ExactTurnAttributionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExactTurnAttributionTests.swift; sourceTree = "<group>"; };
 		ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplaySupersessionTests.swift; sourceTree = "<group>"; };
 		F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelOAuthFormTests.swift; sourceTree = "<group>"; };
 		F42879978FB79190FBF9DFCE /* SlashCommandControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandControllerTests.swift; sourceTree = "<group>"; };
@@ -437,6 +439,7 @@
 				425187F2CFFB95B4F75BB301 /* ClarifyBatchTests.swift */,
 				E68438A617820EDC7E352D51 /* ConversationTestSupport.swift */,
 				99A42C0186F9E006EAEBBA3D /* CredentialPromptTests.swift */,
+				E9D1CE714B044D34E0EB6B7C /* ExactTurnAttributionTests.swift */,
 				4E853203FF7CCFBA182B6D9A /* HarnessGate.swift */,
 				636481A0A181F86339135246 /* QueuedTrackerResetTests.swift */,
 				620D4CFFB407E930DB22D8C7 /* R05ReplayGapSafetyTests.swift */,
@@ -652,6 +655,7 @@
 				C82497319400E5CD368CE15F /* ConversationTestSupport.swift in Sources */,
 				2F05CE14791B7C2F6BDE431D /* CredentialPrompt.swift in Sources */,
 				C581AC1F661E374F8638CCEC /* CredentialPromptTests.swift in Sources */,
+				BFE893DC220A8627339AE493 /* ExactTurnAttributionTests.swift in Sources */,
 				D5245B27591F8A6DDB021053 /* FileAttachmentWire.swift in Sources */,
 				6E5E2D22CA223D4F5EB709F1 /* FileAttachmentWireTests.swift in Sources */,
 				17721F6144E12E1977F71B6A /* HarnessGate.swift in Sources */,
