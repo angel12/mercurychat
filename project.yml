@@ -68,6 +68,38 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGNING_ALLOWED: NO
         MACOSX_DEPLOYMENT_TARGET: "14.0"
+  MercuryWidgets:
+    # The voice Live Activity, the quick-start widget, and the iOS 18
+    # Control (sub-project 4). Shares the activity types in Shared/ and
+    # sub-project 5's voice intents with the app.
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - MercuryWidgets
+      - Shared
+      - path: Mercury/Voice/Intents/VoiceIntentBridge.swift
+      - path: Mercury/Voice/Intents/VoiceIntentEntities.swift
+      - path: Mercury/Voice/Intents/VoiceIntents.swift
+      - path: Mercury/Voice/Intents/VoiceIntents+LiveActivity.swift
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        TARGETED_DEVICE_FAMILY: "1,2"
+        PRODUCT_BUNDLE_IDENTIFIER: com.spencermcguire.mercurychat.MercuryWidgets
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: Z4JCFHY88D
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+    info:
+      path: MercuryWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Mercury Chat
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
   Mercury:
     type: application
     supportedDestinations: [iOS, macOS, visionOS]
@@ -81,6 +113,10 @@ targets:
         product: MercuryVoiceEngine
       - package: MercuryCore
         product: ChatCore
+      # Widgets and the voice Live Activity: iOS only (no ActivityKit on
+      # visionOS or macOS).
+      - target: MercuryWidgets
+        destinationFilters: [iOS]
     settings:
       base:
         SWIFT_VERSION: "6.0"
@@ -117,6 +153,8 @@ targets:
         UIBackgroundModes:
           - audio
           - voip
+        # The voice conversation's Live Activity (sub-project 4).
+        NSSupportsLiveActivities: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

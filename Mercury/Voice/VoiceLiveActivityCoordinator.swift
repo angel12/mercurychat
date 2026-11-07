@@ -106,6 +106,10 @@ final class VoiceLiveActivityCoordinator {
 extension VoiceLiveActivityCoordinator {
     /// The platform's Live Activity service: ActivityKit on iOS, none elsewhere.
     static func makeSystem() -> (any VoiceLiveActivitySystem)? {
-        nil  // Task 5: `#if os(iOS) ActivityKitVoiceLiveActivitySystem() #else nil #endif`
+        #if os(iOS)
+            ActivityKitVoiceLiveActivitySystem()
+        #else
+            nil
+        #endif
     }
 }
