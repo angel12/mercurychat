@@ -98,5 +98,33 @@ extension SharedMeterTests {
             #expect(await eventually { notes.removed == ["voice-prompt.approval-1"] })
             #expect(notes.deliveredNotes.map(\.id) == ["push-1"])
         }
+
+        @Test func returningFromBackgroundLandsOnLiveVoice() async throws {
+            let h = try await connected(); defer { h.cleanup() }
+            let navigation = WindowNavigation()
+            h.model.register(navigation)
+            await h.model.startVoice(.new(cwd: nil, profile: nil, request: UUID()))
+            navigation.route = nil
+            // Inactive → active (Control Center, the island) keeps the screen.
+            h.model.appBecameActive()
+            #expect(navigation.route == nil)
+            h.model.appEnteredBackground()
+            h.model.appBecameActive()
+            #expect(navigation.route == .voice)
+            // Consumed: a later plain activation doesn't move again.
+            navigation.route = nil
+            h.model.appBecameActive()
+            #expect(navigation.route == nil)
+            h.model.endVoice()
+        }
+
+        @Test func returningFromBackgroundWithoutVoiceKeepsRoute() async throws {
+            let h = try await connected(); defer { h.cleanup() }
+            let navigation = WindowNavigation()
+            h.model.register(navigation)
+            h.model.appEnteredBackground()
+            h.model.appBecameActive()
+            #expect(navigation.route == nil)
+        }
     }
 }

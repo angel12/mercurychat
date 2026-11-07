@@ -909,8 +909,20 @@ final class AppModel {
         botsTrailingRefresh = nil
     }
 
-    /// Immediate re-dial on foreground (backoff skip).
+    /// Set while the app is in the background, so the next
+    /// activation returns to a live voice conversation.
+    @ObservationIgnored private var wasInBackground = false
+
+    /// Immediate re-dial on foreground (backoff skip). Coming back from the
+    /// background (another app, the lock screen, the call pill) during a
+    /// voice conversation lands on it, as a phone app returns to its call;
+    /// iOS reports no tap on the call pill itself, so this is the hook.
     func appBecameActive() {
+        // background → inactive → active: the flag, not the previous phase.
+        if wasInBackground, voiceConversation != nil {
+            liveWindows.first?.route = .voice
+        }
+        wasInBackground = false
         voiceConversation?.controller.appBecameActive()
         voicePromptNotifier.appBecameActive()
         guard let connection else { return }
@@ -918,6 +930,7 @@ final class AppModel {
     }
 
     func appEnteredBackground() {
+        wasInBackground = true
         voicePromptNotifier.appEnteredBackground()
     }
 

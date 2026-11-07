@@ -62,18 +62,32 @@ struct ConnectedView: View {
                 #if os(macOS)
                     .navigationSplitViewColumnWidth(min: 240, ideal: 300)
                 #endif
+                // iPhone's stack shows the sidebar on its own, so the bar
+                // rides there too; split layouts keep it on the detail.
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if isCompact { voiceBar }
+                }
         } detail: {
             detail
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    if let host = model.voiceConversation, navigation.route != .voice {
-                        VoiceConversationBar(host: host)
-                    }
-                }
+                .safeAreaInset(edge: .top, spacing: 0) { voiceBar }
         }
         .overlay(alignment: .bottom) {
             ConnectionBannerView()
         }
         .keepScreenAwake(while: model.voiceConversation != nil)
+    }
+
+    #if os(iOS)
+        @Environment(\.horizontalSizeClass) private var sizeClass
+        private var isCompact: Bool { sizeClass == .compact }
+    #else
+        private var isCompact: Bool { false }
+    #endif
+
+    @ViewBuilder private var voiceBar: some View {
+        if let host = model.voiceConversation, navigation.route != .voice {
+            VoiceConversationBar(host: host)
+        }
     }
 
     @ViewBuilder private var detail: some View {

@@ -11,14 +11,26 @@ struct VoiceConversationBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "waveform")
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
-                Text(host.barStatus).font(.caption).foregroundStyle(.secondary)
+            // The whole leading area returns to the conversation: the
+            // in-app stand-in for tapping the call pill, which iOS doesn't
+            // report to an app that's already in front.
+            Button {
+                navigation.route = .voice
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "waveform")
+                        .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
+                        Text(host.barStatus).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 8)
+            .buttonStyle(.plain)
+            .accessibilityHint("Returns to the voice conversation")
             Button {
                 controller.toggleMute()
             } label: {
