@@ -2183,6 +2183,25 @@ final class ConversationController {
 
     @ObservationIgnored private var muteTask: Task<Void, Never>?
 
+    /// Mute for Shortcuts and the macOS hotkey: `target` nil toggles.
+    /// Chained with `setMuted`, and the answer is the engine's own state
+    /// afterward; nil while the engine isn't built yet. The change reaches
+    /// the system call through `onMuteChanged` like any other.
+    func applyMute(_ target: Bool?) async -> Bool? {
+        let previous = muteTask
+        let change = Task { [weak self] () -> Bool? in
+            await previous?.value
+            guard let self, !Task.isCancelled, let engine = self.engine else { return nil }
+            let current = await engine.uiState.muted
+            if current != (target ?? !current) {
+                await engine.toggleMute()
+            }
+            return await engine.uiState.muted
+        }
+        muteTask = Task { _ = await change.value }
+        return await change.value
+    }
+
     /// The call's audio session was taken (another call, hold): pause like
     /// an interruption.
     func audioSuspended() {
