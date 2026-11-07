@@ -2,11 +2,18 @@ import SwiftUI
 
 @main
 struct MercuryApp: App {
-    @State private var model = AppModel()
+    @State private var model: AppModel
     #if os(iOS) || os(visionOS)
         @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     #endif
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        let model = AppModel()
+        _model = State(initialValue: model)
+        // Shortcuts and Siri reach the voice conversation through this.
+        VoiceIntentBridge.shared = model
+    }
 
     var body: some Scene {
         mainScene
