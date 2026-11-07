@@ -32,7 +32,7 @@ struct AuthorityChatTests {
         }
     }
 
-    private func openChat(_ script: Script) async throws
+    private func openChat(_ script: Script, profile: String? = nil) async throws
         -> (ChatController, HermesTestServer, () -> Void)
     {
         let server = try await HermesTestServer.start(
@@ -52,7 +52,7 @@ struct AuthorityChatTests {
             return false
         }
         try #require(ready)
-        let chat = try #require(model.openChat(profile: nil))
+        let chat = try #require(model.openChat(profile: profile))
         await chat.begin(.create(cwd: nil, title: nil))
         try #require(chat.runtimeID == "local-abc")
         return (
@@ -99,6 +99,26 @@ struct AuthorityChatTests {
 
         pushQueue(server, [["admission_id": "a1", "sequence": 1, "status": "queued", "text": "later please", "controls": ["steer", "replace"]]])
         #expect(await eventually { chat.store.waitingRow(forEcho: echo.id) != nil })
+    }
+
+    /// A shared multi-profile socket (the Webapp listener) routes a frame to
+    /// a non-default profile only by `params.profile`; without it the launch
+    /// profile's authority refuses the session (4001 permission_denied).
+    /// `clarify.lock` names no session, so the chat hands the kit its own.
+    @Test func aNonDefaultProfileRoutesItsSessionCalls() async throws {
+        let script = Script()
+        script.set("prompt.submit", .result(["status": "queued", "admission_id": "a1", "sequence": 1]))
+        script.set("clarify.lock", .result(["status": "ok", "remaining": ["q2"]]))
+        let (chat, server, cleanup) = try await openChat(script, profile: "work")
+        defer { cleanup() }
+
+        #expect(requests(server, "session.create").last?.params["profile"] == "work")
+        await chat.submit("hello")
+        #expect(requests(server, "prompt.submit").last?.params["profile"] == "work")
+
+        _ = await chat.respondClarifyQuestion(requestID: "srq-1", questionID: "q1", answer: "dev")
+        let lock = try #require(requests(server, "clarify.lock").last)
+        #expect(lock.params == ["request_id": "srq-1", "question_id": "q1", "answer": "dev", "profile": "work"])
     }
 
     @Test func aRetryReusesTheSubmissionID() async throws {
