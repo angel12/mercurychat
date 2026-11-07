@@ -44,7 +44,7 @@ final class VoiceConversationHost {
         return "Voice conversation"
     }
 
-    static let needsInputStatus = "Needs your input"
+    static let needsInputStatus = VoiceActivityPhase.needsInput.label
 
     /// The background bar's status line.
     var barStatus: String {
@@ -53,20 +53,46 @@ final class VoiceConversationHost {
             state: controller.voiceState)
     }
 
-    /// A prompt waiting on the user outranks everything: from another
-    /// screen it is the only sign the conversation is blocked on them.
+    /// The bar has no reconnecting state of its own; it reads the phase's label.
     static func barStatus(needsInput: Bool, waiting: Bool, state: ConversationUIState) -> String {
-        if needsInput { return needsInputStatus }
-        if waiting { return "Waiting" }
-        if state.paused { return "Paused" }
-        if state.muted { return "Muted" }
+        activityPhase(needsInput: needsInput, waiting: waiting, reconnecting: false, state: state)
+            .label
+    }
+
+    /// A prompt waiting on the user outranks everything: from another
+    /// screen or the lock screen it is the only sign the conversation is
+    /// blocked on them. Then a dropped gateway, a queued turn, a pause, a mute.
+    static func activityPhase(
+        needsInput: Bool, waiting: Bool, reconnecting: Bool, state: ConversationUIState
+    ) -> VoiceActivityPhase {
+        if needsInput { return .needsInput }
+        if reconnecting { return .reconnecting }
+        if waiting { return .waiting }
+        if state.paused { return .paused }
+        if state.muted { return .muted }
         switch state.status {
-        case .idle: return "Paused"
-        case .listening: return "Listening"
-        case .transcribing: return "Transcribing"
-        case .thinking: return "Thinking"
-        case .speaking: return "Speaking"
+        case .idle: return .paused
+        case .listening: return .listening
+        case .transcribing: return .transcribing
+        case .thinking: return .thinking
+        case .speaking: return .speaking
         }
+    }
+
+    /// The session's live title, else the target's, else "Voice conversation".
+    var displayTitle: String {
+        if let title = controller.sessionTitle, !title.isEmpty { return title }
+        return callDisplayName
+    }
+
+    /// What the Live Activity shows (spec §2).
+    var activityContent: VoiceActivityContent {
+        VoiceActivityContent(
+            title: displayTitle,
+            phase: Self.activityPhase(
+                needsInput: controller.needsInput, waiting: controller.isWaitingForTurn,
+                reconnecting: !controller.connectionHealthy, state: controller.voiceState),
+            muted: controller.voiceState.muted)
     }
 
     /// Whether `target` is this conversation: the same target, or the row

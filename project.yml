@@ -42,6 +42,7 @@ targets:
       - path: Mercury/Voice/VoicePrompt.swift
       - path: Mercury/Voice/ClarifyBatch.swift
       - path: Mercury/Voice/AssistantMarkdown.swift
+      - path: Shared/VoiceActivity/VoiceActivityContent.swift
       - path: Mercury/Voice/VoiceCallCenter.swift
       - path: Mercury/Voice/VoicePromptNotifier.swift
       - path: MercuryTests
@@ -65,6 +66,7 @@ targets:
     supportedDestinations: [iOS, macOS, visionOS]
     sources:
       - Mercury
+      - Shared
     dependencies:
       - package: MercuryKit
         product: MercuryKit
