@@ -1383,7 +1383,8 @@ final class ChatController: Identifiable {
         do {
             guard
                 let remaining = try await connection.lockClarifyAnswer(
-                    requestID: requestID, questionID: questionID, answer: answer)
+                    requestID: requestID, questionID: questionID, answer: answer,
+                    sessionID: runtimeID)
             else {
                 _ = settlePrompt(
                     .expired, requestID: requestID, what: "answer",

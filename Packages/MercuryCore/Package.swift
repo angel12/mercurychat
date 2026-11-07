@@ -11,7 +11,7 @@ let package = Package(
         // The shared Chat/Voice protocol kit. Pinned exactly: bump it
         // deliberately, together with the app's own package reference in
         // project.yml, so both resolve to the same version.
-        .package(url: "https://github.com/angel12/mercurykit", exact: "0.9.0"),
+        .package(url: "https://github.com/angel12/mercurykit", revision: "bd1612711b91c1c95fc79c0bb56bdce701169522"),
     ],
     targets: [
         .target(
