@@ -11,7 +11,7 @@ packages:
   # Packages/MercuryCore/Package.swift so both references resolve to one copy.
   MercuryKit:
     url: https://github.com/angel12/mercurykit
-    exactVersion: 0.10.1
+    exactVersion: 0.10.2
   MercuryCore:
     path: Packages/MercuryCore
 targets:
