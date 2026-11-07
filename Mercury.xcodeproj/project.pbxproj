@@ -979,8 +979,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/angel12/mercurykit";
 			requirement = {
-				kind = revision;
-				revision = bd1612711b91c1c95fc79c0bb56bdce701169522;
+				kind = exactVersion;
+				version = 0.10.2;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
