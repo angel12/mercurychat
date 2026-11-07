@@ -43,6 +43,7 @@ targets:
       - path: Mercury/Voice/ClarifyBatch.swift
       - path: Mercury/Voice/AssistantMarkdown.swift
       - path: Shared/VoiceActivity/VoiceActivityContent.swift
+      - path: Mercury/Voice/VoiceLiveActivityCoordinator.swift
       - path: Mercury/Voice/VoiceCallCenter.swift
       - path: Mercury/Voice/VoicePromptNotifier.swift
       - path: MercuryTests
