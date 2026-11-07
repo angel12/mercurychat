@@ -36,7 +36,9 @@ final class VoicePromptNotifier {
     nonisolated static let denyActionID = "voice-deny"
     nonisolated static let promptKeyInfo = "voicePrompt"
 
-    nonisolated static func identifier(_ key: String) -> String { "voice-prompt.\(key)" }
+    nonisolated static let identifierPrefix = "voice-prompt."
+
+    nonisolated static func identifier(_ key: String) -> String { "\(identifierPrefix)\(key)" }
 
     nonisolated static func action(forIdentifier id: String) -> VoiceNotificationAction {
         switch id {
@@ -88,8 +90,19 @@ final class VoicePromptNotifier {
         post()
     }
 
+    /// The app is forward: every voice prompt notification goes, including
+    /// ones a previous process left behind (spec §2 "On foreground").
     func appBecameActive() {
-        for id in posted { withdrawID(id) }
+        let tracked = posted
+        for id in tracked { withdrawID(id) }
+        sweepStaleVoiceNotifications(sparing: tracked)
+    }
+
+    /// At launch no voice conversation exists yet, so every delivered voice
+    /// prompt notification is stale: an old one's action must not reach a
+    /// new conversation.
+    func appLaunched() {
+        sweepStaleVoiceNotifications()
     }
 
     func conversationEnded() {
@@ -103,6 +116,19 @@ final class VoicePromptNotifier {
     }
 
     private func withdraw(_ key: String) { withdrawID(Self.identifier(key)) }
+
+    /// Remove every delivered `voice-prompt.*` notification except `tracked`
+    /// ones (withdrawn behind their adds) and any posted since.
+    private func sweepStaleVoiceNotifications(sparing tracked: Set<String> = []) {
+        guard let center else { return }
+        Task { [weak self] in
+            let stale = await center.delivered().map(\.id).filter {
+                $0.hasPrefix(Self.identifierPrefix) && !tracked.contains($0)
+                    && self?.posted.contains($0) != true
+            }
+            if !stale.isEmpty { center.remove(ids: stale) }
+        }
+    }
 
     /// Every removal waits for that id's add to land, so a prompt that settles
     /// inside the add window can't leave a stale notification behind.

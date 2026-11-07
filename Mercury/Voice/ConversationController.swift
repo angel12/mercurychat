@@ -2107,7 +2107,7 @@ final class ConversationController {
     var frontPrompt: VoicePrompt? {
         if let approval {
             return VoicePrompt(
-                key: "approval-\(approvalEpoch)", kind: .approval,
+                key: "approval-\(conversationNonce)-\(approvalEpoch)", kind: .approval,
                 pushRequestID: approval.requestID)
         }
         if let clarify {
@@ -2120,6 +2120,10 @@ final class ConversationController {
         }
         return nil
     }
+
+    /// Per-controller, so an approval key never matches another
+    /// conversation's (the epoch restarts with every controller and process).
+    private let conversationNonce = String(UUID().uuidString.prefix(8))
 
     @ObservationIgnored var onFrontPromptChanged: ((VoicePrompt?) -> Void)?
     @ObservationIgnored private var lastFrontPrompt: VoicePrompt?

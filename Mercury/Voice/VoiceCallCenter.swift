@@ -58,6 +58,13 @@ final class VoiceCallCenter: VoiceCallSystemEvents {
     /// Mutes this center asked the system for, oldest first: their performs
     /// are echoes, not user actions, and must not reach the controller.
     private var requestedMutes: [Bool] = []
+    /// The latest end request still in flight: the next start waits for it,
+    /// since CallKit (one call group) can refuse a start while the old call
+    /// is still up.
+    private var pendingEnd: Task<Void, Never>?
+    /// The current call, once the system refused to start it: CallKit never
+    /// created it, so later mute and end requests for it are skipped.
+    private var failedCall: UUID?
 
     init(
         system: (any VoiceCallSystem)?, activationTimeout: Duration = .seconds(3),
@@ -78,11 +85,17 @@ final class VoiceCallCenter: VoiceCallSystemEvents {
         audioActive = false
         systemMuted = false
         requestedMutes = []
+        let priorEnd = pendingEnd
         Task { [weak self] in
+            await priorEnd?.value
+            // Superseded while the old call was ending: never start it.
+            guard self?.currentCall == call else { return }
             do {
                 try await system.requestStart(call, displayName: displayName)
             } catch {
-                self?.resolve(.failed, for: call)
+                guard let self, self.currentCall == call else { return }
+                self.failedCall = call
+                self.resolve(.failed, for: call)
             }
         }
         let timeout = activationTimeout
@@ -103,9 +116,10 @@ final class VoiceCallCenter: VoiceCallSystemEvents {
     /// the system's echo of this end is recognised as stale.
     func endCall() {
         guard let call = currentCall else { return }
+        let started = call != failedCall
         clear(releasingWaitersWith: .unavailable)
-        let system = self.system
-        Task { try? await system?.requestEnd(call) }
+        guard started, let system else { return }
+        pendingEnd = Task { try? await system.requestEnd(call) }
     }
 
     /// The conversation failed to set up: end the call as failed.
@@ -117,7 +131,8 @@ final class VoiceCallCenter: VoiceCallSystemEvents {
 
     /// The controller's mute changed; mirror it in the system call UI.
     func syncMute(_ muted: Bool) {
-        guard let call = currentCall, muted != systemMuted, let system else { return }
+        guard let call = currentCall, call != failedCall, muted != systemMuted, let system
+        else { return }
         systemMuted = muted
         requestedMutes.append(muted)
         Task { [weak self] in
@@ -186,6 +201,7 @@ final class VoiceCallCenter: VoiceCallSystemEvents {
 
     private func clear(releasingWaitersWith result: VoiceAudioOutcome) {
         currentCall = nil
+        failedCall = nil
         outcome = nil
         audioActive = false
         requestedMutes = []

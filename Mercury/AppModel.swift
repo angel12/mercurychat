@@ -568,6 +568,9 @@ final class AppModel {
         // nil), restart the first window's connect from scratch.
         guard !didAutoConnect else { return }
         didAutoConnect = true
+        // No voice conversation survives a relaunch: an earlier process's
+        // prompt notifications are stale (spec §2).
+        voicePromptNotifier.appLaunched()
         if connection == nil,
             let last = lastServer,
             let parsed = try? ServerEndpoint.parse(last),
@@ -1684,8 +1687,8 @@ final class AppModel {
     /// session on this server.
     func shouldPresentPush(_ route: PushTapRoute, appActive: Bool) -> Bool {
         guard appActive, let id = route.sessionID else { return true }
-        if let stored = voiceConversation?.controller.storedSessionID, stored == id { return false }
         if let key = route.serverKey, key != endpoint?.key { return true }
+        if let stored = voiceConversation?.controller.storedSessionID, stored == id { return false }
         return !isShowingSession(id)
     }
 

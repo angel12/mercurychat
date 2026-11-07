@@ -36,6 +36,24 @@ extension SharedMeterTests {
             await controller.teardown()
         }
 
+        @Test func approvalKeysDifferAcrossConversations() async throws {
+            let (first, _) = begun()
+            let (second, _) = begun()
+            await first.begin(mode: .create(cwd: nil, title: nil))
+            await second.begin(mode: .create(cwd: nil, title: nil))
+            for controller in [first, second] {
+                controller.handle(event: GatewayEvent(
+                    type: GatewayEvent.Kind.approvalRequest, sessionID: "rt-a",
+                    payload: Fixtures.approvalPayload(command: "ls", requestID: "req-1")))
+            }
+            let a = try #require(first.frontPrompt?.key)
+            let b = try #require(second.frontPrompt?.key)
+            #expect(a.hasPrefix("approval-") && b.hasPrefix("approval-"))
+            #expect(a != b)
+            await first.teardown()
+            await second.teardown()
+        }
+
         @Test func clarifyKeyUsesRequestID() async {
             let (controller, _) = begun()
             await controller.begin(mode: .create(cwd: nil, title: nil))

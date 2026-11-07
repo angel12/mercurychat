@@ -79,7 +79,24 @@ extension SharedMeterTests {
             let route = PushTapRoute(serverKey: nil, profile: "default", sessionID: stored)
             #expect(h.model.shouldPresentPush(route, appActive: true) == false)
             #expect(h.model.shouldPresentPush(route, appActive: false) == true)
+            // Another server's session with the same id is not this conversation.
+            let elsewhere = PushTapRoute(serverKey: "http://other:1", profile: "default", sessionID: stored)
+            #expect(h.model.shouldPresentPush(elsewhere, appActive: true) == true)
             h.model.endVoice()
+        }
+
+        @Test func launchSweepsStaleVoiceNotifications() async throws {
+            let h = try await connected(); defer { h.cleanup() }
+            let notes = FakeVoiceNotificationCenter()
+            notes.deliveredNotes = [
+                DeliveredNotification(id: "voice-prompt.approval-1", push: nil),
+                DeliveredNotification(id: "push-1", push: nil),
+            ]
+            h.model.voicePromptNotifier = VoicePromptNotifier(
+                center: notes, isAppActive: { true }, sleep: { _ in })
+            await h.model.autoConnectOnLaunch(lastServer: nil)
+            #expect(await eventually { notes.removed == ["voice-prompt.approval-1"] })
+            #expect(notes.deliveredNotes.map(\.id) == ["push-1"])
         }
     }
 }

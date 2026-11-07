@@ -97,6 +97,31 @@ struct VoicePromptNotifierTests {
         #expect(await eventually { center.removed.contains("voice-prompt.credential-s1") })
     }
 
+    @Test func foregroundRemovesStaleVoiceNotificationsOnly() async {
+        let center = FakeVoiceNotificationCenter()
+        center.deliveredNotes = [
+            DeliveredNotification(id: "voice-prompt.approval-old-1", push: nil),
+            DeliveredNotification(id: "push-approval", push: nil),
+        ]
+        let notifier = VoicePromptNotifier(center: center, isAppActive: { true }, sleep: { _ in })
+        notifier.appBecameActive()
+        #expect(await eventually { center.removed == ["voice-prompt.approval-old-1"] })
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(center.deliveredNotes.map(\.id) == ["push-approval"])
+    }
+
+    @Test func launchRemovesStaleVoiceNotificationsOnly() async {
+        let center = FakeVoiceNotificationCenter()
+        center.deliveredNotes = [
+            DeliveredNotification(id: "voice-prompt.credential-x", push: nil),
+            DeliveredNotification(id: "other", push: nil),
+        ]
+        let notifier = VoicePromptNotifier(center: center, isAppActive: { true }, sleep: { _ in })
+        notifier.appLaunched()
+        #expect(await eventually { center.removed == ["voice-prompt.credential-x"] })
+        #expect(center.deliveredNotes.map(\.id) == ["other"])
+    }
+
     @Test func conversationEndRemovesPosted() async {
         let center = FakeVoiceNotificationCenter()
         let notifier = VoicePromptNotifier(center: center, isAppActive: { false }, sleep: { _ in })

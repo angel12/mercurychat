@@ -8,12 +8,19 @@ final class FakeVoiceCallSystem: VoiceCallSystem {
     private(set) var mutes: [(call: UUID, muted: Bool)] = []
     private(set) var reportedEnded: [(call: UUID, failed: Bool)] = []
     var startError: (any Error)?
+    /// When set, `requestEnd` suspends on it after recording the request.
+    var endGate: (@MainActor () async -> Void)?
+    private(set) var endsCompleted: [UUID] = []
 
     func requestStart(_ call: UUID, displayName: String) async throws {
         starts.append((call, displayName))
         if let startError { throw startError }
     }
-    func requestEnd(_ call: UUID) async throws { ends.append(call) }
+    func requestEnd(_ call: UUID) async throws {
+        ends.append(call)
+        await endGate?()
+        endsCompleted.append(call)
+    }
     func requestMute(_ call: UUID, muted: Bool) async throws { mutes.append((call, muted)) }
     func reportEnded(_ call: UUID, failed: Bool) { reportedEnded.append((call, failed)) }
 }

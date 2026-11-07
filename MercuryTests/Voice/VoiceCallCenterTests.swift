@@ -65,6 +65,34 @@ struct VoiceCallCenterTests {
         #expect(delegate.ended == 0)
     }
 
+    @Test func switchStartsTheNewCallOnlyAfterTheOldEnds() async throws {
+        let (center, system, _) = make()
+        let release = VoiceNotifierActiveFlag(false)
+        system.endGate = { while !release.value { try? await Task.sleep(for: .milliseconds(5)) } }
+        center.startCall(displayName: "One")
+        #expect(await eventually { system.starts.count == 1 })
+        let first = try #require(center.currentCall)
+        center.startCall(displayName: "Two")
+        #expect(await eventually { system.ends == [first] })
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(system.starts.map(\.name) == ["One"])  // still waiting on the end
+        release.value = true
+        #expect(await eventually { system.starts.map(\.name) == ["One", "Two"] })
+        #expect(system.endsCompleted == [first])
+    }
+
+    @Test func failedStartSendsNoLaterSystemRequests() async throws {
+        let (center, system, _) = make()
+        system.startError = CocoaError(.userCancelled)
+        center.startCall(displayName: "Plan")
+        #expect(await center.waitForAudio() == .failed)
+        center.syncMute(true)
+        center.endCall()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(system.mutes.isEmpty)
+        #expect(system.ends.isEmpty)
+    }
+
     @Test func endReleasesAWaitingBegin() async {
         let (center, _, _) = make()
         center.startCall(displayName: "Plan")
