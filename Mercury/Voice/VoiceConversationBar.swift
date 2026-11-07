@@ -22,7 +22,7 @@ struct VoiceConversationBar: View {
                         .foregroundStyle(.tint)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(title).font(.subheadline.weight(.medium)).lineLimit(1)
+                        Text(host.displayTitle).font(.subheadline.weight(.medium)).lineLimit(1)
                         Text(host.barStatus).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
@@ -56,11 +56,5 @@ struct VoiceConversationBar: View {
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .contain)
-    }
-
-    private var title: String {
-        if let title = controller.sessionTitle, !title.isEmpty { return title }
-        if case .session(_, let title?, _) = host.target, !title.isEmpty { return title }
-        return "Voice conversation"
     }
 }

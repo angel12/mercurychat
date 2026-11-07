@@ -312,6 +312,7 @@ final class AppModel {
         let host = VoiceConversationHost(target: target, controller: controller, profile: profile)
         voiceConversation = host
         voiceCallCenter.startCall(displayName: host.callDisplayName)
+        voiceLiveActivity.conversationStarted { [weak host] in host?.activityContent }
         voicePromptNotifier.requestAuthorizationIfNeeded()
         let calls = voiceCallCenter
         controller.audioReady = { [weak controller] in
@@ -412,6 +413,7 @@ final class AppModel {
         guard let host = voiceConversation else { return nil }
         voiceConversation = nil
         voiceCallCenter.endCall()
+        voiceLiveActivity.conversationEnded()
         voicePromptNotifier.conversationEnded()
         host.controller.supersede()
         return host.controller
@@ -494,6 +496,11 @@ final class AppModel {
     var voiceCallCenter = VoiceCallCenter(system: VoiceCallCenter.makeSystem()) {
         didSet { voiceCallCenter.delegate = self }
     }
+
+    /// The voice conversation's Live Activity (sub-project 4). Settable for tests.
+    @ObservationIgnored
+    var voiceLiveActivity = VoiceLiveActivityCoordinator(
+        system: VoiceLiveActivityCoordinator.makeSystem())
 
     private let tokenStore: KeychainTokenStore
     /// Mercury Push: pairing, per-server choices, and tap resolution.
@@ -617,6 +624,7 @@ final class AppModel {
         // No voice conversation survives a relaunch: an earlier process's
         // prompt notifications are stale (spec §2).
         voicePromptNotifier.appLaunched()
+        voiceLiveActivity.appLaunched()
         if connection == nil,
             let last = lastServer,
             let parsed = try? ServerEndpoint.parse(last),

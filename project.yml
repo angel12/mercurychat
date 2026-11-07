@@ -6,6 +6,11 @@ options:
     visionOS: "2.0"
   xcodeVersion: "16.0"
   createIntermediateGroups: true
+# The widget extension must share the app's versions (App Store validation).
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
 packages:
   # The shared protocol kit, pinned to the same version as
   # Packages/MercuryCore/Package.swift so both references resolve to one copy.
@@ -42,6 +47,8 @@ targets:
       - path: Mercury/Voice/VoicePrompt.swift
       - path: Mercury/Voice/ClarifyBatch.swift
       - path: Mercury/Voice/AssistantMarkdown.swift
+      - path: Shared/VoiceActivity/VoiceActivityContent.swift
+      - path: Mercury/Voice/VoiceLiveActivityCoordinator.swift
       - path: Mercury/Voice/VoiceCallCenter.swift
       - path: Mercury/Voice/VoicePromptNotifier.swift
       - path: Mercury/Voice/Intents/VoiceIntentBridge.swift
@@ -66,11 +73,42 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGNING_ALLOWED: NO
         MACOSX_DEPLOYMENT_TARGET: "14.0"
+  MercuryWidgets:
+    # The voice Live Activity, the quick-start widget, and the iOS 18
+    # Control (sub-project 4). Shares the activity types in Shared/ and
+    # sub-project 5's voice intents with the app.
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - MercuryWidgets
+      - Shared
+      - path: Mercury/Voice/Intents/VoiceIntentBridge.swift
+      - path: Mercury/Voice/Intents/VoiceIntentEntities.swift
+      - path: Mercury/Voice/Intents/VoiceIntents.swift
+      - path: Mercury/Voice/Intents/VoiceIntents+LiveActivity.swift
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        TARGETED_DEVICE_FAMILY: "1,2"
+        PRODUCT_BUNDLE_IDENTIFIER: com.spencermcguire.mercurychat.MercuryWidgets
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: Z4JCFHY88D
+    info:
+      path: MercuryWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Mercury Chat
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
   Mercury:
     type: application
     supportedDestinations: [iOS, macOS, visionOS]
     sources:
       - Mercury
+      - Shared
     dependencies:
       - package: MercuryKit
         product: MercuryKit
@@ -78,6 +116,10 @@ targets:
         product: MercuryVoiceEngine
       - package: MercuryCore
         product: ChatCore
+      # Widgets and the voice Live Activity: iOS only (no ActivityKit on
+      # visionOS or macOS).
+      - target: MercuryWidgets
+        destinationFilters: [iOS]
     settings:
       base:
         SWIFT_VERSION: "6.0"
@@ -87,8 +129,6 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: Z4JCFHY88D
         ENABLE_HARDENED_RUNTIME: YES
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=xros*]": AppIconVision
         "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=xrsimulator*]": AppIconVision
@@ -114,6 +154,8 @@ targets:
         UIBackgroundModes:
           - audio
           - voip
+        # The voice conversation's Live Activity (sub-project 4).
+        NSSupportsLiveActivities: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
