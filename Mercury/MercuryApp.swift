@@ -3,6 +3,10 @@ import SwiftUI
 @main
 struct MercuryApp: App {
     @State private var model: AppModel
+    #if os(macOS)
+        /// The global mute shortcut (Settings › Voice).
+        @State private var hotKeys: VoiceHotKeyController
+    #endif
     #if os(iOS) || os(visionOS)
         @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     #endif
@@ -13,6 +17,15 @@ struct MercuryApp: App {
         _model = State(initialValue: model)
         // Shortcuts and Siri reach the voice conversation through this.
         VoiceIntentBridge.shared = model
+        #if os(macOS)
+            let hotKeys = VoiceHotKeyController(
+                store: VoiceHotKeyStore(defaults: .standard), registrar: CarbonHotKeyRegistrar())
+            hotKeys.onPress = { [weak model] in
+                Task { _ = try? await model?.intentSetMute(nil) }
+            }
+            model.onVoiceActiveChanged = { [weak hotKeys] active in hotKeys?.isArmed = active }
+            _hotKeys = State(initialValue: hotKeys)
+        #endif
     }
 
     var body: some Scene {
@@ -22,6 +35,7 @@ struct MercuryApp: App {
             Settings {
                 SettingsView()
                     .environment(model)
+                    .environment(hotKeys)
             }
         #endif
     }

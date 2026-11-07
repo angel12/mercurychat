@@ -24,6 +24,7 @@
 		17721F6144E12E1977F71B6A /* HarnessGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E853203FF7CCFBA182B6D9A /* HarnessGate.swift */; };
 		18CF5D66547C7436B0757AE0 /* SystemVoiceNotificationCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D370B49F77B9D55EF31101 /* SystemVoiceNotificationCenter.swift */; };
 		19A8AF5310603F962A19272F /* VoiceHotKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = D383DBD3153A37DDEDD6E31A /* VoiceHotKey.swift */; };
+		1A44ECF557720EDAEE5B6634 /* VoiceHotKeySettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBA01E45CD4BE835CA7D0F27 /* VoiceHotKeySettingsSection.swift */; };
 		1A9E4F4EF4638278B612882B /* AppModelOAuthFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */; };
 		1B06232F34E46CC916052F79 /* VoiceBargeGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA164D294547912511700A73 /* VoiceBargeGateTests.swift */; };
 		21A656ABC237B3E540CC7FB3 /* HermesTestServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F21A1AC8C5FFD5B691B0C01 /* HermesTestServer.swift */; };
@@ -117,6 +118,7 @@
 		A9518D13DF29336C88CD89AD /* MercuryKit in Frameworks */ = {isa = PBXBuildFile; productRef = 270DCD916107ED2451EA4BB3 /* MercuryKit */; };
 		AACF56073A0380B4F09B30F7 /* VoiceCallHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCF68FA4461E3CBA4AE5CE7 /* VoiceCallHostTests.swift */; };
 		AC1B32CA87CE9A8312585F4A /* VoiceNotificationHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E115CFF437F9B6D5DD7AF06E /* VoiceNotificationHostTests.swift */; };
+		AEDCA81F6197B6FE970AD06E /* CarbonHotKeyRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938CB8ED2CBB2FA546FF9D1F /* CarbonHotKeyRegistrar.swift */; };
 		AF9D93B14BD5D0101A1AF4D8 /* ReplaySupersessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */; };
 		B00173E8CE2B188A405CD230 /* R05ReplayGapSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 620D4CFFB407E930DB22D8C7 /* R05ReplayGapSafetyTests.swift */; };
 		B104B662ADF128D4DE3E9C8F /* VoicePromptNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A259C00B027155E3A06087 /* VoicePromptNotifier.swift */; };
@@ -249,6 +251,7 @@
 		90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotChatControllerTests.swift; sourceTree = "<group>"; };
 		92068ED6EF5F4C63EB44F3B7 /* PushCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushCoordinatorTests.swift; sourceTree = "<group>"; };
 		9373E45837ED54B5D5871049 /* AssistantMarkdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownTests.swift; sourceTree = "<group>"; };
+		938CB8ED2CBB2FA546FF9D1F /* CarbonHotKeyRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarbonHotKeyRegistrar.swift; sourceTree = "<group>"; };
 		94B4B089D4E6BED6ED5CC321 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		95372298CE4EB18C2FDACD29 /* AppModelPasswordSignInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelPasswordSignInTests.swift; sourceTree = "<group>"; };
 		956A617D0123C2A53D6690E6 /* CredentialSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialSheets.swift; sourceTree = "<group>"; };
@@ -267,6 +270,7 @@
 		B4F2EB9420A2A5C328AB1CC0 /* BotEditViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotEditViews.swift; sourceTree = "<group>"; };
 		B91B9951C249787DEC11894E /* BotRefreshCoalescingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotRefreshCoalescingTests.swift; sourceTree = "<group>"; };
 		BA164D294547912511700A73 /* VoiceBargeGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceBargeGateTests.swift; sourceTree = "<group>"; };
+		BBA01E45CD4BE835CA7D0F27 /* VoiceHotKeySettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceHotKeySettingsSection.swift; sourceTree = "<group>"; };
 		BD205F415998166C8AAEA43A /* VoiceConversationHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceConversationHost.swift; sourceTree = "<group>"; };
 		BD286BA88A4BC197A257489D /* R32ControllerStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R32ControllerStateTests.swift; sourceTree = "<group>"; };
 		BE86F4AF68691F2876CF8CA9 /* MercuryVoiceShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MercuryVoiceShortcuts.swift; sourceTree = "<group>"; };
@@ -497,8 +501,10 @@
 		61B43BD73DA742CB0B46E883 /* HotKey */ = {
 			isa = PBXGroup;
 			children = (
+				938CB8ED2CBB2FA546FF9D1F /* CarbonHotKeyRegistrar.swift */,
 				D383DBD3153A37DDEDD6E31A /* VoiceHotKey.swift */,
 				30DD1139B7C57961EE4BC18A /* VoiceHotKeyController.swift */,
+				BBA01E45CD4BE835CA7D0F27 /* VoiceHotKeySettingsSection.swift */,
 			);
 			path = HotKey;
 			sourceTree = "<group>";
@@ -675,6 +681,7 @@
 				6BD6AA9B2CB31BC95C479BB2 /* BotEditViews.swift in Sources */,
 				9870DAC2473936640DAA3211 /* BotViews.swift in Sources */,
 				FD2C73E2D50FD5124A99A686 /* CallKitVoiceCallSystem.swift in Sources */,
+				AEDCA81F6197B6FE970AD06E /* CarbonHotKeyRegistrar.swift in Sources */,
 				8B5F8EF23C7156F46304EC10 /* ChatController.swift in Sources */,
 				FA95AE9AA589D021659E84B2 /* ChatView.swift in Sources */,
 				D06883DE81E238AEAC4D4E47 /* ClarifyBatch.swift in Sources */,
@@ -716,6 +723,7 @@
 				02F83D22715A0D9A9D8A050B /* VoiceConversationScreen.swift in Sources */,
 				19A8AF5310603F962A19272F /* VoiceHotKey.swift in Sources */,
 				67D8A0D42D4DDF3C80BBD60C /* VoiceHotKeyController.swift in Sources */,
+				1A44ECF557720EDAEE5B6634 /* VoiceHotKeySettingsSection.swift in Sources */,
 				5668A18E23A7184B08AF04EE /* VoiceIntentBridge.swift in Sources */,
 				A25FBCA21FA5C620C7FA31D4 /* VoiceIntentEntities.swift in Sources */,
 				79280DE0AF8095E4A66CCDE1 /* VoiceIntents.swift in Sources */,
