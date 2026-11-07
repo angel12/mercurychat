@@ -48,12 +48,14 @@ final class VoiceConversationHost {
 
     /// The background bar's status line.
     var barStatus: String {
-        Self.barStatus(
+        Self.activityPhase(
             needsInput: controller.needsInput, waiting: controller.isWaitingForTurn,
-            state: controller.voiceState)
+            reconnecting: !controller.connectionHealthy, state: controller.voiceState
+        ).label
     }
 
-    /// The bar has no reconnecting state of its own; it reads the phase's label.
+    /// The status line for a healthy connection: the phase's label. The
+    /// instance `barStatus` also folds in a dropped gateway ("Reconnecting").
     static func barStatus(needsInput: Bool, waiting: Bool, state: ConversationUIState) -> String {
         activityPhase(needsInput: needsInput, waiting: waiting, reconnecting: false, state: state)
             .label

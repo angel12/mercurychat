@@ -338,6 +338,21 @@ struct CredentialPromptTests {
         await controller.teardown()
     }
 
+    @Test func theBarAndTheIslandAgreeWhenTheGatewayDrops() async throws {
+        let service = ScriptedSessionService()
+        let controller = try await openedController(service: service)
+        let host = VoiceConversationHost(
+            target: .session(storedID: Self.storedID, title: nil, profile: nil),
+            controller: controller, profile: nil)
+        #expect(host.barStatus == host.activityContent.phase.label)
+        #expect(host.barStatus != VoiceActivityPhase.reconnecting.label)
+
+        controller.connectionLost()
+        #expect(host.activityContent.phase == .reconnecting)
+        #expect(host.barStatus == VoiceActivityPhase.reconnecting.label)
+        await controller.teardown()
+    }
+
     @Test func needsInputOutranksEveryOtherBarStatus() {
         let paused = ConversationUIState(
             status: .idle, enabled: true, muted: true, paused: true,
