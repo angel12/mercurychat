@@ -10,7 +10,9 @@ import os
     func update(_ id: String, content: VoiceActivityContent) async
     /// Ends the activity and dismisses it immediately.
     func end(_ id: String) async
-    /// Ends every voice activity, including one a previous process left.
+    /// Ends voice activities this process isn't currently running (a
+    /// previous process's, or ones whose conversation is gone). The
+    /// coordinator ends its own current activity by id first.
     func endAll() async
 }
 

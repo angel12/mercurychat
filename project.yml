@@ -6,6 +6,11 @@ options:
     visionOS: "2.0"
   xcodeVersion: "16.0"
   createIntermediateGroups: true
+# The widget extension must share the app's versions (App Store validation).
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
 packages:
   # The shared protocol kit, pinned to the same version as
   # Packages/MercuryCore/Package.swift so both references resolve to one copy.
@@ -90,8 +95,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spencermcguire.mercurychat.MercuryWidgets
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: Z4JCFHY88D
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
     info:
       path: MercuryWidgets/Info.plist
       properties:
@@ -126,8 +129,6 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: Z4JCFHY88D
         ENABLE_HARDENED_RUNTIME: YES
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=xros*]": AppIconVision
         "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=xrsimulator*]": AppIconVision
