@@ -83,6 +83,7 @@ struct ConnectionBannerView: View {
         @Environment(VoiceHotKeyController.self) private var hotKeys
         var devices = AudioDeviceCatalog.shared
         @AppStorage(CuePreference.key) private var cuesEnabled = true
+        @AppStorage(ScheduledSessionFilter.preferenceKey) private var hideScheduled = false
 
         var body: some View {
             TabView {
@@ -136,6 +137,12 @@ struct ConnectionBannerView: View {
                     }
                     Button("Disconnect", role: .destructive) { model.disconnect() }
                         .disabled(!model.isConnected)
+                }
+                Section("Sessions") {
+                    Toggle("Hide scheduled sessions", isOn: $hideScheduled)
+                    Text("Keeps sessions started by cron jobs out of the sidebar's session lists.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Section("Diagnostics") {
                     LabeledContent("Connection phase", value: phaseDescription)

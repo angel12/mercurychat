@@ -33,6 +33,7 @@ targets:
       - path: Mercury/FileAttachmentWire.swift
       - path: Mercury/ImageAttachmentPreparer.swift
       - path: Mercury/ImagePasteboardReader.swift
+      - path: Mercury/ScheduledSessionFilter.swift
       - path: Mercury/Views/TranscriptScrollState.swift
       - path: Mercury/Views/MarkdownBlocks.swift
       - path: Mercury/Push/PushSystem.swift

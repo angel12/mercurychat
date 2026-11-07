@@ -21,6 +21,7 @@ struct SidebarView: View {
     @State private var showHiddenBots = false
     @State private var newBotShown = false
     @State private var notificationsShown = false
+    @AppStorage(ScheduledSessionFilter.preferenceKey) private var hideScheduled = false
 
     enum Page: Hashable {
         case sessions
@@ -127,6 +128,11 @@ struct SidebarView: View {
             #endif
             ToolbarItem(placement: .cancellationAction) {
                 Menu {
+                    #if !os(macOS)
+                        // macOS has this in Settings › General.
+                        Toggle("Hide Scheduled Sessions", isOn: $hideScheduled)
+                        Divider()
+                    #endif
                     Link("Privacy Policy", destination: MercuryLinks.privacyPolicy)
                     Divider()
                     Button("Disconnect", role: .destructive) { model.disconnect() }
@@ -322,15 +328,25 @@ struct SidebarView: View {
                 } else if model.recentSessions.isEmpty {
                     Text("No sessions yet for this profile.")
                         .foregroundStyle(.secondary)
+                } else if visibleRecents.isEmpty {
+                    Text("Only scheduled sessions so far.")
+                        .foregroundStyle(.secondary)
                 }
-                ForEach(model.recentSessions) { session in
+                ForEach(visibleRecents) { session in
                     sessionRow(session)
                 }
             }
         }
+        // Hiding fetches a deeper recents page, so refetch on a flip.
+        .onChange(of: hideScheduled) { Task { await model.refreshProjects() } }
         .navigationTitle(model.profileDisplayName(model.selectedProfile) ?? "Sessions")
         .refreshable { await model.refreshProjects() }
         .toolbar { newSessionToolbarItem }
+    }
+
+    private var visibleRecents: [SessionSummary] {
+        ScheduledSessionFilter.visible(
+            model.recentSessions, hidingScheduled: hideScheduled, limit: AppModel.recentSessionsShown)
     }
 
     // MARK: Page 3 — workspaces
@@ -380,7 +396,9 @@ struct SidebarView: View {
                     .contentShape(Rectangle())
                 }
             }
-            ForEach(project.previewSessions) { session in
+            ForEach(
+                ScheduledSessionFilter.visible(project.previewSessions, hidingScheduled: hideScheduled)
+            ) { session in
                 sessionRow(session)
             }
             if project.previewSessions.isEmpty, let count = project.sessionCount, count > 0 {

@@ -1329,6 +1329,9 @@ final class AppModel {
         await checkContractVersion()
     }
 
+    /// Rows on the sidebar's "Recent sessions" list.
+    static let recentSessionsShown = 30
+
     func refreshProjects() async {
         guard let connection else { return }
         // One profile for the whole refresh, and a token: a newer refresh
@@ -1344,7 +1347,10 @@ final class AppModel {
         do {
             let tree = try await connection.projectsTree(profile: profile)
             let recents = try await connection.rest.profileSessions(
-                profile: profile ?? "all", limit: 30)
+                profile: profile ?? "all",
+                limit: ScheduledSessionFilter.fetchLimit(
+                    display: Self.recentSessionsShown,
+                    hidingScheduled: ScheduledSessionFilter.isHiding()))
             guard isCurrent() else { return }
             projectTree = tree
             recentSessions = recents
