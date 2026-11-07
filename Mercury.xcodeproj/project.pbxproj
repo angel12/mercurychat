@@ -87,6 +87,7 @@
 		71D86060697C97123EC053E8 /* ReplayLosslessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26E38B4DB1B688BED024CB77 /* ReplayLosslessTests.swift */; };
 		729EF1B7FB1DB2BBCD9F8838 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113C2A16E45FC509EAB0D18F /* AppDelegate.swift */; };
 		7478224AEB8132B66026E2F9 /* ApprovalCancelledTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF29FA61E6755C592640D754 /* ApprovalCancelledTests.swift */; };
+		7796869E6DD262804F5E75E5 /* VoiceLiveActivityHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF2D6A045114C21BE3FA6C7 /* VoiceLiveActivityHostTests.swift */; };
 		79280DE0AF8095E4A66CCDE1 /* VoiceIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82B083E4C182E62363A784D3 /* VoiceIntents.swift */; };
 		7DD6B1CFF8A9562FF78AE81C /* AssistantMarkdownTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9373E45837ED54B5D5871049 /* AssistantMarkdownTests.swift */; };
 		8007F8BE00F28FD6BF3A4049 /* BotChatControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D11A97F9E169C6ACF5A13A /* BotChatControllerTests.swift */; };
@@ -103,6 +104,7 @@
 		8FDF5A87BBE4FFDB48408E99 /* VoiceIntentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC0BF9047095A664801FDF1 /* VoiceIntentTests.swift */; };
 		9040FED1E803A3961F7767EE /* ImageAttachmentPreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2385853D812F0AEB3C05FE /* ImageAttachmentPreparer.swift */; };
 		9179BACF1320B4FDDCC503D1 /* MarkdownBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E00A47B190797DCB7210F77 /* MarkdownBlocks.swift */; };
+		9247C1994D0F9CA3C89FC311 /* VoiceIntents+LiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28CB5F356A3BCE1573E06271 /* VoiceIntents+LiveActivity.swift */; };
 		93CC0EB07156B09EF5B747D5 /* MercuryVoiceEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 1763039389CEBE5F66DA1147 /* MercuryVoiceEngine */; };
 		94D3FBDC446856D79162DD3C /* VoiceConversationHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD205F415998166C8AAEA43A /* VoiceConversationHost.swift */; };
 		9870DAC2473936640DAA3211 /* BotViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDB791832F7A5EDCF9BCA81C /* BotViews.swift */; };
@@ -211,6 +213,7 @@
 		262A42933A02C6863409DC0B /* VoiceActivityContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivityContent.swift; sourceTree = "<group>"; };
 		26E38B4DB1B688BED024CB77 /* ReplayLosslessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplayLosslessTests.swift; sourceTree = "<group>"; };
 		26F0A1567A15C6816DB59D53 /* PushCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushCoordinator.swift; sourceTree = "<group>"; };
+		28CB5F356A3BCE1573E06271 /* VoiceIntents+LiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "VoiceIntents+LiveActivity.swift"; sourceTree = "<group>"; };
 		295AE0DDB21A194494D08AD6 /* QueuePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanel.swift; sourceTree = "<group>"; };
 		2D01072AAEDA445A543D4065 /* TranscriptScrollStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptScrollStateTests.swift; sourceTree = "<group>"; };
 		2DD7E841EFF1CE6E70B38582 /* SessionActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityTests.swift; sourceTree = "<group>"; };
@@ -321,6 +324,7 @@
 		E7B5FE90CA2DC47F81B0751A /* R34SubmitRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R34SubmitRecoveryTests.swift; sourceTree = "<group>"; };
 		E9D1CE714B044D34E0EB6B7C /* ExactTurnAttributionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExactTurnAttributionTests.swift; sourceTree = "<group>"; };
 		ED858CF1CA3401AEF0585956 /* ReplaySupersessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplaySupersessionTests.swift; sourceTree = "<group>"; };
+		EDF2D6A045114C21BE3FA6C7 /* VoiceLiveActivityHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityHostTests.swift; sourceTree = "<group>"; };
 		F06D8DFF501BFF0B79DBC414 /* AppModelOAuthFormTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelOAuthFormTests.swift; sourceTree = "<group>"; };
 		F335C603BD8B003FAFE3FE26 /* VoiceCallHooksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCallHooksTests.swift; sourceTree = "<group>"; };
 		F42879978FB79190FBF9DFCE /* SlashCommandControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandControllerTests.swift; sourceTree = "<group>"; };
@@ -372,6 +376,7 @@
 				0CB3B665181F0A2084BF6128 /* VoiceIntentBridge.swift */,
 				42A1E4935A3AB6773E6E20FF /* VoiceIntentEntities.swift */,
 				82B083E4C182E62363A784D3 /* VoiceIntents.swift */,
+				28CB5F356A3BCE1573E06271 /* VoiceIntents+LiveActivity.swift */,
 			);
 			path = Intents;
 			sourceTree = "<group>";
@@ -582,6 +587,7 @@
 				0C17B80A09E006187AB219BD /* VoiceIntentHostTests.swift */,
 				CCC0BF9047095A664801FDF1 /* VoiceIntentTests.swift */,
 				744C143FD4B0C82E93D198F8 /* VoiceLiveActivityCoordinatorTests.swift */,
+				EDF2D6A045114C21BE3FA6C7 /* VoiceLiveActivityHostTests.swift */,
 				0D3528013FDBB02F0EB82344 /* VoiceLiveActivityTestSupport.swift */,
 				34BFD9952AD539145128A23E /* VoiceNavigationTests.swift */,
 				E115CFF437F9B6D5DD7AF06E /* VoiceNotificationHostTests.swift */,
@@ -760,6 +766,7 @@
 				1A44ECF557720EDAEE5B6634 /* VoiceHotKeySettingsSection.swift in Sources */,
 				5668A18E23A7184B08AF04EE /* VoiceIntentBridge.swift in Sources */,
 				A25FBCA21FA5C620C7FA31D4 /* VoiceIntentEntities.swift in Sources */,
+				9247C1994D0F9CA3C89FC311 /* VoiceIntents+LiveActivity.swift in Sources */,
 				79280DE0AF8095E4A66CCDE1 /* VoiceIntents.swift in Sources */,
 				1924E07BDE9043A6B99AB0F0 /* VoiceLiveActivityCoordinator.swift in Sources */,
 				9A0D2C551E716714C5702C3A /* VoicePrompt.swift in Sources */,
@@ -871,6 +878,7 @@
 				EEDCCEC010343FC08A67EC40 /* VoiceIntents.swift in Sources */,
 				D68B62C11909F5365A5D313F /* VoiceLiveActivityCoordinator.swift in Sources */,
 				E0AAAD7B7714FF102D8CB9C6 /* VoiceLiveActivityCoordinatorTests.swift in Sources */,
+				7796869E6DD262804F5E75E5 /* VoiceLiveActivityHostTests.swift in Sources */,
 				525D4B5897E98A233265BD13 /* VoiceLiveActivityTestSupport.swift in Sources */,
 				36A204D164E10AEB49A61379 /* VoiceNavigationTests.swift in Sources */,
 				AC1B32CA87CE9A8312585F4A /* VoiceNotificationHostTests.swift in Sources */,

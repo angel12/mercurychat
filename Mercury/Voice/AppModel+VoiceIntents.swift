@@ -16,6 +16,8 @@ extension AppModel: VoiceIntentActions {
 
     func intentSetMute(_ target: Bool?) async throws -> Bool {
         guard let controller = voiceConversation?.controller else {
+            // A Live Activity left by a conversation that's gone: clear it.
+            voiceLiveActivity.endAll()
             throw VoiceIntentError.noConversation
         }
         guard let muted = await controller.applyMute(target) else {
@@ -25,7 +27,10 @@ extension AppModel: VoiceIntentActions {
     }
 
     func intentEndVoice() throws {
-        guard voiceConversation != nil else { throw VoiceIntentError.noConversation }
+        guard voiceConversation != nil else {
+            voiceLiveActivity.endAll()
+            throw VoiceIntentError.noConversation
+        }
         endVoice()
     }
 
