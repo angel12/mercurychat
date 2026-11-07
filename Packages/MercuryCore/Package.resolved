@@ -1,13 +1,13 @@
 {
-  "originHash" : "3e48e52fe8c0a3ad5394793558474ee9136040ecd2c99f8c2be27fdcb4c950c5",
+  "originHash" : "630425e4a00f32f8587769d5436d06d5f97f382b1fef6de0ad378cc4d8c43f7f",
   "pins" : [
     {
       "identity" : "mercurykit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/angel12/mercurykit",
       "state" : {
-        "revision" : "7ec3f944c7b27ecec50e2d89c23322df6ec47ff4",
-        "version" : "0.10.0"
+        "revision" : "6f46fab6e382fd2686898624166e1ae2f7fbe7f3",
+        "version" : "0.10.1"
       }
     }
   ],
