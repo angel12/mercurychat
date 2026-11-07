@@ -80,6 +80,7 @@ struct ConnectionBannerView: View {
 #if os(macOS)
     struct SettingsView: View {
         @Environment(AppModel.self) private var model
+        @Environment(VoiceHotKeyController.self) private var hotKeys
         var devices = AudioDeviceCatalog.shared
         @AppStorage(CuePreference.key) private var cuesEnabled = true
 
@@ -111,6 +112,7 @@ struct ConnectionBannerView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
+                VoiceHotKeySettingsSection(controller: hotKeys)
             }
             .formStyle(.grouped)
             .padding(.vertical)

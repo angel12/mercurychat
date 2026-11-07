@@ -46,6 +46,12 @@ targets:
       - path: Mercury/Voice/VoiceLiveActivityCoordinator.swift
       - path: Mercury/Voice/VoiceCallCenter.swift
       - path: Mercury/Voice/VoicePromptNotifier.swift
+      - path: Mercury/Voice/Intents/VoiceIntentBridge.swift
+      - path: Mercury/Voice/Intents/VoiceIntentEntities.swift
+      - path: Mercury/Voice/Intents/VoiceIntents.swift
+      - path: Mercury/Voice/AppModel+VoiceIntents.swift
+      - path: Mercury/Voice/HotKey/VoiceHotKey.swift
+      - path: Mercury/Voice/HotKey/VoiceHotKeyController.swift
       - path: MercuryTests
     dependencies:
       - package: MercuryKit

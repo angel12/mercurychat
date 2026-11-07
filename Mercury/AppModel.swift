@@ -13,7 +13,9 @@ final class AppModel {
     // MARK: Connection
 
     private(set) var connection: HermesConnection?
-    private(set) var phase: HermesConnection.Phase = .stopped
+    private(set) var phase: HermesConnection.Phase = .stopped {
+        didSet { if case .ready = phase { releaseReadyWaiters(true) } }
+    }
     private(set) var serverStatus: ServerStatus?
     private(set) var endpoint: ServerEndpoint?
     var connectError: String?
@@ -201,7 +203,15 @@ final class AppModel {
 
     /// The Voice tab's conversation (spec §1): at most one, app-wide. Every
     /// window binds to it; navigating away doesn't end it.
-    private(set) var voiceConversation: VoiceConversationHost?
+    private(set) var voiceConversation: VoiceConversationHost? {
+        didSet {
+            let active = voiceConversation != nil
+            if active != (oldValue != nil) { onVoiceActiveChanged?(active) }
+        }
+    }
+    /// Set by the app: a voice conversation started (true) or ended (false).
+    /// Arms the macOS mute hotkey.
+    @ObservationIgnored var onVoiceActiveChanged: ((Bool) -> Void)?
     /// Bumped by every start, end and disconnect, so a begin still inside
     /// its session open can tell it was superseded (Voice's R25 guard).
     private var voiceGeneration = 0
@@ -329,6 +339,42 @@ final class AppModel {
         // (startVoice's generation guard), and a wedged open must not hold
         // the next.
         voiceLaunch = Task { await startVoice(target) }
+    }
+
+    /// Open the voice conversation from outside any window (Shortcuts,
+    /// Siri): the first window shows it; with none open it starts anyway and
+    /// the in-conversation bar shows it once a window opens.
+    func openVoiceFromSystem(_ target: VoiceConversationHost.Target) {
+        guard isConnected else { return }
+        liveWindows.first?.route = .voice
+        voiceLaunch = Task { await startVoice(target) }
+    }
+
+    // MARK: Waiting for the connection (voice intents)
+
+    /// How long a voice intent waits for launch's auto-connect. Settable for tests.
+    @ObservationIgnored var voiceIntentConnectTimeout: Duration = .seconds(15)
+    @ObservationIgnored private var readyWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
+
+    /// True once the connection is ready, false after `timeout`: a Shortcut
+    /// can launch the app before auto-connect has finished.
+    func waitForConnection(timeout: Duration) async -> Bool {
+        if case .ready = phase, connection != nil { return true }
+        let id = UUID()
+        let timer = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            self?.readyWaiters.removeValue(forKey: id)?.resume(returning: false)
+        }
+        defer { timer.cancel() }
+        // The timer runs on the main actor too, so it can't fire before the
+        // continuation below is stored.
+        return await withCheckedContinuation { readyWaiters[id] = $0 }
+    }
+
+    private func releaseReadyWaiters(_ value: Bool) {
+        let waiters = readyWaiters
+        readyWaiters = [:]
+        for waiter in waiters.values { waiter.resume(returning: value) }
     }
 
     /// End the voice conversation (End button, stop word, setup error's
