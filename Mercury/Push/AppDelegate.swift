@@ -1,4 +1,4 @@
-#if os(iOS)
+#if os(iOS) || os(visionOS)
     import MercuryKit
     import UIKit
     import UserNotifications
@@ -24,6 +24,7 @@
             didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
         ) -> Bool {
             UNUserNotificationCenter.current().delegate = self
+            SystemVoiceNotificationCenter.registerCategories()
             return true
         }
 
@@ -44,6 +45,10 @@
             _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
         ) {
+            if notification.request.content.userInfo[VoicePromptNotifier.promptKeyInfo] != nil {
+                completionHandler([])  // the sheet is on screen in the foreground
+                return
+            }
             let payload = PushPayload(userInfo: notification.request.content.userInfo)
             nonisolated(unsafe) let done = completionHandler
             Task { @MainActor in
@@ -57,7 +62,17 @@
             _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
             withCompletionHandler completionHandler: @escaping () -> Void
         ) {
-            let payload = PushPayload(userInfo: response.notification.request.content.userInfo)
+            let info = response.notification.request.content.userInfo
+            if let key = info[VoicePromptNotifier.promptKeyInfo] as? String {
+                let action = VoicePromptNotifier.action(forIdentifier: response.actionIdentifier)
+                nonisolated(unsafe) let done = completionHandler
+                Task { @MainActor in
+                    self.model?.handleVoiceNotification(promptKey: key, action: action)
+                    done()
+                }
+                return
+            }
+            let payload = PushPayload(userInfo: info)
             nonisolated(unsafe) let done = completionHandler
             Task { @MainActor in
                 // Acknowledge right away; routing may wait for a connection or a server switch.

@@ -301,6 +301,15 @@ final class AppModel {
         wireVoiceCoordination(controller)
         let host = VoiceConversationHost(target: target, controller: controller, profile: profile)
         voiceConversation = host
+        voiceCallCenter.startCall(displayName: host.callDisplayName)
+        voicePromptNotifier.requestAuthorizationIfNeeded()
+        let calls = voiceCallCenter
+        controller.audioReady = { [weak controller] in
+            switch await calls.waitForAudio() {
+            case .timedOut, .failed: controller?.noteCallUnavailable()
+            case .activated, .unavailable: break
+            }
+        }
         await controller.begin(mode: target.mode)
         guard generation == voiceGeneration, voiceConversation === host else {
             // Superseded or ended while the session was opening: whoever took
@@ -356,6 +365,8 @@ final class AppModel {
         voiceGeneration += 1
         guard let host = voiceConversation else { return nil }
         voiceConversation = nil
+        voiceCallCenter.endCall()
+        voicePromptNotifier.conversationEnded()
         host.controller.supersede()
         return host.controller
     }
@@ -387,6 +398,55 @@ final class AppModel {
             else { return }
             self.endVoice()
         }
+        controller.onMuteChanged = { [weak self, weak controller] muted in
+            guard let self, let controller, self.voiceConversation?.controller === controller
+            else { return }
+            self.voiceCallCenter.syncMute(muted)
+        }
+        controller.onSessionActivity = { [weak self] storedID, profile in
+            self?.claimPushSession(storedID: storedID, profile: profile)
+        }
+        controller.onFrontPromptChanged = { [weak self, weak controller] prompt in
+            guard let self, let controller, let host = self.voiceConversation,
+                host.controller === controller
+            else { return }
+            let title =
+                controller.sessionTitle.flatMap { $0.isEmpty ? nil : $0 } ?? host.callDisplayName
+            self.voicePromptNotifier.promptChanged(
+                prompt, title: title, storedSessionID: controller.storedSessionID)
+        }
+        controller.onSetupError = { [weak self, weak controller] _ in
+            guard let self, let controller, self.voiceConversation?.controller === controller
+            else { return }
+            self.voiceCallCenter.reportFailed()
+        }
+    }
+
+    /// Lock-screen notifications for the voice conversation's prompts. Settable for tests.
+    @ObservationIgnored
+    var voicePromptNotifier = VoicePromptNotifier(
+        center: AppModel.makeVoiceNotificationCenter(), isAppActive: { AppModel.applicationIsActive })
+
+    private static func makeVoiceNotificationCenter() -> (any VoiceNotificationCenter)? {
+        #if os(iOS) || os(visionOS)
+            SystemVoiceNotificationCenter()
+        #else
+            nil
+        #endif
+    }
+
+    static var applicationIsActive: Bool {
+        #if os(iOS) || os(visionOS)
+            UIApplication.shared.applicationState == .active
+        #else
+            true
+        #endif
+    }
+
+    /// The voice conversation's system call (sub-project 3). Settable for tests.
+    @ObservationIgnored
+    var voiceCallCenter = VoiceCallCenter(system: VoiceCallCenter.makeSystem()) {
+        didSet { voiceCallCenter.delegate = self }
     }
 
     private let tokenStore: KeychainTokenStore
@@ -410,6 +470,7 @@ final class AppModel {
         self.push.onReregistered = { [weak self] in
             Task { await self?.syncPush() }
         }
+        voiceCallCenter.delegate = self
     }
 
     /// Monotonic guard for the connect flow: `connect()` suspends across the
@@ -507,6 +568,9 @@ final class AppModel {
         // nil), restart the first window's connect from scratch.
         guard !didAutoConnect else { return }
         didAutoConnect = true
+        // No voice conversation survives a relaunch: an earlier process's
+        // prompt notifications are stale (spec §2).
+        voicePromptNotifier.appLaunched()
         if connection == nil,
             let last = lastServer,
             let parsed = try? ServerEndpoint.parse(last),
@@ -845,11 +909,43 @@ final class AppModel {
         botsTrailingRefresh = nil
     }
 
-    /// Immediate re-dial on foreground (backoff skip).
+    /// Set while the app is in the background, so the next
+    /// activation returns to a live voice conversation.
+    @ObservationIgnored private var wasInBackground = false
+
+    /// Immediate re-dial on foreground (backoff skip). Coming back from the
+    /// background (another app, the lock screen, the call pill) during a
+    /// voice conversation lands on it, as a phone app returns to its call;
+    /// iOS reports no tap on the call pill itself, so this is the hook.
     func appBecameActive() {
+        // background → inactive → active: the flag, not the previous phase.
+        if wasInBackground, voiceConversation != nil {
+            liveWindows.first?.route = .voice
+        }
+        wasInBackground = false
         voiceConversation?.controller.appBecameActive()
+        voicePromptNotifier.appBecameActive()
         guard let connection else { return }
         Task { await connection.pokeReconnect() }
+    }
+
+    func appEnteredBackground() {
+        wasInBackground = true
+        voicePromptNotifier.appEnteredBackground()
+    }
+
+    /// A voice prompt notification was tapped or one of its actions chosen.
+    /// An action only answers the approval it was posted for; anything else
+    /// brings the voice screen forward.
+    func handleVoiceNotification(promptKey: String, action: VoiceNotificationAction) {
+        guard let controller = voiceConversation?.controller else { return }
+        if action != .open, let front = controller.frontPrompt, front.kind == .approval,
+            front.key == promptKey
+        {
+            controller.respondApproval(choice: action == .approveOnce ? "once" : "deny")
+            return
+        }
+        liveWindows.first?.route = .voice
     }
 
     /// The unreachable banner's retry button.
@@ -1605,6 +1701,7 @@ final class AppModel {
     func shouldPresentPush(_ route: PushTapRoute, appActive: Bool) -> Bool {
         guard appActive, let id = route.sessionID else { return true }
         if let key = route.serverKey, key != endpoint?.key { return true }
+        if let stored = voiceConversation?.controller.storedSessionID, stored == id { return false }
         return !isShowingSession(id)
     }
 
@@ -1687,4 +1784,11 @@ final class WindowNavigation {
     init(route: AppModel.Route? = nil) {
         self.route = route
     }
+}
+
+extension AppModel: VoiceCallCenterDelegate {
+    func voiceCallEndedBySystem() { endVoice() }
+    func voiceCallSetMuted(_ muted: Bool) { voiceConversation?.controller.setMuted(muted) }
+    func voiceCallAudioSuspended() { voiceConversation?.controller.audioSuspended() }
+    func voiceCallAudioResumed() { voiceConversation?.controller.audioResumed() }
 }

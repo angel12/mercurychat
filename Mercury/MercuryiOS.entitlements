@@ -5,5 +5,8 @@
 	<!-- Mercury Push (APNs). Xcode's App Store export rewrites this to production. -->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- Voice prompt notifications break through Focus (sub-project 3). -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
 </dict>
 </plist>

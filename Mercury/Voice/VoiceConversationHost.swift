@@ -38,6 +38,12 @@ final class VoiceConversationHost {
         self.profile = profile
     }
 
+    /// The name the system call UI shows.
+    var callDisplayName: String {
+        if case .session(_, let title?, _) = target, !title.isEmpty { return title }
+        return "Voice conversation"
+    }
+
     static let needsInputStatus = "Needs your input"
 
     /// The background bar's status line.

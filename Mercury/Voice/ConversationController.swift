@@ -3,7 +3,7 @@ import MercuryKit
 import Observation
 import MercuryVoiceEngine
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
     import AVFoundation
     import CallKit
     import UIKit
@@ -43,7 +43,11 @@ final class ConversationController {
     private(set) var assistantCaption: String = ""
     private(set) var toolTicker: String?
     private(set) var micLevel: Double = 0
-    private(set) var setupError: String?
+    private(set) var setupError: String? {
+        didSet {
+            if let setupError, setupError != oldValue { onSetupError?(setupError) }
+        }
+    }
     private(set) var notice: String?
     private(set) var connectionHealthy = true
     /// Latest usage snapshot: live `session.usage` ticks mid-turn, settled by
@@ -58,6 +62,7 @@ final class ConversationController {
             guard !stampingApprovalInPlace else { return }
             approvalAnnouncement?.cancel()
         }
+        didSet { reportFrontPrompt() }
     }
     /// True only while `present(approval:)` stamps an srq id onto the sheet
     /// already on screen (issue #125). That write is the *same* prompt, so
@@ -69,6 +74,7 @@ final class ConversationController {
             guard !mergingClarifyLocksInPlace else { return }
             clarifyAnnouncement?.cancel()
         }
+        didSet { reportFrontPrompt() }
     }
     /// True only while `present(clarify:)` merges newly locked batch answers
     /// into the sheet already on screen — the same prompt, so its notice
@@ -79,6 +85,7 @@ final class ConversationController {
     /// notice and announces the next one.
     private(set) var credentialPrompts: [CredentialPrompt] = [] {
         didSet {
+            reportFrontPrompt()
             guard oldValue.first?.id != credentialPrompts.first?.id else { return }
             if let next = credentialPrompts.first {
                 announce(.credential(id: next.id, text: next.spokenNotice))
@@ -213,7 +220,7 @@ final class ConversationController {
     private let cues = ConversationCuePlayer()
     private var stateTask: Task<Void, Never>?
 
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
         // Background-audio lifecycle (issue #31). The keepalive stream pins
         // the capture engine on for the whole conversation, so iOS never
         // sees a stopped-audio gap to suspend into, and audio only ever
@@ -653,6 +660,7 @@ final class ConversationController {
         }
         sessionBox.runtimeID = handle.runtimeID
         sessionBox.storedID = handle.storedID
+        if case .create = mode { noteSessionActivity() } else { noteStoredIDChanged() }
         // Acquire the TTS lease as the conversation starts. Fire-and-forget:
         // warm-up is a nicety the backend reports failures for in its own
         // body (never an HTTP error), and it must never delay `begin()`
@@ -790,7 +798,7 @@ final class ConversationController {
                     // Background / interruption refusals are transient
                     // (issue #31); real device or permission problems in the
                     // foreground stay fatal.
-                    #if os(iOS)
+                    #if os(iOS) || os(visionOS)
                         guard let self else { return true }
                         if self.audioInterrupted { return false }
                         if UIApplication.shared.applicationState != .active { return false }
@@ -817,19 +825,24 @@ final class ConversationController {
         stateTask = Task { [weak self] in
             for await state in await engine.uiStates() {
                 guard let self else { return }
-                #if os(iOS)
-                    let wasMuted = self.voiceState.muted
-                #endif
+                let wasMuted = self.voiceState.muted
                 self.voiceState = state
-                #if os(iOS)
-                    if state.muted != wasMuted {
+                if state.muted != wasMuted {
+                    #if os(iOS) || os(visionOS)
                         self.applyMuteToCapture(muted: state.muted)
-                    }
-                #endif
+                    #endif
+                    self.onMuteChanged?(state.muted)
+                }
             }
         }
         takeLevelMeter()
-        #if os(iOS)
+        // A CallKit call's audio session must be active before the mic arms
+        // (sub-project 3); the host's hook returns at once without a call.
+        if let audioReady {
+            await audioReady()
+            guard !isTornDown else { return }
+        }
+        #if os(iOS) || os(visionOS)
             startAudioKeepalive()
             observeAudioInterruptions()
         #endif
@@ -844,13 +857,16 @@ final class ConversationController {
     }
 
     func teardown() async {
+        onFrontPromptChanged = nil
         supersede()
         stateTask?.cancel()
+        muteTask?.cancel()
+        muteTask = nil
         approvalAnnouncement?.cancel()
         clarifyAnnouncement?.cancel()
         credentialAnnouncement?.cancel()
         releaseLevelMeterIfOwned()
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             stopAudioKeepalive()
             if let interruptionObserver {
                 NotificationCenter.default.removeObserver(interruptionObserver)
@@ -933,7 +949,7 @@ final class ConversationController {
     /// capture engine, and resume — every branch no-ops when nothing is
     /// actually paused or stopped.
     func appBecameActive() {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             audioInterrupted = false
             // Starting audio is allowed again: restore a keepalive that was
             // dropped by a mute (or refused while backgrounded), or the rest
@@ -945,7 +961,7 @@ final class ConversationController {
         #endif
     }
 
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
         private func startAudioKeepalive() {
             guard keepaliveStreamID == nil,
                 let opened = try? capture.openStream()
@@ -1903,6 +1919,7 @@ final class ConversationController {
             }
             sessionBox.runtimeID = handle.runtimeID
             sessionBox.storedID = handle.storedID
+            noteStoredIDChanged()
             let authority = await sessionService.isSessionAuthority
             turnAttribution.noteWire(authority: authority)
             // The authority's snapshot lists the shared queue: re-derive
@@ -2077,12 +2094,112 @@ final class ConversationController {
         for event in turnAttribution.noteReceipt(receipt) {
             trackerEventContinuation?.yield(.event(event))
         }
+        if receipt != nil { noteSessionActivity() }
     }
 
     // MARK: User controls
 
     func toggleMute() {
         Task { await engine?.toggleMute() }
+    }
+
+    // MARK: Prompt identity and push activity (sub-project 3)
+
+    /// The prompt the sheets present first: approval, then clarify, then the
+    /// oldest credential.
+    var frontPrompt: VoicePrompt? {
+        if let approval {
+            return VoicePrompt(
+                key: "approval-\(conversationNonce)-\(approvalEpoch)", kind: .approval,
+                pushRequestID: approval.requestID)
+        }
+        if let clarify {
+            return VoicePrompt(
+                key: "clarify-\(clarify.requestID)", kind: .clarify, pushRequestID: nil)
+        }
+        if let credential = credentialPrompts.first {
+            let kind: VoicePrompt.Kind = if case .sudo = credential { .sudo } else { .secret }
+            return VoicePrompt(key: "credential-\(credential.id)", kind: kind, pushRequestID: nil)
+        }
+        return nil
+    }
+
+    /// Per-controller, so an approval key never matches another
+    /// conversation's (the epoch restarts with every controller and process).
+    private let conversationNonce = String(UUID().uuidString.prefix(8))
+
+    @ObservationIgnored var onFrontPromptChanged: ((VoicePrompt?) -> Void)?
+    @ObservationIgnored private var lastFrontPrompt: VoicePrompt?
+
+    private func reportFrontPrompt() {
+        let now = frontPrompt
+        guard now != lastFrontPrompt else { return }
+        lastFrontPrompt = now
+        onFrontPromptChanged?(now)
+    }
+
+    /// The stored session this conversation runs on, once known.
+    var storedSessionID: String? { sessionBox.storedID }
+
+    /// Set by the host: this device created the session or sent in it, so it
+    /// claims the session's push notifications (as Chat does).
+    @ObservationIgnored var onSessionActivity: ((_ storedID: String, _ profile: String?) -> Void)?
+    @ObservationIgnored private var activity = SessionActivityTracker()
+
+    private func noteSessionActivity() {
+        if let id = activity.activity(storedID: sessionBox.storedID) { onSessionActivity?(id, profile) }
+    }
+
+    private func noteStoredIDChanged() {
+        if let id = activity.storedIDChanged(sessionBox.storedID) { onSessionActivity?(id, profile) }
+    }
+
+    // MARK: System call (sub-project 3)
+
+    static let callUnavailableNotice = "Couldn't start as a call, so voice stops if you leave the app."
+
+    /// Set by the host before `begin`: awaited after the engine is built
+    /// and before the mic arms.
+    @ObservationIgnored var audioReady: (@MainActor () async -> Void)?
+    /// Set by the host: the conversation's mute changed (any source).
+    @ObservationIgnored var onMuteChanged: ((Bool) -> Void)?
+    /// Set by the host: a new setup error appeared.
+    @ObservationIgnored var onSetupError: ((String) -> Void)?
+
+    /// Idempotent mute for the system call UI; `toggleMute` stays for buttons.
+    ///
+    /// Calls are chained so they act in order, and each compares against the
+    /// engine's own state: `voiceState` lags it by the async UI stream.
+    func setMuted(_ muted: Bool) {
+        let previous = muteTask
+        muteTask = Task { [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled, let engine = self.engine else { return }
+            if await engine.uiState.muted != muted {
+                await engine.toggleMute()
+            }
+        }
+    }
+
+    @ObservationIgnored private var muteTask: Task<Void, Never>?
+
+    /// The call's audio session was taken (another call, hold): pause like
+    /// an interruption.
+    func audioSuspended() {
+        #if os(iOS) || os(visionOS)
+            audioInterruption(began: true)
+        #endif
+    }
+
+    /// The call's audio session is back: same recovery as a system call ending.
+    func audioResumed() {
+        #if os(iOS) || os(visionOS)
+            systemCallsEnded()
+        #endif
+    }
+
+    func noteCallUnavailable() {
+        setNotice(Self.callUnavailableNotice)
     }
 
     func endTurnNow() {
@@ -2098,7 +2215,7 @@ final class ConversationController {
     /// the interruption state, revive the capture engine if the system
     /// killed it, unpause, and re-arm.
     func listenNow() {
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             audioInterrupted = false
             capture.ensureRunning()
         #endif
@@ -2284,7 +2401,7 @@ final class ConversationController {
 
     private func resumeIfUnprompted() {
         guard !hasPrompt else { return }
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
             guard !audioInterrupted else { return }
         #endif
         Task { await engine?.setPaused(false) }
@@ -2415,7 +2532,7 @@ final class ConversationController {
     }
 }
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
     /// CXCallObserver delegate reporting the moment no system call remains
     /// (phone, FaceTime, or VoIP). Observation-only CallKit — review-safe,
     /// no entitlement. Delegate callbacks arrive on the queue given to
