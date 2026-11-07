@@ -1671,6 +1671,73 @@ struct TranscriptToolDetailTests {
         #expect(store.running)
     }
 
+    @Test func aSteeredSettleAfterTheJoinedTurnEndsDoesNotEndTheNextTurn() {
+        // Live order on v0.23: a steer lists the row `started` + `steering`,
+        // the joined turn completes, and only then does the row's `steered`
+        // settle arrive — here after the next queued turn has started.
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "first"}"#))
+        let steer = store.appendUserMessage("also this", state: .sending)
+        store.bindEcho(steer, admissionID: "a2")
+        store.apply(event("session.info", #"{"running": true, "pending": [{"admission_id": "a2", "sequence": 2, "status": "started", "steering": true, "text": "also this", "controls": []}, {"admission_id": "a3", "sequence": 3, "status": "queued", "text": "next", "controls": ["steer", "replace"]}]}"#))
+        store.apply(event("message.complete", #"{"status": "complete", "text": "first", "usage": {"input": 10, "output": 5, "total": 15}}"#))
+        let usageAfterTurn = store.sessionUsage
+
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "second "}"#))
+        store.apply(event("message.complete", #"{"admission_id": "a2", "outcome": "steered", "status": "complete", "text": "also this"}"#))
+        store.apply(event("message.delta", #"{"text": "turn"}"#))
+
+        let bubbles = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(bubbles.map(\.text) == ["first", "second turn"])
+        #expect(bubbles.last?.isStreaming == true)
+        #expect(user(store, steer)?.text == "also this")
+        #expect(store.sessionUsage == usageAfterTurn)
+        #expect(store.running)
+    }
+
+    @Test func aSteeredSettleLeavesNoBubbleWhenNothingRuns() {
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("message.delta", #"{"text": "answer"}"#))
+        store.apply(event("message.complete", #"{"status": "complete", "text": "answer"}"#))
+        store.apply(event("message.complete", #"{"admission_id": "a2", "outcome": "steered", "status": "complete", "text": "steered text"}"#))
+        let texts = store.items.compactMap { item -> String? in
+            if case .assistant(let m) = item { return m.text }
+            return nil
+        }
+        #expect(texts == ["answer"])
+    }
+
+    @Test func aQueuedRowCancelledMidTurnKeepsTheRunningBubbleOpen() {
+        let store = TranscriptStore()
+        store.apply(event("message.start"))
+        store.apply(event("session.info", #"{"running": true, "pending": [{"admission_id": "a1", "sequence": 1, "status": "started", "text": "one", "controls": []}, {"admission_id": "a2", "sequence": 2, "status": "queued", "text": "two", "controls": ["steer", "replace"]}]}"#))
+        store.apply(event("message.delta", #"{"text": "still "}"#))
+        store.apply(event("session.info", #"{"running": true, "pending": [{"admission_id": "a1", "sequence": 1, "status": "started", "text": "one", "controls": []}]}"#))
+        store.apply(event("message.complete", #"{"admission_id": "a2", "outcome": "cancelled", "status": "complete"}"#))
+        store.apply(event("message.delta", #"{"text": "going"}"#))
+
+        let bubbles = store.items.compactMap { item -> AssistantMessage? in
+            if case .assistant(let m) = item { return m }
+            return nil
+        }
+        #expect(bubbles.map(\.text) == ["still going"])
+        #expect(bubbles.last?.isStreaming == true)
+
+        // The running turn's own cancel (an interrupt) is its end.
+        store.apply(event("message.complete", #"{"admission_id": "a1", "outcome": "cancelled", "status": "complete"}"#))
+        guard case .assistant(let ended) = store.items.last else {
+            Issue.record("expected the turn's bubble last")
+            return
+        }
+        #expect(!ended.isStreaming)
+    }
+
     private func user(_ store: TranscriptStore, _ id: String) -> UserMessage? {
         for item in store.items { if case .user(let m) = item, m.id == id { return m } }
         return nil

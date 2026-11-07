@@ -63,7 +63,7 @@ public final class TranscriptStore {
     private var echoAdmissions: [String: String] = [:]
     /// Admissions seen waiting (`queued`) and not yet seen starting. A
     /// `message.complete` that cancels one of these only retires a queue row;
-    /// it isn't the running turn's end. Kept across snapshots: the owner may
+    /// it isn't the running turn's end. (A `steered` settle never is.) Kept across snapshots: the owner may
     /// drop the row from `pending` before it reports the cancellation.
     private var waitingAdmissions: Set<String> = []
     /// Durable id observed in `session.info.stored_session_id` (re-anchor).
@@ -730,9 +730,17 @@ public final class TranscriptStore {
         case GatewayEvent.Kind.messageComplete:
             // A queued admission that was cancelled or replaced never ran: its
             // completion only retires the row. Treating it as the turn's end
-            // would seal the bubble of whatever turn is running.
-            if let admission = event.payload["admission_id"]?.stringValue,
-                event.payload["outcome"]?.stringValue == "cancelled",
+            // would seal the bubble of whatever turn is running. A `steered`
+            // settle is always a row retirement: the steer's text joined a
+            // running turn, and the settle trails that turn's own complete
+            // (often after the next turn has started). Only a cancel can be a
+            // turn's end too — an interrupt of the running turn — so it ends
+            // nothing only when its row was still waiting.
+            let admission = event.payload["admission_id"]?.stringValue
+            let outcome = event.payload["outcome"]?.stringValue
+            if let admission, outcome == "steered" {
+                waitingAdmissions.remove(admission)
+            } else if let admission, outcome == "cancelled",
                 waitingAdmissions.contains(admission)
             {
                 retireCancelledAdmission(admission)
